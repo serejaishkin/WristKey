@@ -20,9 +20,6 @@ jobs:
             target: x86_64-apple-darwin
             suffix: ""
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,7 +29,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
       - name: Build release
-        run: cargo build --release --bin wristkeyd --target ${{ matrix.target }}
+        run: cd desktop && cargo build --release --bin wristkeyd --target ${{ matrix.target }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
