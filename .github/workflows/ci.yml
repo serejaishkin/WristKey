@@ -12,6 +12,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -26,6 +29,9 @@ jobs:
 
   cross-check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -38,6 +44,9 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

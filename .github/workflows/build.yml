@@ -20,6 +20,9 @@ jobs:
             target: x86_64-apple-darwin
             suffix: ""
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -34,4 +37,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wristkeyd-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/wristkeyd${{ matrix.suffix }}
+          path: desktop/target/${{ matrix.target }}/release/wristkeyd${{ matrix.suffix }}
