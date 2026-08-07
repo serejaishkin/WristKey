@@ -8,6 +8,7 @@ use tokio::time::{interval, timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use wristkey_core::*;
+use chrono::Utc;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
 
 /// Main daemon orchestrating BLE, crypto, and platform security.

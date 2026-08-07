@@ -1,6 +1,7 @@
 //! WristKey daemon binary entry point.
 
 use std::sync::Arc;
+use tracing::info;
 use wristkey_core::{Config, CryptoEngine, MemoryStorage, SessionManager, SoftwareCrypto, Storage};
 use wristkey_ble::BtleplugAdapter;
 use wristkey_daemon::Daemon;
