@@ -55,6 +55,13 @@ class SecurityManager {
     /**
      * Sign data. Returns raw ECDSA signature (64 bytes: r || s, each 32 bytes padded).
      */
+    fun resetKeys() {
+        Log.i(TAG, "Keys reset")
+        // TODO: delete keys from AndroidKeyStore
+    }
+
+            a
+}
     fun sign(data: ByteArray): ByteArray {
         val entry = keyStore.getEntry(KEY_ALIAS, null) as KeyStore.PrivateKeyEntry
         val signer = Signature.getInstance("SHA256withECDSA")

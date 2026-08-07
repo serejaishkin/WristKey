@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import com.wristkey.R
 import com.wristkey.ble.WristKeyBleService
 
@@ -16,6 +17,7 @@ class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var actionButton: Button
+    private lateinit var resetButton: Button
     private var bleService: WristKeyBleService? = null
     private var bound = false
 
@@ -38,18 +40,24 @@ class MainActivity : Activity() {
 
         statusText = findViewById(R.id.status_text)
         actionButton = findViewById(R.id.action_button)
+        resetButton = findViewById(R.id.reset_button)
 
         // Start foreground service first (required for BLE on Android 12+)
         val serviceIntent = Intent(this, WristKeyBleService::class.java)
         startForegroundService(serviceIntent)
-
-        // Then bind to it
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         actionButton.setOnClickListener {
             bleService?.confirmUserPresent()
             statusText.text = getString(R.string.status_pairing)
             actionButton.text = getString(R.string.action_unlock)
+        }
+
+        resetButton.setOnClickListener {
+            bleService?.resetPairing()
+            statusText.text = getString(R.string.status_disconnected)
+            actionButton.text = getString(R.string.action_pair)
+            Toast.makeText(this, R.string.reset_done, Toast.LENGTH_SHORT).show()
         }
     }
 

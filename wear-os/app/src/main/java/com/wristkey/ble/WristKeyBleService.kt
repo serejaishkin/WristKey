@@ -24,12 +24,6 @@ import java.util.*
 
 /**
  * Foreground service acting as BLE Peripheral (GATT Server).
- *
- * Protocol:
- * 1. PC writes 16-byte nonce to CHALLENGE characteristic
- * 2. Watch signs nonce || timestamp || user_present (1 byte)
- * 3. Watch notifies 64-byte raw ECDSA signature + 1 byte user_present on RESPONSE
- * 4. PC verifies signature against stored public key
  */
 class WristKeyBleService : Service() {
 
@@ -96,6 +90,20 @@ class WristKeyBleService : Service() {
         super.onDestroy()
     }
 
+    /** Reset pairing: clear stored keys and disconnect current device. */
+    fun resetPairing() {
+        Log.i(TAG, "Resetting pairing state")
+        currentDevice?.let { device ->
+            gattServer?.cancelConnection(device)
+        }
+        currentDevice = null
+        updateStatus(STATUS_DISCONNECTED)
+        securityManager.resetKeys()
+        stopAdvertising()
+        startAdvertising()
+        Log.i(TAG, "Pairing reset complete")
+    }
+
     //region GATT Server
 
     private fun startGattServer() {
@@ -159,14 +167,12 @@ class WristKeyBleService : Service() {
 
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
 
-        // CHALLENGE characteristic: write-only from PC
         val challengeChar = BluetoothGattCharacteristic(
             CHALLENGE_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_WRITE,
             BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED or BluetoothGattCharacteristic.PERMISSION_WRITE
         )
 
-        // RESPONSE characteristic: notify-only to PC
         responseCharacteristic = BluetoothGattCharacteristic(
             RESPONSE_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_NOTIFY,
@@ -178,7 +184,6 @@ class WristKeyBleService : Service() {
             ))
         }
 
-        // STATUS characteristic: read + notify
         statusCharacteristic = BluetoothGattCharacteristic(
             STATUS_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
@@ -222,7 +227,6 @@ class WristKeyBleService : Service() {
             return
         }
 
-        // Anti-relay: verify watch is on wrist and moving
         if (!motionDetector.isMoving) {
             Log.w(TAG, "Rejecting challenge: watch not in motion (possible relay attack)")
             if (responseNeeded) {
@@ -231,11 +235,9 @@ class WristKeyBleService : Service() {
             return
         }
 
-        // Extract nonce (16 bytes) + timestamp (8 bytes LE)
         val nonce = value.copyOfRange(0, 16)
         val timestamp = ByteBuffer.wrap(value.copyOfRange(16, 24)).order(ByteOrder.LITTLE_ENDIAN).long
 
-        // Verify timestamp is recent (±30 seconds) — anti-replay
         val now = System.currentTimeMillis() / 1000
         if (kotlin.math.abs(now - timestamp) > 30) {
             Log.w(TAG, "Challenge timestamp expired: $timestamp vs $now")
@@ -245,14 +247,11 @@ class WristKeyBleService : Service() {
             return
         }
 
-        // User must have tapped screen recently for user_present=true
         val userPresent = isUserPresent()
         val userPresentByte: Byte = if (userPresent) 1 else 0
 
-        // Build payload: nonce || timestamp || user_present
         val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
 
-        // Sign with Android Keystore
         val signature = try {
             securityManager.sign(payload)
         } catch (e: Exception) {
@@ -263,13 +262,9 @@ class WristKeyBleService : Service() {
             return
         }
 
-        // Convert DER signature to raw 64-byte (r || s) if needed
         val rawSignature = derToRaw(signature)
-
-        // Response: rawSignature (64 bytes) + user_present (1 byte)
         val response = rawSignature + byteArrayOf(userPresentByte)
 
-        // Send notification
         responseCharacteristic?.value = response
         val notified = gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
         Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
@@ -362,23 +357,17 @@ class WristKeyBleService : Service() {
         return System.currentTimeMillis() - lastUserPresentTime < 10_000
     }
 
-    /**
-     * Convert DER-encoded ECDSA signature to raw 64-byte (r || s).
-     * Desktop expects fixed-size signatures.
-     */
     private fun derToRaw(der: ByteArray): ByteArray {
-        // Simple DER parser for ECDSA signature: 0x30 [len] 0x02 [r_len] [r] 0x02 [s_len] [s]
         if (der.size < 70 || der[0] != 0x30.toByte()) {
             Log.w(TAG, "Unexpected DER format, returning as-is")
             return der
         }
-        var idx = 2 // skip 0x30, total length
+        var idx = 2
         if (der[idx] != 0x02.toByte()) return der
         idx++
         val rLen = der[idx].toInt() and 0xFF
         idx++
         val r = der.copyOfRange(idx, idx + rLen).let {
-            // Remove leading zero if present (padding)
             if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
         }
         idx += rLen
@@ -390,7 +379,6 @@ class WristKeyBleService : Service() {
             if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
         }
 
-        // Pad to 32 bytes each
         val rPadded = ByteArray(32) { i -> if (i < 32 - r.size) 0 else r[i - (32 - r.size)] }
         val sPadded = ByteArray(32) { i -> if (i < 32 - s.size) 0 else s[i - (32 - s.size)] }
         return rPadded + sPadded

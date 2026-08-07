@@ -5,4 +5,6 @@
     <string name="status_connected">Connected</string>
     <string name="action_pair">Pair with PC</string>
     <string name="action_unlock">Unlock PC</string>
+    <string name="action_reset">Reset Pairing</string>
+    <string name="reset_done">Pairing reset</string>
 </resources>
