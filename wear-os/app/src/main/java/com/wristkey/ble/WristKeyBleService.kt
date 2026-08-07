@@ -21,23 +21,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.ParcelUuid
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
 import com.wristkey.app.MainActivity
+import com.wristkey.security.SecurityManager
+import com.wristkey.sensors.MotionDetector
 import java.util.UUID
 
-/**
- * Foreground service that acts as BLE Peripheral (GATT Server).
- *
- * Protocol v1.0:
- * - SERVICE_UUID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
- * - CHALLENGE (write): PC sends 16-byte nonce + 8-byte timestamp LE
- * - RESPONSE (notify): Watch sends [64-byte sig][1-byte user_present]
- * - STATUS (read/notify): connection state
- */
 class WristKeyBleService : Service() {
 
     companion object {
@@ -49,8 +43,6 @@ class WristKeyBleService : Service() {
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
         val STATUS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
-
-        // CCCD descriptor UUID for notifications
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         const val ACTION_USER_PRESENT = "com.wristkey.ACTION_USER_PRESENT"
@@ -58,20 +50,18 @@ class WristKeyBleService : Service() {
     }
 
     private val binder = LocalBinder()
-
     private var bluetoothManager: BluetoothManager? = null
     private var gattServer: BluetoothGattServer? = null
     private var advertiserCallback: AdvertiseCallback? = null
     private var connectedDevice: BluetoothDevice? = null
 
-    // GATT characteristics
     private lateinit var challengeChar: BluetoothGattCharacteristic
     private lateinit var responseChar: BluetoothGattCharacteristic
     private lateinit var statusChar: BluetoothGattCharacteristic
 
-    // State
+    private val securityManager = SecurityManager()
+    private val motionDetector by lazy { MotionDetector(this) }
     private var isUserPresent = false
-    private var lastChallenge: ByteArray? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): WristKeyBleService = this@WristKeyBleService
@@ -80,9 +70,8 @@ class WristKeyBleService : Service() {
     private val userPresentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_USER_PRESENT) {
-                Log.i(TAG, "User present confirmed via UI tap")
+                Log.i(TAG, "User present confirmed")
                 isUserPresent = true
-                // Auto-reset after 5 seconds
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     isUserPresent = false
                 }, 5000)
@@ -94,12 +83,29 @@ class WristKeyBleService : Service() {
         super.onCreate()
         Log.i(TAG, "Service onCreate")
 
-        bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        if (bluetoothManager == null) {
+            Log.e(TAG, "BluetoothManager not available")
+            stopSelf()
+            return
+        }
 
         createNotificationChannel()
-        registerReceiver(userPresentReceiver, IntentFilter(ACTION_USER_PRESENT),
-            Context.RECEIVER_NOT_EXPORTED)
 
+        // FIX: REceiver_NOT_EXPORTED only on API 33+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(userPresentReceiver, IntentFilter(ACTION_USER_PRESENT), Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(userPresentReceiver, IntentFilter(ACTION_USER_PRESENT))
+        }
+
+        try {
+            securityManager.generateKeyPairIfNeeded()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to generate keypair: ${e.message}")
+        }
+
+        motionDetector.start()
         setupGattServer()
     }
 
@@ -113,54 +119,52 @@ class WristKeyBleService : Service() {
 
     override fun onDestroy() {
         stopAdvertising()
-        gattServer?.close()
-        unregisterReceiver(userPresentReceiver)
+        try { gattServer?.close() } catch (_: Exception) {}
+        try { unregisterReceiver(userPresentReceiver) } catch (_: Exception) {}
+        motionDetector.stop()
         super.onDestroy()
     }
 
-    // =================================================================
-    // GATT Server Setup
-    // =================================================================
-
     private fun setupGattServer() {
-        val server = bluetoothManager?.openGattServer(this, gattServerCallback)
-            ?: run {
-                Log.e(TAG, "Failed to open GATT server")
-                return
-            }
+        val adapter = bluetoothManager?.adapter
+        if (adapter == null) {
+            Log.e(TAG, "Bluetooth adapter null")
+            return
+        }
 
-        // CHALLENGE characteristic: write-only, encrypted (requires bonded/secure)
+        val server = bluetoothManager?.openGattServer(this, gattServerCallback)
+        if (server == null) {
+            Log.e(TAG, "Failed to open GATT server")
+            return
+        }
+
         challengeChar = BluetoothGattCharacteristic(
             CHALLENGE_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_WRITE,
             BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED_MITM
         )
 
-        // RESPONSE characteristic: notify-only
         responseChar = BluetoothGattCharacteristic(
             RESPONSE_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_NOTIFY,
             BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED_MITM
         )
-        val cccd = BluetoothGattDescriptor(
+        responseChar.addDescriptor(BluetoothGattDescriptor(
             CCCD_UUID,
             BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED_MITM or
                     BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED_MITM
-        )
-        responseChar.addDescriptor(cccd)
+        ))
 
-        // STATUS characteristic: read + notify
         statusChar = BluetoothGattCharacteristic(
             STATUS_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
             BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED_MITM
         )
-        val statusCccd = BluetoothGattDescriptor(
+        statusChar.addDescriptor(BluetoothGattDescriptor(
             CCCD_UUID,
             BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED_MITM or
                     BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED_MITM
-        )
-        statusChar.addDescriptor(statusCccd)
+        ))
 
         val service = android.bluetooth.BluetoothGattService(
             SERVICE_UUID,
@@ -172,29 +176,22 @@ class WristKeyBleService : Service() {
 
         server.addService(service)
         gattServer = server
-
-        Log.i(TAG, "GATT server created with service $SERVICE_UUID")
+        Log.i(TAG, "GATT server created")
     }
-
-    // =================================================================
-    // GATT Callbacks
-    // =================================================================
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
 
         override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "Device connected: ${device?.address}")
+                    Log.i(TAG, "Connected: ${device?.address}")
                     connectedDevice = device
-                    updateStatus(byteArrayOf(0x01)) // 0x01 = connected
+                    updateStatus(byteArrayOf(0x01))
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "Device disconnected: ${device?.address}")
-                    if (connectedDevice?.address == device?.address) {
-                        connectedDevice = null
-                    }
-                    updateStatus(byteArrayOf(0x00)) // 0x00 = disconnected
+                    Log.i(TAG, "Disconnected: ${device?.address}")
+                    if (connectedDevice?.address == device?.address) connectedDevice = null
+                    updateStatus(byteArrayOf(0x00))
                 }
             }
         }
@@ -209,19 +206,41 @@ class WristKeyBleService : Service() {
             value: ByteArray?
         ) {
             if (characteristic?.uuid == CHALLENGE_CHAR_UUID) {
-                Log.i(TAG, "Challenge received (${value?.size} bytes) from ${device?.address}")
+                Log.i(TAG, "Challenge: ${value?.size} bytes")
 
-                lastChallenge = value?.copyOf()
-
-                // TODO (Step 2): verify motion + sign challenge
-                // For now: log and require user tap
-                if (isUserPresent) {
-                    Log.i(TAG, "User present, would sign challenge here")
-                    // Placeholder: echo back for testing
-                    sendResponse(byteArrayOf(0xDE.toByte(), 0xAD.toByte(), 0xBE.toByte(), 0xEF.toByte()))
-                } else {
-                    Log.w(TAG, "User NOT present, rejecting challenge. Tap screen to confirm.")
+                if (!motionDetector.isMoving) {
+                    Log.w(TAG, "Motion check FAILED")
+                    if (responseNeeded) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
+                    }
+                    sendResponse(byteArrayOf())
+                    return
                 }
+
+                if (!isUserPresent) {
+                    Log.w(TAG, "User NOT present — tap screen")
+                    if (responseNeeded) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
+                    }
+                    sendResponse(byteArrayOf())
+                    return
+                }
+
+                val challenge = value ?: byteArrayOf()
+                val sig = try {
+                    securityManager.sign(challenge)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Sign failed: ${e.message}")
+                    if (responseNeeded) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
+                    }
+                    sendResponse(byteArrayOf())
+                    return
+                }
+
+                val response = sig + byteArrayOf(1)
+                sendResponse(response)
+                Log.i(TAG, "Response sent: ${response.size} bytes")
 
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
@@ -243,37 +262,46 @@ class WristKeyBleService : Service() {
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
                 }
-                Log.i(TAG, "CCCD updated for ${descriptor.characteristic?.uuid}")
             }
         }
     }
 
-    // =================================================================
-    // Helpers
-    // =================================================================
-
     private fun sendResponse(data: ByteArray) {
         responseChar.value = data
-        connectedDevice?.let { device ->
-            gattServer?.notifyCharacteristicChanged(device, responseChar, false)
-            Log.i(TAG, "Notification sent: ${data.size} bytes")
-        } ?: Log.w(TAG, "No connected device to notify")
+        connectedDevice?.let {
+            try {
+                gattServer?.notifyCharacteristicChanged(it, responseChar, false)
+            } catch (e: Exception) {
+                Log.e(TAG, "Notify failed: ${e.message}")
+            }
+        }
     }
 
     private fun updateStatus(data: ByteArray) {
         statusChar.value = data
-        connectedDevice?.let { device ->
-            gattServer?.notifyCharacteristicChanged(device, statusChar, false)
+        connectedDevice?.let {
+            try {
+                gattServer?.notifyCharacteristicChanged(it, statusChar, false)
+            } catch (_: Exception) {}
         }
     }
 
-    // =================================================================
-    // Advertising
-    // =================================================================
-
     private fun startAdvertising() {
-        val adapter = bluetoothManager?.adapter ?: return
-        val advertiser = adapter.bluetoothLeAdvertiser ?: return
+        val adapter = bluetoothManager?.adapter
+        if (adapter == null) {
+            Log.e(TAG, "BT adapter null")
+            return
+        }
+        if (!adapter.isEnabled) {
+            Log.e(TAG, "BT disabled")
+            return
+        }
+
+        val advertiser = adapter.bluetoothLeAdvertiser
+        if (advertiser == null) {
+            Log.e(TAG, "LE Advertiser not supported")
+            return
+        }
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
@@ -296,40 +324,33 @@ class WristKeyBleService : Service() {
             }
         }
 
-        advertiser.startAdvertising(settings, data, advertiserCallback!!)
+        try {
+            advertiser.startAdvertising(settings, data, advertiserCallback!!)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Advertising SecurityException: ${e.message}")
+        }
     }
 
     private fun stopAdvertising() {
         val adapter = bluetoothManager?.adapter ?: return
-        val advertiser = adapter.bluetoothLeAdvertiser ?: return
-        advertiserCallback?.let { advertiser.stopAdvertising(it) }
+        try {
+            adapter.bluetoothLeAdvertiser?.stopAdvertising(advertiserCallback!!)
+        } catch (_: Exception) {}
     }
 
-    // =================================================================
-    // Notification
-    // =================================================================
-
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "WristKey BLE",
-            NotificationManager.IMPORTANCE_LOW
-        )
+        val channel = NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW)
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
     }
 
     private fun buildNotification(text: String): Notification {
         val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("WristKey")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(android.R.drawable.sym_def_app_icon)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()

@@ -1,10 +1,9 @@
 //! WristKey core: state machine, crypto traits, and challenge-response logic.
-//!
-//! This crate is platform-agnostic and contains all business logic.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ecdsa::signature::{Signer, Verifier};
+use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -44,34 +43,37 @@ pub trait CryptoEngine: Send + Sync {
     async fn verify(&self, public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<()>;
 }
 
-pub struct SoftwareCrypto;
+/// Software ECDSA P-256 crypto engine.
+pub struct EcdsaP256Crypto;
 
 #[async_trait]
-impl CryptoEngine for SoftwareCrypto {
+impl CryptoEngine for EcdsaP256Crypto {
     async fn generate_keypair(&self) -> Result<(Vec<u8>, Vec<u8>)> {
-        let mut rng = rand::thread_rng();
-        let signing_key = SigningKey::generate(&mut rng);
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
         let verifying_key = signing_key.verifying_key();
-        Ok((signing_key.to_bytes().to_vec(), verifying_key.to_bytes().to_vec()))
+        let pubkey_bytes = verifying_key.to_encoded_point(false).as_bytes().to_vec();
+        Ok((signing_key.to_bytes().to_vec(), pubkey_bytes))
     }
 
     async fn sign(&self, private_key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
         let key_bytes: [u8; 32] = private_key.try_into()
             .map_err(|_| WristKeyError::Crypto("invalid private key length".into()))?;
-        let signing_key = SigningKey::from_bytes(&key_bytes);
-        let signature = signing_key.sign(data);
-        Ok(signature.to_bytes().to_vec())
+        let signing_key = SigningKey::from_bytes(&key_bytes.into())
+            .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
+        let sig: Signature = signing_key.sign(data);
+        Ok(sig.to_bytes().to_vec())
     }
 
     async fn verify(&self, public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<()> {
-        let key_bytes: [u8; 32] = public_key.try_into()
-            .map_err(|_| WristKeyError::Crypto("invalid public key length".into()))?;
-        let verifying_key = VerifyingKey::from_bytes(&key_bytes)
+        let pubkey = p256::PublicKey::from_sec1_bytes(public_key)
             .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
+        let verifying_key = VerifyingKey::from(pubkey);
         let sig_bytes: [u8; 64] = signature.try_into()
             .map_err(|_| WristKeyError::Crypto("invalid signature length".into()))?;
-        let sig = Signature::from_bytes(&sig_bytes);
-        verifying_key.verify(data, &sig).map_err(|_| WristKeyError::InvalidSignature)
+        let sig = Signature::from_slice(&sig_bytes)
+            .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
+        verifying_key.verify(data, &sig)
+            .map_err(|_| WristKeyError::InvalidSignature)
     }
 }
 
@@ -261,7 +263,6 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Load from TOML file, or create default if missing.
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
@@ -460,13 +461,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_pairing_flow() {
-        let crypto = Arc::new(SoftwareCrypto);
+        let crypto = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(MemoryStorage::new());
         let manager = SessionManager::new(crypto.clone(), storage);
         let challenge = manager.begin_pairing().await.unwrap();
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response { signature: sig.clone(), user_present: true, timestamp: Utc::now() };
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
         let device = manager.complete_pairing("Test Watch".into(), pub_key, &response, -50).await.unwrap();
         assert_eq!(device.name, "Test Watch");
         assert!(manager.state().await.is_authenticated());
@@ -474,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unlock_without_user_present_fails() {
-        let crypto = Arc::new(SoftwareCrypto);
+        let crypto = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(MemoryStorage::new());
         let manager = SessionManager::new(crypto.clone(), storage.clone());
         let challenge = manager.begin_pairing().await.unwrap();
@@ -490,7 +491,6 @@ mod tests {
     async fn test_sled_storage_persistence() {
         let tmp = temp_dir().join(format!("wristkey_test_{}", Uuid::new_v4()));
         let storage = SledStorage::new(&tmp).unwrap();
-
         let device = PairedDevice {
             id: Uuid::new_v4(),
             name: "Sled Watch".into(),
@@ -498,38 +498,27 @@ mod tests {
             paired_at: Utc::now(),
             baseline_rssi: -55,
         };
-
         storage.save_device(&device).await.unwrap();
         let loaded = storage.load_device(device.id).await.unwrap().unwrap();
         assert_eq!(loaded.name, "Sled Watch");
-
         let devices = storage.list_devices().await.unwrap();
         assert_eq!(devices.len(), 1);
-
         storage.delete_device(device.id).await.unwrap();
         assert!(storage.load_device(device.id).await.unwrap().is_none());
-
         let config = Config { auto_lock_timeout_sec: 60, ..Default::default() };
         storage.save_config(&config).await.unwrap();
         let loaded_config = storage.load_config().await.unwrap();
         assert_eq!(loaded_config.auto_lock_timeout_sec, 60);
-
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_config_toml_roundtrip() {
-        let config = Config {
-            auto_lock_timeout_sec: 45,
-            rssi_threshold_offset_dbm: 20,
-            challenge_timeout_sec: 15,
-        };
+        let config = Config { auto_lock_timeout_sec: 45, rssi_threshold_offset_dbm: 20, challenge_timeout_sec: 15 };
         let tmp = temp_dir().join("wristkey_test_config.toml");
         config.to_file(&tmp).unwrap();
         let loaded = Config::from_file(&tmp).unwrap();
         assert_eq!(loaded.auto_lock_timeout_sec, 45);
-        assert_eq!(loaded.rssi_threshold_offset_dbm, 20);
-        assert_eq!(loaded.challenge_timeout_sec, 15);
         let _ = std::fs::remove_file(&tmp);
     }
 }

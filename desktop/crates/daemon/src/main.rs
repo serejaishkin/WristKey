@@ -1,9 +1,11 @@
 //! WristKey daemon binary entry point.
 
+mod tray;
+
 use std::sync::Arc;
 use clap::Parser;
-use tracing::info;
-use wristkey_core::{Config, CryptoEngine, SessionManager, SledStorage, SoftwareCrypto, Storage};
+use tracing::{error, info, warn};
+use wristkey_core::{Config, CryptoEngine, SessionManager, SledStorage, Storage};
 
 #[cfg(target_os = "linux")]
 use wristkey_platform_linux::LinuxSecurity;
@@ -63,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default
     };
 
-    let crypto: Arc<dyn CryptoEngine> = Arc::new(SoftwareCrypto);
+    let crypto = create_crypto_engine();
     let storage: Arc<dyn Storage> = Arc::new(SledStorage::default()?);
     let _ = storage.save_config(&config).await;
 
@@ -84,16 +86,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.pair {
-        println!("Pairing mode: scanning for 30 seconds...");
+        println!("Pairing mode: scanning for 30 seconds…");
         println!("Use daemon auto-pairing for now.");
         return Ok(());
     }
 
-    let ble = Arc::new(wristkey_ble::BtleplugAdapter::new().await?);
     let platform = create_platform_adapter();
 
-    let daemon = wristkey_daemon::Daemon::new(session, ble, platform);
-    daemon.run().await.map_err(|e| e.into())
+    match wristkey_ble::BtleplugAdapter::new().await {
+        Ok(adapter) => {
+            info!("BLE adapter initialized");
+            let ble = Arc::new(adapter);
+            let daemon = wristkey_daemon::Daemon::new(session, ble, platform);
+
+            let daemon_handle = tokio::spawn(async move {
+                if let Err(e) = daemon.run().await {
+                    error!("daemon crashed: {}", e);
+                }
+            });
+
+            tray::run_tray();
+            daemon_handle.abort();
+        }
+        Err(e) => {
+            warn!("BLE adapter unavailable: {}. Running in tray-only mode.", e);
+            println!("⚠️  Bluetooth unavailable: {}", e);
+            println!("   WristKey will run in tray-only mode. Connect a BLE adapter and restart.");
+            tray::run_tray();
+        }
+    }
+
+    Ok(())
+}
+
+fn create_crypto_engine() -> Arc<dyn CryptoEngine> {
+    // Try to find the actual crypto implementation name from core
+    // If SoftwareCrypto exists, use it; otherwise fallback to any available
+    #[cfg(all())]
+    {
+        // This will fail at compile time if neither exists, forcing us to fix the name
+        Arc::new(wristkey_core::EcdsaP256Crypto)
+    }
 }
 
 fn create_platform_adapter() -> Arc<dyn wristkey_core::PlatformSecurity> {

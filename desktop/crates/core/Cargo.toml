@@ -11,9 +11,11 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-ed25519-dalek = { workspace = true }
+p256 = { workspace = true }
+ecdsa = { workspace = true }
+sha2 = { workspace = true }
 rand = { workspace = true }
 sled = "0.34"
-toml = { workspace = true }
 bincode = "1.3"
 directories = "5"
+toml = { workspace = true }

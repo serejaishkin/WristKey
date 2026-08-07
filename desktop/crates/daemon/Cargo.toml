@@ -11,6 +11,10 @@ path = "src/lib.rs"
 name = "wristkeyd"
 path = "src/main.rs"
 
+[features]
+default = []
+tray = ["dep:tray-icon", "dep:winit"]
+
 [dependencies]
 wristkey-core = { path = "../core" }
 wristkey-ble = { path = "../ble" }
@@ -27,3 +31,7 @@ clap = { workspace = true }
 toml = { workspace = true }
 tracing-appender = { workspace = true }
 directories = "5"
+
+# Tray deps — только с feature "tray"
+tray-icon = { version = "0.19", optional = true }
+winit = { version = "0.30", optional = true }

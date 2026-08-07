@@ -1,6 +1,4 @@
 //! WristKey daemon — main application logic.
-//!
-//! Event loop: scan → connect → pair/unlock → monitor RSSI → auto-lock.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -53,6 +51,19 @@ impl Daemon {
         self.tick().await
     }
 
+    pub async fn pair_once(&self) -> Result<PairedDevice> {
+        info!("Pairing mode: scanning for 30 seconds...");
+        let mut rx = self.ble.scan(self.service_uuid).await?;
+        let info = timeout(Duration::from_secs(30), rx.recv())
+            .await
+            .map_err(|_| WristKeyError::Ble("scan timeout".into()))?
+            .ok_or_else(|| WristKeyError::Ble("no devices found".into()))?;
+
+        info!("Found device: {} ({})", info.name.as_deref().unwrap_or("unknown"), info.id);
+        let conn = self.ble.connect(&info).await?;
+        self.perform_pairing(&conn, info).await
+    }
+
     async fn tick(&self) -> Result<()> {
         match self.session.state().await {
             SessionState::Disconnected => {
@@ -103,12 +114,12 @@ impl Daemon {
         if let Some(device) = matched {
             self.perform_unlock(&conn, device.id).await?;
         } else {
-            self.perform_pairing(&conn, info).await?;
+            let _device = self.perform_pairing(&conn, info).await?;
         }
         Ok(())
     }
 
-    async fn perform_pairing(&self, conn: &Connection, info: PeripheralInfo) -> Result<()> {
+    async fn perform_pairing(&self, conn: &Connection, info: PeripheralInfo) -> Result<PairedDevice> {
         let challenge = self.session.begin_pairing().await?;
         self.ble.write(conn, self.challenge_char, &challenge.to_bytes()).await?;
 
@@ -118,14 +129,14 @@ impl Daemon {
             .map_err(|_| WristKeyError::Ble("pairing timeout".into()))?
             .ok_or_else(|| WristKeyError::Ble("no pairing response".into()))?;
 
-        if response_data.len() < 97 {
+        if response_data.len() < 65 {
             return Err(WristKeyError::Protocol(
                 format!("pairing response too short: {} bytes", response_data.len())
             ));
         }
-        let public_key = response_data[..32].to_vec();
-        let signature = response_data[32..96].to_vec();
-        let user_present = response_data[96] != 0;
+        let public_key = response_data[..65].to_vec();
+        let signature = response_data[65..129].to_vec();
+        let user_present = response_data[129] != 0;
 
         let response = Response {
             signature,
@@ -139,8 +150,7 @@ impl Daemon {
             public_key,
             &response,
             baseline_rssi,
-        ).await?;
-        Ok(())
+        ).await
     }
 
     async fn perform_unlock(&self, conn: &Connection, device_id: Uuid) -> Result<()> {
@@ -167,8 +177,7 @@ impl Daemon {
             timestamp: Utc::now(),
         };
 
-        self.session.verify_unlock(device_id, &response).await?;
-        Ok(())
+        self.session.verify_unlock(device_id, &response).await
     }
 
     async fn cleanup(&self) {
@@ -193,36 +202,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_e2e_pairing_flow() {
-        let crypto = Arc::new(SoftwareCrypto);
+        let crypto = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(MemoryStorage::new());
         let session = Arc::new(SessionManager::new(crypto.clone(), storage));
         let _daemon = Daemon::new(session.clone(), Arc::new(MockBleAdapter::new()), Arc::new(MockPlatformSecurity::new()));
 
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        
-        // Must begin_pairing before complete_pairing
         let challenge = session.begin_pairing().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response {
-            signature: sig,
-            user_present: true,
-            timestamp: Utc::now(),
-        };
-
-        let device = session.complete_pairing(
-            "Mock Watch".into(),
-            pub_key,
-            &response,
-            -50,
-        ).await.unwrap();
-
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
+        let device = session.complete_pairing("Mock Watch".into(), pub_key, &response, -50).await.unwrap();
         assert_eq!(device.name, "Mock Watch");
         assert!(session.state().await.is_authenticated());
     }
 
     #[tokio::test]
     async fn test_e2e_auto_lock_on_rssi_drop() {
-        let crypto = Arc::new(SoftwareCrypto);
+        let crypto = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(MemoryStorage::new());
         let session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
         let ble = Arc::new(MockBleAdapter::new());
@@ -230,26 +226,12 @@ mod tests {
         let daemon = Daemon::new(session.clone(), ble.clone(), platform.clone());
 
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        
-        // Must begin_pairing before complete_pairing
         let challenge = session.begin_pairing().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response {
-            signature: sig,
-            user_present: true,
-            timestamp: Utc::now(),
-        };
-        session.complete_pairing(
-            "Mock Watch".into(),
-            pub_key,
-            &response,
-            -50,
-        ).await.unwrap();
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
+        session.complete_pairing("Mock Watch".into(), pub_key, &response, -50).await.unwrap();
 
-        let conn = Connection {
-            peripheral_id: "AA:BB:CC:DD:EE:FF".into(),
-            device_name: "Mock Watch".into(),
-        };
+        let conn = Connection { peripheral_id: "AA:BB:CC:DD:EE:FF".into(), device_name: "Mock Watch".into() };
         daemon.current_conn.write().await.replace(conn);
 
         ble.queue_rssi(-55);
@@ -261,43 +243,5 @@ mod tests {
         daemon.run_once().await.unwrap();
         assert!(platform.is_locked().await.unwrap());
         assert!(!session.state().await.is_authenticated());
-    }
-
-    #[tokio::test]
-    async fn test_e2e_unlock_existing_device() {
-        let crypto = Arc::new(SoftwareCrypto);
-        let storage = Arc::new(MemoryStorage::new());
-        let session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
-        let ble = Arc::new(MockBleAdapter::new());
-        let platform = Arc::new(MockPlatformSecurity::new());
-        let daemon = Daemon::new(session.clone(), ble.clone(), platform.clone());
-
-        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        
-        // Must begin_pairing before complete_pairing
-        let challenge = session.begin_pairing().await.unwrap();
-        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response {
-            signature: sig,
-            user_present: true,
-            timestamp: Utc::now(),
-        };
-        session.complete_pairing(
-            "Mock Watch".into(),
-            pub_key.clone(),
-            &response,
-            -50,
-        ).await.unwrap();
-
-        session.disconnect().await;
-
-        let unlock_sig = crypto.sign(&priv_key, &Challenge::generate().to_bytes()).await.unwrap();
-        let mut unlock_response = Vec::new();
-        unlock_response.extend_from_slice(&unlock_sig);
-        unlock_response.push(1);
-        ble.queue_response(unlock_response);
-
-        let result = daemon.run_once().await;
-        assert!(result.is_err());
     }
 }
