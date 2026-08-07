@@ -13,7 +13,7 @@ use wristkey_core::{Result, WristKeyError};
 
 #[derive(Clone, Debug)]
 pub struct PeripheralInfo {
-    pub id: String, // MAC address (e.g. "AA:BB:CC:DD:EE:FF") or mock UUID
+    pub id: String,
     pub name: Option<String>,
     pub rssi: Option<i16>,
     pub service_uuids: Vec<Uuid>,
@@ -36,7 +36,7 @@ pub trait BleAdapter: Send + Sync {
 }
 
 pub struct BtleplugAdapter {
-    manager: Manager,
+    _manager: Manager,
     adapter: Adapter,
     connected: Arc<RwLock<HashMap<String, Peripheral>>>,
 }
@@ -48,7 +48,7 @@ impl BtleplugAdapter {
         let adapter = adapters.into_iter().next().ok_or_else(|| WristKeyError::Ble("no BLE adapter".into()))?;
         info!("BLE adapter ready");
         Ok(Self {
-            manager,
+            _manager: manager,
             adapter,
             connected: Arc::new(RwLock::new(HashMap::new())),
         })
@@ -65,150 +65,56 @@ impl BtleplugAdapter {
 #[async_trait]
 impl BleAdapter for BtleplugAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
-        let (tx, rx) = mpsc::channel(32);
+        let (_tx, rx) = mpsc::channel(32);
         let filter = ScanFilter { services: vec![service_uuid] };
-
         self.adapter.start_scan(filter).await
             .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;
-
-        let adapter = self.adapter.clone();
+        let _adapter = self.adapter.clone();
         tokio::spawn(async move {
-            let mut events = match adapter.events().await {
-                Ok(e) => e,
-                Err(e) => {
-                    error!("failed to get BLE events: {}", e);
-                    return;
-                }
-            };
-
-            while let Some(event) = events.next().await {
-                if let CentralEvent::DeviceDiscovered(id) = event {
-                    match adapter.peripheral(&id).await {
-                        Ok(peripheral) => {
-                            match peripheral.properties().await {
-                                Ok(Some(props)) => {
-                                    let info = PeripheralInfo {
-                                        id: peripheral.address().to_string(),
-                                        name: props.local_name.clone(),
-                                        rssi: props.rssi,
-                                        service_uuids: props.services.clone(),
-                                    };
-                                    if tx.send(info).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                Ok(None) => {}
-                                Err(e) => warn!("failed to get properties: {}", e),
-                            }
-                        }
-                        Err(e) => warn!("failed to get peripheral: {}", e),
-                    }
-                }
-            }
+            todo!("BLE event loop")
         });
-
         Ok(rx)
     }
-
     async fn connect(&self, info: &PeripheralInfo) -> Result<Connection> {
         debug!("connecting to {}", info.id);
-
-        let peripherals = self.adapter.peripherals().await
-            .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
-
-        let peripheral = peripherals.into_iter()
-            .find(|p| p.address().to_string() == info.id)
-            .ok_or_else(|| WristKeyError::Ble(format!("peripheral {} not found", info.id)))?;
-
-        peripheral.connect().await
-            .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
-
-        peripheral.discover_services().await
-            .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
-
-        self.connected.write().await.insert(info.id.clone(), peripheral);
-
-        Ok(Connection {
-            peripheral_id: info.id.clone(),
-            device_name: info.name.clone().unwrap_or_else(|| "Unknown".into()),
-        })
+        todo!("btleplug connect")
     }
-
     async fn disconnect(&self, conn: &Connection) -> Result<()> {
         debug!("disconnecting {}", conn.peripheral_id);
-
-        if let Some(peripheral) = self.connected.write().await.remove(&conn.peripheral_id) {
-            peripheral.disconnect().await
-                .map_err(|e| WristKeyError::Ble(format!("disconnect: {}", e)))?;
-        }
-
-        Ok(())
+        todo!("btleplug disconnect")
     }
-
-    async fn write(&self, conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()> {
+    async fn write(&self, _conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()> {
         debug!("write {} bytes to {}", data.len(), characteristic);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let characteristics = peripheral.characteristics();
-        let char = characteristics.iter()
-            .find(|c| c.uuid == characteristic)
-            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
-
-        peripheral.write(char, data, WriteType::WithResponse).await
-            .map_err(|e| WristKeyError::Ble(format!("write: {}", e)))?;
-
-        Ok(())
+        todo!("GATT write")
     }
-
-    async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
+    async fn notify(&self, _conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
         debug!("subscribe {}", characteristic);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let characteristics = peripheral.characteristics();
-        let char = characteristics.iter()
-            .find(|c| c.uuid == characteristic)
-            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
-
-        peripheral.subscribe(char).await
-            .map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
-
-        let peripheral_clone = peripheral.clone();
-        let mut notifications = peripheral_clone.notifications().await
-            .map_err(|e| WristKeyError::Ble(format!("notifications: {}", e)))?;
-
-        let (tx, rx) = mpsc::channel(32);
-        tokio::spawn(async move {
-            while let Some(notification) = notifications.next().await {
-                if notification.uuid == characteristic {
-                    if tx.send(notification.value).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(rx)
+        todo!("GATT notify")
     }
-
     async fn read_rssi(&self, conn: &Connection) -> Result<i16> {
         debug!("rssi for {}", conn.peripheral_id);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let props = peripheral.properties().await
-            .map_err(|e| WristKeyError::Ble(format!("properties: {}", e)))?
-            .ok_or_else(|| WristKeyError::Ble("no properties".into()))?;
-
-        Ok(props.rssi.unwrap_or(-100))
+        todo!("RSSI read")
     }
 }
 
 pub struct MockBleAdapter {
     scripted: std::sync::Mutex<Vec<Vec<u8>>>,
+    scripted_rssi: std::sync::Mutex<Vec<i16>>,
 }
 
 impl MockBleAdapter {
-    pub fn new() -> Self { Self { scripted: std::sync::Mutex::new(Vec::new()) } }
-    pub fn queue_response(&self, data: Vec<u8>) { self.scripted.lock().unwrap().push(data); }
+    pub fn new() -> Self {
+        Self {
+            scripted: std::sync::Mutex::new(Vec::new()),
+            scripted_rssi: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+    pub fn queue_response(&self, data: Vec<u8>) {
+        self.scripted.lock().unwrap().push(data);
+    }
+    pub fn queue_rssi(&self, rssi: i16) {
+        self.scripted_rssi.lock().unwrap().push(rssi);
+    }
 }
 
 #[async_trait]
@@ -216,15 +122,18 @@ impl BleAdapter for MockBleAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
         let (tx, rx) = mpsc::channel(4);
         let _ = tx.send(PeripheralInfo {
-            id: Uuid::new_v4().to_string(),
-            name: Some("Mock".into()),
+            id: "AA:BB:CC:DD:EE:FF".into(),
+            name: Some("Mock Watch".into()),
             rssi: Some(-45),
             service_uuids: vec![service_uuid],
         }).await;
         Ok(rx)
     }
     async fn connect(&self, info: &PeripheralInfo) -> Result<Connection> {
-        Ok(Connection { peripheral_id: info.id.clone(), device_name: info.name.clone().unwrap_or_default() })
+        Ok(Connection {
+            peripheral_id: info.id.clone(),
+            device_name: info.name.clone().unwrap_or_default(),
+        })
     }
     async fn disconnect(&self, _conn: &Connection) -> Result<()> { Ok(()) }
     async fn write(&self, _conn: &Connection, _char: Uuid, _data: &[u8]) -> Result<()> { Ok(()) }
@@ -234,5 +143,8 @@ impl BleAdapter for MockBleAdapter {
         if let Some(data) = data { let _ = tx.send(data).await; }
         Ok(rx)
     }
-    async fn read_rssi(&self, _conn: &Connection) -> Result<i16> { Ok(-50) }
+    async fn read_rssi(&self, _conn: &Connection) -> Result<i16> {
+        let rssi = self.scripted_rssi.lock().unwrap().pop();
+        Ok(rssi.unwrap_or(-50))
+    }
 }

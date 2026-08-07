@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = storage.save_config(&Config::default()).await;
     }
 
-    let session = SessionManager::new(crypto, storage);
+    let session = Arc::new(SessionManager::new(crypto, storage));
     let ble = Arc::new(BtleplugAdapter::new().await?);
     let platform = Arc::new(LinuxSecurity::new());
 

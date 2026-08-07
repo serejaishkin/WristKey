@@ -351,6 +351,15 @@ pub struct SessionManager {
     state: Arc<RwLock<SessionState>>,
 }
 
+impl Clone for SessionManager {
+    fn clone(&self) -> Self {
+        Self {
+            crypto: Arc::clone(&self.crypto),
+            storage: Arc::clone(&self.storage),
+            state: Arc::clone(&self.state),
+        }
+    }
+}
 impl SessionManager {
     pub fn new(crypto: Arc<dyn CryptoEngine>, storage: Arc<dyn Storage>) -> Self {
         Self { crypto, storage, state: Arc::new(RwLock::new(SessionState::Disconnected)) }

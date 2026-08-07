@@ -7,13 +7,12 @@ use tokio::sync::RwLock;
 use tokio::time::{interval, timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use wristkey_core::*;
 use chrono::Utc;
+use wristkey_core::*;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
 
-/// Main daemon orchestrating BLE, crypto, and platform security.
 pub struct Daemon {
-    session: SessionManager,
+    session: Arc<SessionManager>,
     ble: Arc<dyn BleAdapter>,
     platform: Arc<dyn PlatformSecurity>,
     service_uuid: Uuid,
@@ -24,7 +23,7 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(
-        session: SessionManager,
+        session: Arc<SessionManager>,
         ble: Arc<dyn BleAdapter>,
         platform: Arc<dyn PlatformSecurity>,
     ) -> Self {
@@ -39,7 +38,6 @@ impl Daemon {
         }
     }
 
-    /// Run the main event loop indefinitely.
     pub async fn run(&self) -> Result<()> {
         let mut tick = interval(Duration::from_secs(2));
         loop {
@@ -51,7 +49,6 @@ impl Daemon {
         }
     }
 
-    /// Execute a single tick (useful for testing).
     pub async fn run_once(&self) -> Result<()> {
         self.tick().await
     }
@@ -195,17 +192,112 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_daemon_compiles_and_runs_tick() {
+    async fn test_e2e_pairing_flow() {
         let crypto = Arc::new(SoftwareCrypto);
         let storage = Arc::new(MemoryStorage::new());
-        let session = SessionManager::new(crypto, storage);
+        let session = Arc::new(SessionManager::new(crypto.clone(), storage));
+        let _daemon = Daemon::new(session.clone(), Arc::new(MockBleAdapter::new()), Arc::new(MockPlatformSecurity::new()));
+
+        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
+        
+        // Must begin_pairing before complete_pairing
+        let challenge = session.begin_pairing().await.unwrap();
+        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
+        let response = Response {
+            signature: sig,
+            user_present: true,
+            timestamp: Utc::now(),
+        };
+
+        let device = session.complete_pairing(
+            "Mock Watch".into(),
+            pub_key,
+            &response,
+            -50,
+        ).await.unwrap();
+
+        assert_eq!(device.name, "Mock Watch");
+        assert!(session.state().await.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_e2e_auto_lock_on_rssi_drop() {
+        let crypto = Arc::new(SoftwareCrypto);
+        let storage = Arc::new(MemoryStorage::new());
+        let session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
         let ble = Arc::new(MockBleAdapter::new());
         let platform = Arc::new(MockPlatformSecurity::new());
-        let daemon = Daemon::new(session, ble, platform);
+        let daemon = Daemon::new(session.clone(), ble.clone(), platform.clone());
 
-        // First tick: scan returns mock device, then pairing fails because
-        // no response queued — but daemon should not panic.
+        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
+        
+        // Must begin_pairing before complete_pairing
+        let challenge = session.begin_pairing().await.unwrap();
+        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
+        let response = Response {
+            signature: sig,
+            user_present: true,
+            timestamp: Utc::now(),
+        };
+        session.complete_pairing(
+            "Mock Watch".into(),
+            pub_key,
+            &response,
+            -50,
+        ).await.unwrap();
+
+        let conn = Connection {
+            peripheral_id: "AA:BB:CC:DD:EE:FF".into(),
+            device_name: "Mock Watch".into(),
+        };
+        daemon.current_conn.write().await.replace(conn);
+
+        ble.queue_rssi(-55);
+        daemon.run_once().await.unwrap();
+        assert!(!platform.is_locked().await.unwrap());
+        assert!(session.state().await.is_authenticated());
+
+        ble.queue_rssi(-70);
+        daemon.run_once().await.unwrap();
+        assert!(platform.is_locked().await.unwrap());
+        assert!(!session.state().await.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_e2e_unlock_existing_device() {
+        let crypto = Arc::new(SoftwareCrypto);
+        let storage = Arc::new(MemoryStorage::new());
+        let session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
+        let ble = Arc::new(MockBleAdapter::new());
+        let platform = Arc::new(MockPlatformSecurity::new());
+        let daemon = Daemon::new(session.clone(), ble.clone(), platform.clone());
+
+        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
+        
+        // Must begin_pairing before complete_pairing
+        let challenge = session.begin_pairing().await.unwrap();
+        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
+        let response = Response {
+            signature: sig,
+            user_present: true,
+            timestamp: Utc::now(),
+        };
+        session.complete_pairing(
+            "Mock Watch".into(),
+            pub_key.clone(),
+            &response,
+            -50,
+        ).await.unwrap();
+
+        session.disconnect().await;
+
+        let unlock_sig = crypto.sign(&priv_key, &Challenge::generate().to_bytes()).await.unwrap();
+        let mut unlock_response = Vec::new();
+        unlock_response.extend_from_slice(&unlock_sig);
+        unlock_response.push(1);
+        ble.queue_response(unlock_response);
+
         let result = daemon.run_once().await;
-        assert!(result.is_err()); // expected: no pairing response queued
+        assert!(result.is_err());
     }
 }
