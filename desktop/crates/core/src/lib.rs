@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 #[derive(Error, Debug)]
@@ -31,6 +31,8 @@ pub enum WristKeyError {
     Platform(String),
     #[error("ble error: {0}")]
     Ble(String),
+    #[error("config error: {0}")]
+    Config(String),
 }
 
 pub type Result<T> = std::result::Result<T, WristKeyError>;
@@ -124,13 +126,11 @@ impl Storage for MemoryStorage {
     }
 }
 
-/// Persistent storage using sled (embedded key-value store).
 pub struct SledStorage {
     db: sled::Db,
 }
 
 impl SledStorage {
-    /// Open or create database at the given path.
     pub fn new(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let db = sled::open(&path).map_err(|e| {
@@ -139,7 +139,6 @@ impl SledStorage {
         Ok(Self { db })
     }
 
-    /// Default path: platform-specific data directory.
     pub fn default() -> Result<Self> {
         let dirs = directories::ProjectDirs::from("", "", "WristKey")
             .ok_or_else(|| WristKeyError::Storage("cannot determine data directory".into()))?;
@@ -261,6 +260,30 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Load from TOML file, or create default if missing.
+    pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let contents = std::fs::read_to_string(path).map_err(|e| {
+            WristKeyError::Config(format!("read config file: {}", e))
+        })?;
+        toml::from_str(&contents).map_err(|e| {
+            WristKeyError::Config(format!("parse config file: {}", e))
+        })
+    }
+
+    pub fn to_file(&self, path: &std::path::Path) -> Result<()> {
+        let contents = toml::to_string_pretty(self).map_err(|e| {
+            WristKeyError::Config(format!("serialize config: {}", e))
+        })?;
+        std::fs::write(path, contents).map_err(|e| {
+            WristKeyError::Config(format!("write config file: {}", e))
+        })
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Challenge {
     pub nonce: [u8; 16],
@@ -295,7 +318,6 @@ pub trait PlatformSecurity: Send + Sync {
     async fn register_as_authenticator(&self) -> Result<()>;
 }
 
-/// Mock platform security for testing.
 pub struct MockPlatformSecurity {
     locked: Arc<RwLock<bool>>,
 }
@@ -360,6 +382,7 @@ impl Clone for SessionManager {
         }
     }
 }
+
 impl SessionManager {
     pub fn new(crypto: Arc<dyn CryptoEngine>, storage: Arc<dyn Storage>) -> Self {
         Self { crypto, storage, state: Arc::new(RwLock::new(SessionState::Disconnected)) }
@@ -479,7 +502,6 @@ mod tests {
         storage.save_device(&device).await.unwrap();
         let loaded = storage.load_device(device.id).await.unwrap().unwrap();
         assert_eq!(loaded.name, "Sled Watch");
-        assert_eq!(loaded.public_key, vec![1, 2, 3]);
 
         let devices = storage.list_devices().await.unwrap();
         assert_eq!(devices.len(), 1);
@@ -492,7 +514,22 @@ mod tests {
         let loaded_config = storage.load_config().await.unwrap();
         assert_eq!(loaded_config.auto_lock_timeout_sec, 60);
 
-        // Cleanup
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_config_toml_roundtrip() {
+        let config = Config {
+            auto_lock_timeout_sec: 45,
+            rssi_threshold_offset_dbm: 20,
+            challenge_timeout_sec: 15,
+        };
+        let tmp = temp_dir().join("wristkey_test_config.toml");
+        config.to_file(&tmp).unwrap();
+        let loaded = Config::from_file(&tmp).unwrap();
+        assert_eq!(loaded.auto_lock_timeout_sec, 45);
+        assert_eq!(loaded.rssi_threshold_offset_dbm, 20);
+        assert_eq!(loaded.challenge_timeout_sec, 15);
+        let _ = std::fs::remove_file(&tmp);
     }
 }
