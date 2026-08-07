@@ -1,5 +1,6 @@
 //! Cross-platform system tray (requires `tray` feature).
 
+#[allow(dead_code)]
 pub enum TrayCommand {
     Quit,
     ResetPairing,
