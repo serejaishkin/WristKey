@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use tracing::info;
-use wristkey_core::{Config, CryptoEngine, MemoryStorage, SessionManager, SoftwareCrypto, Storage};
+use wristkey_core::{Config, CryptoEngine, SessionManager, SledStorage, SoftwareCrypto, Storage};
 use wristkey_ble::BtleplugAdapter;
 use wristkey_daemon::Daemon;
 use wristkey_platform_linux::LinuxSecurity;
@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("WristKey daemon starting");
 
     let crypto: Arc<dyn CryptoEngine> = Arc::new(SoftwareCrypto);
-    let storage: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn Storage> = Arc::new(SledStorage::default()?);
     if storage.load_config().await.is_err() {
         let _ = storage.save_config(&Config::default()).await;
     }
