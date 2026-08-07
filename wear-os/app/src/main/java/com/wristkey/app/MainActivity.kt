@@ -39,10 +39,12 @@ class MainActivity : Activity() {
         statusText = findViewById(R.id.status_text)
         actionButton = findViewById(R.id.action_button)
 
-        // Bind to BLE service
-        Intent(this, WristKeyBleService::class.java).also { intent ->
-            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        }
+        // Start foreground service first (required for BLE on Android 12+)
+        val serviceIntent = Intent(this, WristKeyBleService::class.java)
+        startForegroundService(serviceIntent)
+
+        // Then bind to it
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         actionButton.setOnClickListener {
             bleService?.confirmUserPresent()
