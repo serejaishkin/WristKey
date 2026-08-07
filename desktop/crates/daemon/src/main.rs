@@ -5,7 +5,7 @@ mod tray;
 use std::sync::Arc;
 use clap::Parser;
 use tracing::{error, info, warn};
-use wristkey_core::{Config, CryptoEngine, SessionManager, SledStorage, Storage};
+use wristkey_core::{Config, CryptoEngine, EcdsaP256Crypto, SessionManager, SledStorage, Storage};
 
 #[cfg(target_os = "linux")]
 use wristkey_platform_linux::LinuxSecurity;
@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default
     };
 
-    let crypto = create_crypto_engine();
+    let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
     let storage: Arc<dyn Storage> = Arc::new(SledStorage::open_default()?);
     let _ = storage.save_config(&config).await;
 
@@ -93,6 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let platform = create_platform_adapter();
 
+    // Print startup banner to stdout so user sees something in console
+    println!("╔══════════════════════════════════════╗");
+    println!("║     WristKey Daemon v0.1.0           ║");
+    println!("║     PC unlock via Wear OS            ║");
+    println!("╚══════════════════════════════════════╝");
+    println!("Logs: {}", log_dir.display());
+
     match wristkey_ble::BtleplugAdapter::new().await {
         Ok(adapter) => {
             info!("BLE adapter initialized");
@@ -104,6 +111,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     error!("daemon crashed: {}", e);
                 }
             });
+
+            #[cfg(feature = "tray")]
+            println!("Tray icon enabled. Right-click the icon to control.");
+            #[cfg(not(feature = "tray"))]
+            println!("Running in headless mode (no tray icon). Use Task Manager to stop.");
 
             tray::run_tray();
             daemon_handle.abort();
@@ -117,15 +129,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn create_crypto_engine() -> Arc<dyn CryptoEngine> {
-    // Try to find the actual crypto implementation name from core
-    // If SoftwareCrypto exists, use it; otherwise fallback to any available
-    {
-        // This will fail at compile time if neither exists, forcing us to fix the name
-        Arc::new(wristkey_core::EcdsaP256Crypto)
-    }
 }
 
 fn create_platform_adapter() -> Arc<dyn wristkey_core::PlatformSecurity> {

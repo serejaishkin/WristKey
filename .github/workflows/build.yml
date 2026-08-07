@@ -13,12 +13,15 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: ""
+            features: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: ".exe"
+            features: "--features tray"
           - os: macos-latest
             target: x86_64-apple-darwin
             suffix: ""
+            features: "--features tray"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +32,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
       - name: Build release
-        run: cd desktop && cargo build --release --bin wristkeyd --target ${{ matrix.target }}
+        run: cd desktop && cargo build --release --bin wristkeyd --target ${{ matrix.target }} ${{ matrix.features }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

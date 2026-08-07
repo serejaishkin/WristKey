@@ -32,6 +32,5 @@ toml = { workspace = true }
 tracing-appender = { workspace = true }
 directories = "5"
 
-# Tray deps — только с feature "tray"
 tray-icon = { version = "0.19", optional = true }
 winit = { version = "0.30", optional = true }
