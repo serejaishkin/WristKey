@@ -1,37 +1,80 @@
-# Контекст
-Ты — senior инженер, специализирующийся на системной разработке, BLE и кроссплатформенной безопасности.
-Мы разрабатываем open-source проект WristKey — разблокировка ПК через смарт-часы Wear OS.
+┌─────────────────┐      BLE (Custom GATT)      ┌─────────────────┐
+│   Wear OS       │  ═══════════════════════════► │   ПК-клиент     │
+│   (Kotlin)      │      Challenge-Response      │   (Rust)        │
+│                 │      + RSSI + Motion         │                 │
+│  • Keystore     │                             │  • btleplug     │
+│  • Foreground   │                             │  • Platform     │
+│    Service      │                             │    Unlockers    │
+└─────────────────┘                             └────────┬────────┘
+│
+┌────────────────────────┼────────────────────────┐
+▼                        ▼                        ▼
+┌─────────┐              ┌──────────┐             ┌──────────┐
+│ Windows │              │  Linux   │             │  macOS   │
+│  Hello  │              │  PAM     │             │  Access  │
+│   CDF   │              │  Module  │             │   API    │
+└─────────┘              └──────────┘             └──────────┘
+plain
 
-# Архитектура системы
-1. Wear OS (Kotlin) — Android-приложение как Foreground Service:
-   - BLE Peripheral mode (GAP advertiser с custom service UUID).
-   - Приватный ключ в Android Keystore (ECDSA P-256).
-   - При сопряжении: генерация ключевой пары, передача публичного ключа на ПК.
-   - При разблокировке: подпись challenge от ПК приватным ключом.
-   - Акселерометр: разблокировка только если часы на руке и двигаются.
+---
 
-2. ПК-клиент (Rust) — системный демон + GUI-трей:
-   - Windows: Windows Hello CDF или WinAPI LockWorkStation/SendInput.
-   - Linux: PAM-модуль (pam_wristkey.so) + демон wristkeyd.
-   - macOS: демон с Accessibility API (без эмуляции Apple Watch!).
-   - BLE Central: сканирование, сопряжение, верификация подписи.
-   - RSSI-мониторинг с адаптивным порогом (калибровка при первой настройке).
+## Возможности
 
-# Протокол безопасности
-- BLE pairing: LE Secure Connections (Mode 1, Level 4).
-- Challenge-response: ПК отправляет 16-byte nonce → часы подписывают ECDSA → ПК верифицирует.
-- Auto-lock: RSSI ниже порога &gt; 30 сек → блокировка экрана.
-- Анти-релейная защита: обязательный тап по экрану часов для подтверждения разблокировки.
+- 🔐 **Криптографическая верификация** — каждая разблокировка подписывается приватным ключом из Android Keystore.
+- 📏 **Адаптивная зона доверия** — калибровка расстояния при первой настройке (RSSI + порог).
+- 👆 **Подтверждение жестом** — защита от relay-атак: тап по экрану часов для разблокировки.
+- 🔋 **Оптимизация батареи** — умный BLE-цикл, учёт Doze mode на Wear OS.
+- 🖥️ **Кроссплатформенность** — Windows, Linux, macOS из одной кодовой базы на Rust.
 
-# Стек
-- ПК: Rust, tokio, btleplug, serde, ed25519-dalek, windows-rs / pam / cocoa.
-- Wear OS: Kotlin, Coroutines, Android BLE API, Android Keystore, Motion Sensors.
+---
 
-# Правила
-- Никакой эмуляции Apple Watch на macOS — патентная и технологическая ловушка.
-- Не полагайся только на RSSI — всегда второй фактор (жест/кнопка).
-- Production-ready код: Result/Option в Rust, sealed classes в Kotlin, обработка ошибок, логирование.
-- Комментарии на английском, но можно пояснять сложные моменты на русском.
+## Установка
 
-# Текущая задача
-[ОПИШИ ЗДЕСЬ КОНКРЕТНУЮ ЗАДАЧУ]
+### Wear OS (Kotlin)
+
+```bash
+git clone https://github.com/yourusername/wristkey.git
+cd wristkey/wear-os
+./gradlew installDebug
+Требования: Wear OS 3.0+, Bluetooth Low Energy.
+ПК-клиент (Rust)
+bash
+git clone https://github.com/yourusername/wristkey.git
+cd wristkey/desktop
+cargo build --release
+Windows
+powershell
+# Требуется Windows 10 1903+ для BLE
+.\target\release\wristkey.exe --install
+Linux
+bash
+# Сборка PAM-модуля
+cargo build --release --features pam
+sudo cp target/release/libpam_wristkey.so /lib/security/
+sudo cp wristkeyd.service /etc/systemd/system/
+sudo systemctl enable --now wristkeyd
+macOS
+bash
+# Требуется доступ к Accessibility
+cargo build --release --features macos
+sudo cp target/release/wristkey /usr/local/bin/
+# Добавить в System Preferences → Security → Accessibility
+Безопасность
+Table
+Угроза	Митигация
+Relay-атака	Обязательный жест подтверждения на часах + таймаут 30 сек
+Спуфинг BLE	LE Secure Connections + ECDSA challenge-response
+Потеря часов	Автоблокировка ПК при отсутствии сигнала
+Перехват ключа	Приватный ключ никогда не покидает Android Keystore
+Roadmap
+[x] Прототип BLE-связи
+[ ] Windows Hello CDF интеграция
+[ ] Linux PAM-модуль
+[ ] macOS демон (Accessibility API)
+[ ] Калибровка RSSI с машинным обучением
+[ ] F-Droid / Google Play релиз
+[ ] Поддержка UWB (для будущих Wear OS-устройств)
+Контрибьютинг
+PR приветствуются! Сначала загляни в CONTRIBUTING.md.
+Лицензия
+MIT License. См. LICENSE.
