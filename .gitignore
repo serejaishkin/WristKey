@@ -1,5 +1,5 @@
 # Rust
-/target
+**/target/
 **/*.rs.bk
 Cargo.lock
 
@@ -17,6 +17,15 @@ Thumbs.db
 *.log
 logs/
 
+# Android
+*.iml
+.gradle/
+local.properties
+build/
+captures/
+.externalNativeBuild
+.cxx/
+
 # Build artifacts
 /dist
 /build
@@ -24,8 +33,9 @@ logs/
 *.rpm
 *.msi
 *.dmg
+*.apk
 
-# Secrets (never commit keys!)
+# Secrets
 *.pem
 *.key
 secrets.toml
