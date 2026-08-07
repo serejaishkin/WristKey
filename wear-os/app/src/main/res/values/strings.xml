@@ -3,6 +3,6 @@
     <string name="status_disconnected">Disconnected</string>
     <string name="status_pairing">Pairing…</string>
     <string name="status_connected">Connected</string>
-    <string name="action_unlock">Tap to Unlock</string>
     <string name="action_pair">Pair with PC</string>
+    <string name="action_unlock">Unlock PC</string>
 </resources>
