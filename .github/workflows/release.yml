@@ -1,0 +1,64 @@
+name: Build All Artifacts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ─── Desktop builds ───
+  desktop:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: ""
+            features: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: ".exe"
+            features: "--features tray"
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+            features: "--features tray"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Build release
+        run: cd desktop && cargo build --release --bin wristkeyd --target ${{ matrix.target }} ${{ matrix.features }}
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wristkeyd-${{ matrix.target }}
+          path: desktop/target/${{ matrix.target }}/release/wristkeyd${{ matrix.suffix }}
+
+  # ─── Wear OS APK ───
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Grant execute permission for gradlew
+        run: chmod +x wear-os/gradlew
+      - name: Build APK
+        working-directory: wear-os
+        run: ./gradlew assembleDebug
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wristkey-wearos-debug
+          path: wear-os/app/build/outputs/apk/debug/app-debug.apk
