@@ -71,17 +71,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let session = Arc::new(SessionManager::new(crypto, storage.clone()));
 
-    if cli.list_devices {
-        let devices = session.list_devices().await?;
-        if devices.is_empty() {
-            println!("No paired devices.");
-        } else {
-            println!("Paired devices:");
-            for d in devices {
-                println!("  {} - {} (paired at {}, baseline RSSI: {} dBm)",
-                    d.id, d.name, d.paired_at.format("%Y-%m-%d %H:%M"), d.baseline_rssi);
+    // Multi-device: show paired count on startup
+    match session.list_devices().await {
+        Ok(devices) => {
+            if devices.is_empty() {
+                println!("No paired devices. Use pairing mode on your watch.");
+            } else {
+                println!("Paired devices ({}):", devices.len());
+                for d in &devices {
+                    println!("  {} - {} (paired at {}, baseline RSSI: {} dBm)",
+                        d.id, d.name, d.paired_at.format("%Y-%m-%d %H:%M"), d.baseline_rssi);
+                }
             }
         }
+        Err(e) => {
+            warn!("Failed to list devices: {}", e);
+        }
+    }
+
+    if cli.list_devices {
         return Ok(());
     }
 
@@ -93,7 +101,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let platform = create_platform_adapter();
 
-    // Print startup banner to stdout so user sees something in console
+    // Tray command channel
+    let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayCommand>();
+    let data_dir = directories::ProjectDirs::from("", "", "WristKey")
+        .map(|d| d.data_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/wristkey"));
+
+    let tray_handle = std::thread::spawn(move || {
+        while let Ok(cmd) = tray_rx.recv() {
+            match cmd {
+                tray::TrayCommand::Quit => {
+                    info!("Quit command received from tray handler");
+                    break;
+                }
+                tray::TrayCommand::ResetPairing => {
+                    let db_path = data_dir.join("wristkey.db");
+                    if db_path.exists() {
+                        match std::fs::remove_dir_all(&db_path) {
+                            Ok(_) => info!("Pairing database removed: {}", db_path.display()),
+                            Err(e) => warn!("Failed to remove database (daemon may have it open): {}. Restart daemon and try again.", e),
+                        }
+                    } else {
+                        info!("No pairing database to reset");
+                    }
+                }
+                tray::TrayCommand::OpenLogs => {
+                    let log_dir = data_dir.join("logs");
+                    #[cfg(target_os = "windows")]
+                    let _ = std::process::Command::new("explorer").arg(&log_dir).spawn();
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open").arg(&log_dir).spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("xdg-open").arg(&log_dir).spawn();
+                }
+            }
+        }
+    });
+
     println!("╔══════════════════════════════════════╗");
     println!("║     WristKey Daemon v0.1.0           ║");
     println!("║     PC unlock via Wear OS            ║");
@@ -117,17 +161,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(not(feature = "tray"))]
             println!("Running in headless mode (no tray icon). Use Task Manager to stop.");
 
-            tray::run_tray();
+            tray::run_tray(tray_tx);
             daemon_handle.abort();
         }
         Err(e) => {
             warn!("BLE adapter unavailable: {}. Running in tray-only mode.", e);
             println!("⚠️  Bluetooth unavailable: {}", e);
             println!("   WristKey will run in tray-only mode. Connect a BLE adapter and restart.");
-            tray::run_tray();
+            tray::run_tray(tray_tx);
         }
     }
 
+    tray_handle.join().unwrap();
+    info!("WristKey daemon stopped");
     Ok(())
 }
 
