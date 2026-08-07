@@ -8,6 +8,11 @@ use wristkey_core::{PlatformSecurity, Result, WristKeyError};
 
 pub struct MacOSSecurity;
 
+impl Default for MacOSSecurity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl MacOSSecurity {
     pub fn new() -> Self {
         Self

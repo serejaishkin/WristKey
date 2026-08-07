@@ -7,6 +7,11 @@ use wristkey_core::{PlatformSecurity, Result, WristKeyError};
 
 pub struct LinuxSecurity;
 
+impl Default for LinuxSecurity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl LinuxSecurity {
     pub fn new() -> Self { Self }
 }

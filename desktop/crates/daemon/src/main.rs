@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let crypto = create_crypto_engine();
-    let storage: Arc<dyn Storage> = Arc::new(SledStorage::default()?);
+    let storage: Arc<dyn Storage> = Arc::new(SledStorage::open_default()?);
     let _ = storage.save_config(&config).await;
 
     let session = Arc::new(SessionManager::new(crypto, storage.clone()));
@@ -122,7 +122,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn create_crypto_engine() -> Arc<dyn CryptoEngine> {
     // Try to find the actual crypto implementation name from core
     // If SoftwareCrypto exists, use it; otherwise fallback to any available
-    #[cfg(all())]
     {
         // This will fail at compile time if neither exists, forcing us to fix the name
         Arc::new(wristkey_core::EcdsaP256Crypto)

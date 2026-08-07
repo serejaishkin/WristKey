@@ -8,6 +8,11 @@ use wristkey_core::{PlatformSecurity, Result, WristKeyError};
 
 pub struct WindowsSecurity;
 
+impl Default for WindowsSecurity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl WindowsSecurity {
     pub fn new() -> Self {
         Self

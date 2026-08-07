@@ -181,10 +181,8 @@ impl BleAdapter for BtleplugAdapter {
         let (tx, rx) = mpsc::channel(32);
         tokio::spawn(async move {
             while let Some(notification) = notifications.next().await {
-                if notification.uuid == characteristic {
-                    if tx.send(notification.value).await.is_err() {
-                        break;
-                    }
+                if notification.uuid == characteristic && tx.send(notification.value).await.is_err() {
+                    break;
                 }
             }
         });
@@ -209,6 +207,11 @@ pub struct MockBleAdapter {
     scripted_rssi: std::sync::Mutex<Vec<i16>>,
 }
 
+impl Default for MockBleAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl MockBleAdapter {
     pub fn new() -> Self {
         Self {

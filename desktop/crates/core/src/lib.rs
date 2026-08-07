@@ -92,6 +92,11 @@ pub struct MemoryStorage {
     config: Arc<RwLock<Config>>,
 }
 
+impl Default for MemoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl MemoryStorage {
     pub fn new() -> Self {
         Self {
@@ -141,7 +146,7 @@ impl SledStorage {
         Ok(Self { db })
     }
 
-    pub fn default() -> Result<Self> {
+    pub fn open_default() -> Result<Self> {
         let dirs = directories::ProjectDirs::from("", "", "WristKey")
             .ok_or_else(|| WristKeyError::Storage("cannot determine data directory".into()))?;
         let path = dirs.data_dir();
@@ -323,6 +328,11 @@ pub struct MockPlatformSecurity {
     locked: Arc<RwLock<bool>>,
 }
 
+impl Default for MockPlatformSecurity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl MockPlatformSecurity {
     pub fn new() -> Self {
         Self {
