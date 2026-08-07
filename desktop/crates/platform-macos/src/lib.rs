@@ -3,7 +3,6 @@
 //! Lock via AppleScript. NO Apple Watch emulation. Unlock manual only.
 
 use async_trait::async_trait;
-use tracing::{info, warn};
 use wristkey_core::{PlatformSecurity, Result, WristKeyError};
 
 pub struct MacOSSecurity;
@@ -35,12 +34,12 @@ impl PlatformSecurity for MacOSSecurity {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(WristKeyError::Platform(format!("macOS lock: {}", stderr)));
             }
-            info!("screen locked via AppleScript");
+            tracing::info!("screen locked via AppleScript");
             Ok(())
         }
         #[cfg(not(target_os = "macos"))]
         {
-            warn!("MacOSSecurity::lock_screen called on non-macOS");
+            tracing::warn!("MacOSSecurity::lock_screen called on non-macOS");
             Err(WristKeyError::Platform("not on macOS".into()))
         }
     }
@@ -58,7 +57,7 @@ impl PlatformSecurity for MacOSSecurity {
     }
 
     async fn register_as_authenticator(&self) -> Result<()> {
-        info!("macOS: presence detection only, no pluggable GUI auth");
+        tracing::info!("macOS: presence detection only, no pluggable GUI auth");
         Ok(())
     }
 }
