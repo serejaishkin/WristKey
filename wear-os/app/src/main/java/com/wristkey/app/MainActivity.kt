@@ -21,16 +21,20 @@ class MainActivity : Activity() {
         actionButton = findViewById(R.id.action_button)
 
         // Start BLE foreground service
-        startService(Intent(this, WristKeyBleService::class.java))
+        startForegroundService(Intent(this, WristKeyBleService::class.java))
 
         actionButton.setOnClickListener {
-            // TODO: trigger user-present confirmation for unlock
+            // Send broadcast to service: user confirmed presence
+            sendBroadcast(Intent(WristKeyBleService.ACTION_USER_PRESENT).apply {
+                putExtra(WristKeyBleService.EXTRA_DEVICE_NAME, "PC")
+            })
             statusText.text = getString(R.string.status_pairing)
+            actionButton.text = getString(R.string.action_unlock)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // Service continues running in foreground
+        // Service continues as foreground
     }
 }
