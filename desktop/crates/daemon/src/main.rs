@@ -4,27 +4,24 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::info;
 use wristkey_core::{Config, CryptoEngine, SessionManager, SledStorage, SoftwareCrypto, Storage};
-use wristkey_ble::BtleplugAdapter;
-use wristkey_daemon::Daemon;
+
+#[cfg(target_os = "linux")]
 use wristkey_platform_linux::LinuxSecurity;
+#[cfg(windows)]
+use wristkey_platform_win::WindowsSecurity;
+#[cfg(target_os = "macos")]
+use wristkey_platform_macos::MacOSSecurity;
 
 #[derive(Parser, Debug)]
 #[command(name = "wristkeyd")]
 #[command(about = "WristKey daemon — unlock your PC via Wear OS")]
 struct Cli {
-    /// Path to config file (TOML)
     #[arg(short, long)]
     config: Option<std::path::PathBuf>,
-
-    /// One-shot pairing mode (scan for 30s and pair new device)
     #[arg(long)]
     pair: bool,
-
-    /// List paired devices and exit
     #[arg(long)]
     list_devices: bool,
-
-    /// Run in foreground (don't daemonize)
     #[arg(long, default_value = "true")]
     foreground: bool,
 }
@@ -33,7 +30,6 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // Logging: stdout + file rotation
     let log_dir = directories::ProjectDirs::from("", "", "WristKey")
         .map(|d| d.data_dir().join("logs"))
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp/wristkey/logs"));
@@ -50,7 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("WristKey daemon starting");
 
-    // Load config
     let config_path = cli.config.unwrap_or_else(|| {
         directories::ProjectDirs::from("", "", "WristKey")
             .map(|d| d.config_dir().join("config.toml"))
@@ -90,15 +85,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.pair {
         println!("Pairing mode: scanning for 30 seconds...");
-        // TODO: implement one-shot pairing CLI flow
-        println!("Pairing not yet implemented in CLI mode. Use daemon auto-pairing.");
+        println!("Use daemon auto-pairing for now.");
         return Ok(());
     }
 
-    // Normal daemon mode
-    let ble = Arc::new(BtleplugAdapter::new().await?);
-    let platform = Arc::new(LinuxSecurity::new());
+    let ble = Arc::new(wristkey_ble::BtleplugAdapter::new().await?);
+    let platform = create_platform_adapter();
 
-    let daemon = Daemon::new(session, ble, platform);
+    let daemon = wristkey_daemon::Daemon::new(session, ble, platform);
     daemon.run().await.map_err(|e| e.into())
+}
+
+fn create_platform_adapter() -> Arc<dyn wristkey_core::PlatformSecurity> {
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(LinuxSecurity::new())
+    }
+    #[cfg(windows)]
+    {
+        Arc::new(WindowsSecurity::new())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(MacOSSecurity::new())
+    }
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+    {
+        compile_error!("unsupported platform")
+    }
 }

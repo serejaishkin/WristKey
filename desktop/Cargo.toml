@@ -2,7 +2,9 @@
 members = [
     "crates/core",
     "crates/ble",
+    "crates/platform-win",
     "crates/platform-linux",
+    "crates/platform-macos",
     "crates/daemon",
 ]
 resolver = "2"
