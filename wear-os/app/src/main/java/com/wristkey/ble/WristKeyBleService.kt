@@ -34,6 +34,7 @@ import java.util.*
 class WristKeyBleService : Service() {
 
     companion object {
+        private const val TAG = "WristKeyBLE"
         const val CHANNEL_ID = "wristkey_ble_channel"
         const val NOTIFICATION_ID = 1
 
@@ -42,9 +43,11 @@ class WristKeyBleService : Service() {
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
         val STATUS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
 
-        const val STATUS_DISCONNECTED = 0x00
-        const val STATUS_PAIRING = 0x01
-        const val STATUS_AUTHENTICATED = 0x02
+        val CLIENT_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+        const val STATUS_DISCONNECTED: Byte = 0x00
+        const val STATUS_PAIRING: Byte = 0x01
+        const val STATUS_AUTHENTICATED: Byte = 0x02
     }
 
     private val binder = LocalBinder()
@@ -61,6 +64,9 @@ class WristKeyBleService : Service() {
     private var currentDevice: BluetoothDevice? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
     private var statusCharacteristic: BluetoothGattCharacteristic? = null
+
+    @Volatile
+    private var lastUserPresentTime: Long = 0
 
     inner class LocalBinder : Binder() {
         fun getService(): WristKeyBleService = this@WristKeyBleService
@@ -182,7 +188,7 @@ class WristKeyBleService : Service() {
                 CLIENT_CONFIG_UUID,
                 BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
             ))
-            value = byteArrayOf(STATUS_DISCONNECTED)
+            setValue(byteArrayOf(STATUS_DISCONNECTED))
         }
 
         service.addCharacteristic(challengeChar)
@@ -241,7 +247,7 @@ class WristKeyBleService : Service() {
 
         // User must have tapped screen recently for user_present=true
         val userPresent = isUserPresent()
-        val userPresentByte = if (userPresent) 1.toByte() else 0.toByte()
+        val userPresentByte: Byte = if (userPresent) 1 else 0
 
         // Build payload: nonce || timestamp || user_present
         val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
@@ -347,13 +353,6 @@ class WristKeyBleService : Service() {
             .build()
     }
 
-    /**
-     * Returns true if user tapped the confirmation button recently (within 10s).
-     * Set to true by MainActivity when user taps the screen.
-     */
-    @Volatile
-    private var lastUserPresentTime: Long = 0
-
     fun confirmUserPresent() {
         lastUserPresentTime = System.currentTimeMillis()
         Log.i(TAG, "User presence confirmed")
@@ -398,9 +397,4 @@ class WristKeyBleService : Service() {
     }
 
     //endregion
-
-    companion object {
-        private const val TAG = "WristKeyBLE"
-        private val CLIENT_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-    }
 }
