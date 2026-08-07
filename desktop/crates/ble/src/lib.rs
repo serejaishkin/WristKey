@@ -65,35 +65,142 @@ impl BtleplugAdapter {
 #[async_trait]
 impl BleAdapter for BtleplugAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
-        let (_tx, rx) = mpsc::channel(32);
+        let (tx, rx) = mpsc::channel(32);
         let filter = ScanFilter { services: vec![service_uuid] };
+
         self.adapter.start_scan(filter).await
             .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;
-        let _adapter = self.adapter.clone();
+
+        let adapter = self.adapter.clone();
         tokio::spawn(async move {
-            todo!("BLE event loop")
+            let mut events = match adapter.events().await {
+                Ok(e) => e,
+                Err(e) => {
+                    error!("failed to get BLE events: {}", e);
+                    return;
+                }
+            };
+
+            while let Some(event) = events.next().await {
+                if let CentralEvent::DeviceDiscovered(id) = event {
+                    match adapter.peripheral(&id).await {
+                        Ok(peripheral) => {
+                            match peripheral.properties().await {
+                                Ok(Some(props)) => {
+                                    let info = PeripheralInfo {
+                                        id: peripheral.address().to_string(),
+                                        name: props.local_name.clone(),
+                                        rssi: props.rssi,
+                                        service_uuids: props.services.clone(),
+                                    };
+                                    if tx.send(info).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => warn!("failed to get properties: {}", e),
+                            }
+                        }
+                        Err(e) => warn!("failed to get peripheral: {}", e),
+                    }
+                }
+            }
         });
+
         Ok(rx)
     }
+
     async fn connect(&self, info: &PeripheralInfo) -> Result<Connection> {
         debug!("connecting to {}", info.id);
-        todo!("btleplug connect")
+
+        let peripherals = self.adapter.peripherals().await
+            .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
+
+        let peripheral = peripherals.into_iter()
+            .find(|p| p.address().to_string() == info.id)
+            .ok_or_else(|| WristKeyError::Ble(format!("peripheral {} not found", info.id)))?;
+
+        peripheral.connect().await
+            .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
+
+        peripheral.discover_services().await
+            .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
+
+        self.connected.write().await.insert(info.id.clone(), peripheral);
+
+        info!("connected to {} ({})", info.name.as_deref().unwrap_or("unknown"), info.id);
+        Ok(Connection {
+            peripheral_id: info.id.clone(),
+            device_name: info.name.clone().unwrap_or_else(|| "Unknown".into()),
+        })
     }
+
     async fn disconnect(&self, conn: &Connection) -> Result<()> {
         debug!("disconnecting {}", conn.peripheral_id);
-        todo!("btleplug disconnect")
+
+        if let Some(peripheral) = self.connected.write().await.remove(&conn.peripheral_id) {
+            peripheral.disconnect().await
+                .map_err(|e| WristKeyError::Ble(format!("disconnect: {}", e)))?;
+            info!("disconnected {}", conn.peripheral_id);
+        }
+
+        Ok(())
     }
-    async fn write(&self, _conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()> {
+
+    async fn write(&self, conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()> {
         debug!("write {} bytes to {}", data.len(), characteristic);
-        todo!("GATT write")
+
+        let peripheral = self.get_connected(&conn.peripheral_id).await?;
+        let characteristics = peripheral.characteristics();
+        let char = characteristics.iter()
+            .find(|c| c.uuid == characteristic)
+            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
+
+        peripheral.write(char, data, WriteType::WithResponse).await
+            .map_err(|e| WristKeyError::Ble(format!("write: {}", e)))?;
+
+        Ok(())
     }
-    async fn notify(&self, _conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
+
+    async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
         debug!("subscribe {}", characteristic);
-        todo!("GATT notify")
+
+        let peripheral = self.get_connected(&conn.peripheral_id).await?;
+        let characteristics = peripheral.characteristics();
+        let char = characteristics.iter()
+            .find(|c| c.uuid == characteristic)
+            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
+
+        peripheral.subscribe(char).await
+            .map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
+
+        let peripheral_clone = peripheral.clone();
+        let mut notifications = peripheral_clone.notifications().await
+            .map_err(|e| WristKeyError::Ble(format!("notifications: {}", e)))?;
+
+        let (tx, rx) = mpsc::channel(32);
+        tokio::spawn(async move {
+            while let Some(notification) = notifications.next().await {
+                if notification.uuid == characteristic {
+                    if tx.send(notification.value).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
     }
+
     async fn read_rssi(&self, conn: &Connection) -> Result<i16> {
         debug!("rssi for {}", conn.peripheral_id);
-        todo!("RSSI read")
+
+        let peripheral = self.get_connected(&conn.peripheral_id).await?;
+        let props = peripheral.properties().await
+            .map_err(|e| WristKeyError::Ble(format!("properties: {}", e)))?
+            .ok_or_else(|| WristKeyError::Ble("no properties".into()))?;
+
+        Ok(props.rssi.unwrap_or(-100))
     }
 }
 
