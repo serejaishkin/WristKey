@@ -22,9 +22,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
 
-/**
- * Foreground service acting as BLE Peripheral (GATT Server).
- */
 class WristKeyBleService : Service() {
 
     companion object {
@@ -36,7 +33,6 @@ class WristKeyBleService : Service() {
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
         val STATUS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
-
         val CLIENT_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         const val STATUS_DISCONNECTED: Byte = 0x00
@@ -45,7 +41,6 @@ class WristKeyBleService : Service() {
     }
 
     private val binder = LocalBinder()
-
     private var bluetoothManager: BluetoothManager? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var gattServer: BluetoothGattServer? = null
@@ -75,10 +70,17 @@ class WristKeyBleService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification("Initializing…"))
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification("Initializing…"))
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed — service not allowed in background", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         startGattServer()
         startAdvertising()
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -90,7 +92,6 @@ class WristKeyBleService : Service() {
         super.onDestroy()
     }
 
-    /** Reset pairing: clear stored keys and disconnect current device. */
     fun resetPairing() {
         Log.i(TAG, "Resetting pairing state")
         currentDevice?.let { device ->
@@ -103,8 +104,6 @@ class WristKeyBleService : Service() {
         startAdvertising()
         Log.i(TAG, "Pairing reset complete")
     }
-
-    //region GATT Server
 
     private fun startGattServer() {
         val gattServerCallback = object : BluetoothGattServerCallback() {
@@ -209,10 +208,6 @@ class WristKeyBleService : Service() {
         gattServer = null
     }
 
-    //endregion
-
-    //region Challenge-Response
-
     private fun handleChallenge(
         device: BluetoothDevice,
         requestId: Int,
@@ -274,10 +269,6 @@ class WristKeyBleService : Service() {
         }
     }
 
-    //endregion
-
-    //region Advertising
-
     private fun startAdvertising() {
         val adapter = bluetoothAdapter ?: return
         advertiser = adapter.bluetoothLeAdvertiser ?: return
@@ -312,10 +303,6 @@ class WristKeyBleService : Service() {
         advertiser?.stopAdvertising(advertiseCallback)
         advertiser = null
     }
-
-    //endregion
-
-    //region Helpers
 
     private fun updateStatus(status: Byte) {
         statusCharacteristic?.value = byteArrayOf(status)
@@ -383,6 +370,4 @@ class WristKeyBleService : Service() {
         val sPadded = ByteArray(32) { i -> if (i < 32 - s.size) 0 else s[i - (32 - s.size)] }
         return rPadded + sPadded
     }
-
-    //endregion
 }

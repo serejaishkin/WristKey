@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.widget.Button
@@ -20,6 +22,8 @@ class MainActivity : Activity() {
     private lateinit var resetButton: Button
     private var bleService: WristKeyBleService? = null
     private var bound = false
+
+    private val REQUEST_BT_PERMISSIONS = 1001
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -42,11 +46,6 @@ class MainActivity : Activity() {
         actionButton = findViewById(R.id.action_button)
         resetButton = findViewById(R.id.reset_button)
 
-        // Start foreground service first (required for BLE on Android 12+)
-        val serviceIntent = Intent(this, WristKeyBleService::class.java)
-        startForegroundService(serviceIntent)
-        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
-
         actionButton.setOnClickListener {
             bleService?.confirmUserPresent()
             statusText.text = getString(R.string.status_pairing)
@@ -59,6 +58,67 @@ class MainActivity : Activity() {
             actionButton.text = getString(R.string.action_pair)
             Toast.makeText(this, R.string.reset_done, Toast.LENGTH_SHORT).show()
         }
+
+        if (hasBluetoothPermissions()) {
+            startBleService()
+        } else {
+            requestBluetoothPermissions()
+        }
+    }
+
+    private fun hasBluetoothPermissions(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        } else {
+            checkSelfPermission(android.Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(android.Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun requestBluetoothPermissions() {
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_ADVERTISE,
+                android.Manifest.permission.BLUETOOTH_SCAN
+            )
+        } else {
+            arrayOf(
+                android.Manifest.permission.BLUETOOTH,
+                android.Manifest.permission.BLUETOOTH_ADMIN,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        }
+        requestPermissions(permissions, REQUEST_BT_PERMISSIONS)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_BT_PERMISSIONS) {
+            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                startBleService()
+            } else {
+                statusText.text = "Bluetooth permissions denied"
+                Toast.makeText(this, "Bluetooth permissions required", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun startBleService() {
+        val serviceIntent = Intent(this, WristKeyBleService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
     override fun onDestroy() {
