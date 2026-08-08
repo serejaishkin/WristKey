@@ -73,7 +73,7 @@ class WristKeyBleService : Service() {
         try {
             startForeground(NOTIFICATION_ID, buildNotification("Initializing…"))
         } catch (e: Exception) {
-            Log.e(TAG, "startForeground failed — service not allowed in background", e)
+            Log.e(TAG, "startForeground failed", e)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -280,19 +280,27 @@ class WristKeyBleService : Service() {
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
             .build()
 
+        // FIX: do NOT include device name — it often exceeds 31-byte advertising packet limit
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .build()
 
         advertiseCallback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                Log.i(TAG, "Advertising started")
+                Log.i(TAG, "Advertising started successfully")
                 updateNotification("Advertising…")
             }
 
             override fun onStartFailure(errorCode: Int) {
                 Log.e(TAG, "Advertising failed: $errorCode")
+                when (errorCode) {
+                    ADVERTISE_FAILED_DATA_TOO_LARGE -> Log.e(TAG, "  → DATA_TOO_LARGE")
+                    ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> Log.e(TAG, "  → TOO_MANY_ADVERTISERS")
+                    ADVERTISE_FAILED_ALREADY_STARTED -> Log.e(TAG, "  → ALREADY_STARTED")
+                    ADVERTISE_FAILED_INTERNAL_ERROR -> Log.e(TAG, "  → INTERNAL_ERROR")
+                    ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> Log.e(TAG, "  → FEATURE_UNSUPPORTED")
+                    else -> Log.e(TAG, "  → UNKNOWN")
+                }
             }
         }
 
