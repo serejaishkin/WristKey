@@ -183,16 +183,10 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
     
-    // 1. Read public key from watch
-        return Err("Empty public key from watch".into());
-    }
-    
-    // 2. Subscribe to response notifications
     let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
     let mut rx = adapter.notify(&conn, response_uuid).await
         .map_err(|e| format!("notify: {}", e))?;
     
-    // 3. Generate challenge
     let mut challenge = vec![0u8; 24];
     let nonce = uuid::Uuid::new_v4().as_bytes()[..16].to_vec();
     challenge[..16].copy_from_slice(&nonce);
@@ -202,12 +196,10 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
         .as_secs();
     challenge[16..24].copy_from_slice(&timestamp.to_le_bytes());
     
-    // 4. Write challenge
     let challenge_uuid = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
     adapter.write(&conn, challenge_uuid, &challenge).await
         .map_err(|e| format!("write challenge: {}", e))?;
     
-    // 5. Wait for response
     let response = tokio::time::timeout(
         tokio::time::Duration::from_secs(10),
         rx.recv()
@@ -215,33 +207,29 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     .map_err(|_| "timeout waiting for response")?
     .ok_or("no response received")?;
     
-    if response.len() < 65 {
+    if response.len() < 66 {
         return Err("response too short".into());
     }
     
-    // 6. Parse response
     let signature = &response[0..64];
-    
+    let user_present = response[64] == 1;
     let public_key = response[65..].to_vec();
-    if public_key.is_empty() { return Err("No public key in response".into()); }
-    
     
     if !user_present {
         return Err("User not present on watch".into());
     }
     
-    // 7. Build payload for verification (same as watch: nonce + timestamp + user_present)
-    let mut payload = challenge.clone();
-    payload.push(1); // user_present = true
+    if public_key.is_empty() {
+        return Err("No public key in response".into());
+    }
     
-    // 8. Verify ECDSA signature
+    let mut payload = challenge.clone();
+    payload.push(1);
+    
     match verify_ecdsa_p256(&public_key, &payload, signature) {
         Ok(true) => println!("✅ Signature verified!"),
         Ok(false) | Err(_) => return Err("Signature verification failed".into()),
     }
-    
-    // 9. TODO: Save to DeviceStore
-    // let device = PairedDevice { mac: dev.id, name: ..., public_key, ... };
     
     adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
     Ok(())
