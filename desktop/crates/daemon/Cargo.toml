@@ -41,3 +41,4 @@ directories = "5"
 tray-icon = { version = "0.19", optional = true }
 winit = { version = "0.30", optional = true }
 eframe = "0.28"
+hex = "0.4"

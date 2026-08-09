@@ -112,7 +112,7 @@ impl Daemon {
 
         let devices = self.session.list_devices().await?;
         // Match by static device_id (survives MAC randomization), fallback to any paired device
-        let matched = devices.into_iter().find(|d| {
+        let matched = devices.clone().into_iter().find(|d| {
             info.device_id.as_ref().map(|id| d.device_id.as_ref() == Some(id)).unwrap_or(false)
         }).or_else(|| {
             if devices.len() == 1 { devices.into_iter().next() } else { None }
@@ -173,11 +173,9 @@ impl Daemon {
 
         let baseline_rssi = self.ble.read_rssi(conn).await?;
         let device_id = response_data.get(130..134).map(|b| hex::encode(b));
-        let device_id = response_data.get(130..134).map(|b| hex::encode(b));
         self.session.complete_pairing(
             info.name.unwrap_or_else(|| "Unknown Watch".into()),
             public_key,
-            device_id,
             device_id,
             &response,
             baseline_rssi,
