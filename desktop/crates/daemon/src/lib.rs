@@ -184,7 +184,7 @@ impl Daemon {
         // begin_unlock stores this exact challenge in session state so that
         // verify_unlock checks the signature against what was actually sent.
         let challenge = self.session.begin_unlock(device_id).await?;
-        self.ble.write(conn, self.challenge_char, &challenge.to_bytes()).await?;
+        self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
 
         let mut rx = self.ble.notify(conn, self.response_char).await?;
         let response_data = timeout(Duration::from_secs(10), rx.recv())
@@ -240,7 +240,7 @@ mod tests {
         let challenge = session.begin_pairing().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
         let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = session.complete_pairing("Mock Watch".into(), pub_key, &response, -50).await.unwrap();
+        let device = session.complete_pairing("Mock Watch".into(), pub_key, None, &response, -50).await.unwrap();
         assert_eq!(device.name, "Mock Watch");
         assert!(session.state().await.is_authenticated());
     }
@@ -258,7 +258,7 @@ mod tests {
         let challenge = session.begin_pairing().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
         let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        session.complete_pairing("Mock Watch".into(), pub_key, &response, -50).await.unwrap();
+        session.complete_pairing("Mock Watch".into(), pub_key, None, &response, -50).await.unwrap();
 
         let conn = Connection { peripheral_id: "AA:BB:CC:DD:EE:FF".into(), device_name: "Mock Watch".into() };
         daemon.current_conn.write().await.replace(conn);
