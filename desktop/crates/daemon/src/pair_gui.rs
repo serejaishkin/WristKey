@@ -8,6 +8,7 @@ use uuid::Uuid;
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
+const STATUS_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567893";
 
 fn main() {
     let rt = Runtime::new().expect("tokio runtime");
@@ -191,9 +192,39 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
     
-    // TODO: send challenge, verify response, save public key
-    // For now just connect and disconnect to test
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    // Subscribe to response notifications
+    let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
+    let mut rx = adapter.notify(&conn, response_uuid).await.map_err(|e| format!("notify: {}", e))?;
+    
+    // Generate challenge: 16-byte nonce + 8-byte timestamp (little-endian)
+    let mut challenge = vec![0u8; 24];
+    let nonce = uuid::Uuid::new_v4().as_bytes()[..16].to_vec();
+    challenge[..16].copy_from_slice(&nonce);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    challenge[16..24].copy_from_slice(&timestamp.to_le_bytes());
+    
+    // Write challenge
+    let challenge_uuid = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
+    adapter.write(&conn, challenge_uuid, &challenge).await
+        .map_err(|e| format!("write challenge: {}", e))?;
+    
+    // Wait for response (signature + userPresent byte)
+    let response = tokio::time::timeout(
+        tokio::time::Duration::from_secs(10),
+        rx.recv()
+    ).await
+    .map_err(|_| "timeout waiting for response")?
+    .ok_or("no response received")?;
+    
+    if response.len() < 65 {
+        return Err("response too short".into());
+    }
+    
+    // TODO: verify ECDSA signature here
+    // For now just check we got something
     
     adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
     Ok(())
