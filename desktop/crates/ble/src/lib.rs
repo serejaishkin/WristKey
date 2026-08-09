@@ -14,6 +14,7 @@ use wristkey_core::{Result, WristKeyError};
 #[derive(Clone, Debug)]
 pub struct PeripheralInfo {
     pub pin: Option<String>,
+    pub device_id: Option<String>,
     pub id: String,
     pub name: Option<String>,
     pub rssi: Option<i16>,

@@ -6063,6 +6063,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "btleplug",
+ "hex",
  "serde",
  "thiserror 1.0.69",
  "tokio",

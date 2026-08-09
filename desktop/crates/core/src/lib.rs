@@ -246,6 +246,7 @@ pub struct PairedDevice {
     pub id: Uuid,
     pub name: String,
     pub public_key: Vec<u8>,
+    pub device_id: Option<String>,
     pub paired_at: DateTime<Utc>,
     pub baseline_rssi: i16,
 }
