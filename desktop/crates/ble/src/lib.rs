@@ -92,8 +92,8 @@ impl BleAdapter for BtleplugAdapter {
                                 Ok(Some(props)) => {
                                     info!("BLE discovered: {} name={:?} rssi={:?} svcs={:?}", peripheral.address(), props.local_name, props.rssi, props.services);
                                     info!("  ALL: addr={} name={:?} rssi={:?} manuf={:?}", peripheral.address(), props.local_name, props.rssi, props.manufacturer_data);
-                                    if !props.services.contains(&service_uuid) {
-                                        debug!("  skipping, no matching service UUID");
+                                    if !props.manufacturer_data.contains_key(&0xFFFF) {
+                                        debug!("  skipping, no WristKey manufacturer data");
                                         continue;
                                     }
                                     let manufacturer_data = props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default();

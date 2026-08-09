@@ -290,6 +290,7 @@ class WristKeyBleService : Service() {
 
         val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
+            .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .build()
 
         advertiseCallback = object : AdvertiseCallback() {
