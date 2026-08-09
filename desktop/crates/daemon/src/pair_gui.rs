@@ -125,7 +125,7 @@ impl eframe::App for PairApp {
                         
                         let response = ui.selectable_label(is_selected, format!(
                             "📱 {}  |  {}  |  {} dBm",
-                            dev.name.as_deref().unwrap_or("Unknown"),
+                            dev.pin.as_deref().or(dev.name.as_deref()).unwrap_or("Unknown"),
                             dev.id,
                             dev.rssi.map(|r| r.to_string()).unwrap_or_else(|| "N/A".into())
                         ));
@@ -139,7 +139,7 @@ impl eframe::App for PairApp {
                                 ui.add_space(24.0);
                                 if ui.button("🔗 Pair with this device").clicked() {
                                     *self.pairing.lock().unwrap() = true;
-                                    *self.status.lock().unwrap() = format!("Pairing with {}…", dev.name.as_deref().unwrap_or("Unknown"));
+                                    *self.status.lock().unwrap() = format!("Pairing with {}…", dev.pin.as_deref().or(dev.name.as_deref()).unwrap_or("Unknown"));
                                     
                                     let devices = self.devices.clone();
                                     let status = self.status.clone();

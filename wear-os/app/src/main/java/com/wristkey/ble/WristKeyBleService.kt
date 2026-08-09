@@ -38,6 +38,10 @@ class WristKeyBleService : Service() {
         const val STATUS_DISCONNECTED: Byte = 0x00
         const val STATUS_PAIRING: Byte = 0x01
         const val STATUS_AUTHENTICATED: Byte = 0x02
+
+        // Pairing PIN — shown on watch screen, embedded in advertising
+        var pairingPin: String = (1000..9999).random().toString()
+            private set
     }
 
     private val binder = LocalBinder()
@@ -100,9 +104,11 @@ class WristKeyBleService : Service() {
         currentDevice = null
         updateStatus(STATUS_DISCONNECTED)
         securityManager.resetKeys()
+        // Generate new PIN on reset
+        pairingPin = (1000..9999).random().toString()
         stopAdvertising()
         startAdvertising()
-        Log.i(TAG, "Pairing reset complete")
+        Log.i(TAG, "Pairing reset complete, new PIN: $pairingPin")
     }
 
     private fun startGattServer() {
@@ -280,27 +286,20 @@ class WristKeyBleService : Service() {
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
             .build()
 
-        // FIX: do NOT include device name — it often exceeds 31-byte advertising packet limit
+        val pinBytes = pairingPin.toByteArray(Charsets.UTF_8)
         val data = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
+            .addManufacturerData(0xFFFF, pinBytes)
             .build()
 
         advertiseCallback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                Log.i(TAG, "Advertising started successfully")
-                updateNotification("Advertising…")
+                Log.i(TAG, "Advertising started successfully, PIN: $pairingPin")
+                updateNotification("PIN: $pairingPin")
             }
 
             override fun onStartFailure(errorCode: Int) {
                 Log.e(TAG, "Advertising failed: $errorCode")
-                when (errorCode) {
-                    ADVERTISE_FAILED_DATA_TOO_LARGE -> Log.e(TAG, "  → DATA_TOO_LARGE")
-                    ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> Log.e(TAG, "  → TOO_MANY_ADVERTISERS")
-                    ADVERTISE_FAILED_ALREADY_STARTED -> Log.e(TAG, "  → ALREADY_STARTED")
-                    ADVERTISE_FAILED_INTERNAL_ERROR -> Log.e(TAG, "  → INTERNAL_ERROR")
-                    ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> Log.e(TAG, "  → FEATURE_UNSUPPORTED")
-                    else -> Log.e(TAG, "  → UNKNOWN")
-                }
             }
         }
 

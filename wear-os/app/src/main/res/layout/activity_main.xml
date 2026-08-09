@@ -7,12 +7,13 @@
     android:padding="16dp">
 
     <TextView
-        android:id="@+id/mac_text"
+        android:id="@+id/pin_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="MAC: --"
-        android:textSize="12sp"
-        android:textColor="#888888"
+        android:text="PIN: ----"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:textColor="#00FF00"
         android:layout_marginBottom="8dp" />
 
     <TextView
@@ -20,8 +21,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="@string/status_disconnected"
-        android:textSize="18sp"
-        android:layout_marginBottom="24dp" />
+        android:textSize="14sp"
+        android:layout_marginBottom="16dp" />
 
     <Button
         android:id="@+id/action_button"
@@ -34,5 +35,5 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="@string/action_reset"
-        android:layout_marginTop="12dp" />
+        android:layout_marginTop="8dp" />
 </LinearLayout>
