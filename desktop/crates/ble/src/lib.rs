@@ -89,6 +89,7 @@ impl BleAdapter for BtleplugAdapter {
                             match peripheral.properties().await {
                                 Ok(Some(props)) => {
                                     info!("BLE discovered: {} name={:?} rssi={:?} svcs={:?}", peripheral.address(), props.local_name, props.rssi, props.services);
+                                info!("  → ALL devices: addr={} name={:?} rssi={:?} manuf={:?}", peripheral.address(), props.local_name, props.rssi, props.manufacturer_data);
                                     if !props.services.contains(&service_uuid) {
                                         debug!("  → skipping, no matching service UUID");
                                         continue;

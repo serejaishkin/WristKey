@@ -70,6 +70,7 @@ class WristKeyBleService : Service() {
         createNotificationChannel()
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
+        bluetoothAdapter?.name = "WK"
         motionDetector.start()
     }
 
@@ -288,6 +289,7 @@ class WristKeyBleService : Service() {
 
         val pinBytes = pairingPin.toByteArray(Charsets.UTF_8)
         val data = AdvertiseData.Builder()
+            .setIncludeTxPowerLevel(false)
             .setIncludeTxPowerLevel(false)
             .setIncludeDeviceName(true)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
