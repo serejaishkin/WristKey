@@ -111,20 +111,42 @@ impl Daemon {
         *self.current_conn.write().await = Some(conn.clone());
 
         let devices = self.session.list_devices().await?;
-        let matched = devices.into_iter()
-            .find(|d| info.name.as_ref().map(|n| n == &d.name).unwrap_or(false));
+        // Match by static device_id (survives MAC randomization), fallback to any paired device
+        let matched = devices.into_iter().find(|d| {
+            info.device_id.as_ref().map(|id| d.device_id.as_ref() == Some(id)).unwrap_or(false)
+        }).or_else(|| {
+            if devices.len() == 1 { devices.into_iter().next() } else { None }
+        });
 
         if let Some(device) = matched {
+            info!("matched device: {} (id={:?})", device.name, device.device_id);
             self.perform_unlock(&conn, device.id).await?;
         } else {
+            info!("no matched paired device, starting pairing");
             let _device = self.perform_pairing(&conn, info).await?;
+        }
+        Ok(())
+    }
+
+    async fn write_with_retry(&self, conn: &Connection, char: Uuid, data: &[u8]) -> Result<()> {
+        // Windows BLE needs a moment after discovery before accepting writes
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        for attempt in 1..=3 {
+            match self.ble.write(conn, char, data).await {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < 3 => {
+                    warn!("write attempt {} failed: {}, retrying...", attempt, e);
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
 
     async fn perform_pairing(&self, conn: &Connection, info: PeripheralInfo) -> Result<PairedDevice> {
         let challenge = self.session.begin_pairing().await?;
-        self.ble.write(conn, self.challenge_char, &challenge.to_bytes()).await?;
+        self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
 
         let mut rx = self.ble.notify(conn, self.response_char).await?;
         let response_data = timeout(Duration::from_secs(10), rx.recv())
