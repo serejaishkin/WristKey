@@ -51,6 +51,7 @@ class SecurityManager {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete key", e)
         }
+        generateKeyPairIfNeeded()
     }
 
     private fun generateKeyPairIfNeeded() {
