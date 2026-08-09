@@ -349,7 +349,7 @@ class WristKeyBleService : Service() {
     }
 
     private fun isUserPresent(): Boolean {
-        return System.currentTimeMillis() - lastUserPresentTime < 10_000
+        return System.currentTimeMillis() - lastUserPresentTime < 60_000
     }
 
     private fun derToRaw(der: ByteArray): ByteArray {
