@@ -284,7 +284,7 @@ class WristKeyBleService : Service() {
 
         val data = AdvertiseData.Builder()
             .setIncludeTxPowerLevel(false)
-            .addServiceUuid(ParcelUuid(SERVICE_UUID))
+            
             .addManufacturerData(0xFFFF, manufacturerData)
             .build()
 
