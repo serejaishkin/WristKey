@@ -280,7 +280,7 @@ class WristKeyBleService : Service() {
         advertiser = adapter.bluetoothLeAdvertiser ?: return
 
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setConnectable(true)
             .setTimeout(0)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
@@ -288,6 +288,8 @@ class WristKeyBleService : Service() {
 
         val pinBytes = pairingPin.toByteArray(Charsets.UTF_8)
         val data = AdvertiseData.Builder()
+            .setIncludeTxPowerLevel(false)
+            .setIncludeDeviceName(true)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .addManufacturerData(0xFFFF, pinBytes)
             .build()

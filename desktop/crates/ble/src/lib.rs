@@ -94,6 +94,7 @@ impl BleAdapter for BtleplugAdapter {
                                         continue;
                                     }
                                     let info = PeripheralInfo {
+                                    pin: None,
                                         id: peripheral.address().to_string(),
                                         name: props.local_name.clone(),
                                         rssi: props.rssi,
@@ -258,6 +259,8 @@ impl BleAdapter for MockBleAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
         let (tx, rx) = mpsc::channel(4);
         let _ = tx.send(PeripheralInfo {
+                    pin: None,
+                    pin: None,
             id: "AA:BB:CC:DD:EE:FF".into(),
             name: Some("Mock Watch".into()),
             rssi: Some(-45),
