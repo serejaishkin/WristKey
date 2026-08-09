@@ -183,6 +183,7 @@ impl BleAdapter for BtleplugAdapter {
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
         let characteristics = peripheral.characteristics();
+        info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
         let char = characteristics.iter()
             .find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
@@ -198,6 +199,7 @@ impl BleAdapter for BtleplugAdapter {
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
         let characteristics = peripheral.characteristics();
+        info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
         let char = characteristics.iter()
             .find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
@@ -237,6 +239,7 @@ impl BleAdapter for BtleplugAdapter {
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
         let characteristics = peripheral.characteristics();
+        info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
         let char = characteristics.iter()
             .find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;

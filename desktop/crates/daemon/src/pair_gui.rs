@@ -184,11 +184,6 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
     
     // 1. Read public key from watch
-    let pubkey_uuid = Uuid::parse_str(PUBKEY_CHAR).unwrap();
-    let public_key = adapter.read(&conn, pubkey_uuid).await
-        .map_err(|e| format!("read pubkey: {}", e))?;
-    
-    if public_key.is_empty() {
         return Err("Empty public key from watch".into());
     }
     
@@ -225,8 +220,11 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     }
     
     // 6. Parse response
-    let signature = &response[..64];
-    let user_present = response[64] == 1;
+    let signature = &response[0..64];
+    
+    let public_key = response[65..].to_vec();
+    if public_key.is_empty() { return Err("No public key in response".into()); }
+    
     
     if !user_present {
         return Err("User not present on watch".into());
