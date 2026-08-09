@@ -21,6 +21,9 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     struct TrayApp {
         _tray_icon: tray_icon::TrayIcon,
         cmd_tx: std::sync::mpsc::Sender<TrayCommand>,
+        quit_id: tray_icon::menu::MenuId,
+        reset_id: tray_icon::menu::MenuId,
+        logs_id: tray_icon::menu::MenuId,
     }
 
     impl ApplicationHandler for TrayApp {
@@ -42,36 +45,19 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     impl TrayApp {
         fn process_menu_events(&self, event_loop: &winit::event_loop::ActiveEventLoop) {
             while let Ok(event) = MenuEvent::receiver().try_recv() {
-                if event.id == quit_id() {
+                if event.id == self.quit_id {
                     tracing::info!("Quit selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::Quit);
                     event_loop.exit();
-                } else if event.id == reset_id() {
+                } else if event.id == self.reset_id {
                     tracing::info!("Reset pairing selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::ResetPairing);
-                } else if event.id == logs_id() {
+                } else if event.id == self.logs_id {
+                    tracing::info!("Open logs selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::OpenLogs);
                 }
             }
         }
-    }
-
-    fn quit_id() -> tray_icon::menu::MenuId {
-        use std::sync::OnceLock;
-        static ID: OnceLock<tray_icon::menu::MenuId> = OnceLock::new();
-        ID.get_or_init(|| MenuItem::new("Quit", true, None).id().clone()).clone()
-    }
-
-    fn logs_id() -> tray_icon::menu::MenuId {
-        use std::sync::OnceLock;
-        static ID: OnceLock<tray_icon::menu::MenuId> = OnceLock::new();
-        ID.get_or_init(|| MenuItem::new("Open Logs Folder", true, None).id().clone()).clone()
-    }
-
-    fn reset_id() -> tray_icon::menu::MenuId {
-        use std::sync::OnceLock;
-        static ID: OnceLock<tray_icon::menu::MenuId> = OnceLock::new();
-        ID.get_or_init(|| MenuItem::new("Reset Pairing", true, None).id().clone()).clone()
     }
 
     let event_loop = EventLoop::new().expect("create event loop");
@@ -80,21 +66,21 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     let menu = Menu::new();
     let _status_i = MenuItem::new("Status: Waiting for watch…", false, None);
     let _sep1 = PredefinedMenuItem::separator();
-    let _devices_i = MenuItem::new("Paired Devices", true, None);
-    let _settings_i = MenuItem::new("Settings", true, None);
-    let _logs_i = MenuItem::new("Open Logs Folder", true, None);
-    let _reset_i = MenuItem::new("Reset Pairing", true, None);
+    let _devices_i = MenuItem::new("Paired Devices", false, None);
+    let _settings_i = MenuItem::new("Settings", false, None);
+    let logs_i = MenuItem::new("Open Logs Folder", true, None);
+    let reset_i = MenuItem::new("Reset Pairing", true, None);
     let _sep2 = PredefinedMenuItem::separator();
-    let _quit_i = MenuItem::new("Quit", true, None);
+    let quit_i = MenuItem::new("Quit", true, None);
 
     menu.append(&_status_i).unwrap();
     menu.append(&_sep1).unwrap();
     menu.append(&_devices_i).unwrap();
     menu.append(&_settings_i).unwrap();
-    menu.append(&_logs_i).unwrap();
-    menu.append(&_reset_i).unwrap();
+    menu.append(&logs_i).unwrap();
+    menu.append(&reset_i).unwrap();
     menu.append(&_sep2).unwrap();
-    menu.append(&_quit_i).unwrap();
+    menu.append(&quit_i).unwrap();
 
     let icon = load_icon();
 
@@ -105,7 +91,13 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         .build()
         .expect("create tray icon");
 
-    let mut app = TrayApp { _tray_icon: tray_icon, cmd_tx };
+    let mut app = TrayApp {
+        _tray_icon: tray_icon,
+        cmd_tx,
+        quit_id: quit_i.id().clone(),
+        reset_id: reset_i.id().clone(),
+        logs_id: logs_i.id().clone(),
+    };
     event_loop.run_app(&mut app).expect("event loop");
 }
 
