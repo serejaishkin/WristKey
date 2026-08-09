@@ -184,6 +184,12 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
     
+    // Windows BLE cache fix: disconnect and reconnect to force service discovery
+    println!("Reconnecting to bypass Windows BLE cache...");
+    adapter.disconnect(&conn).await.ok();
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let conn = adapter.connect(&dev).await.map_err(|e| format!("reconnect: {}", e))?;
+    
     let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
     let mut rx = adapter.notify(&conn, response_uuid).await
         .map_err(|e| format!("notify: {}", e))?;
