@@ -6,6 +6,8 @@ use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo};
 use uuid::Uuid;
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
+const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
 
 fn main() {
     let rt = Runtime::new().expect("tokio runtime");
@@ -14,12 +16,14 @@ fn main() {
     let scanning: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     let status: Arc<Mutex<String>> = Arc::new(Mutex::new("Click Scan to find watches".to_string()));
     let selected: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None::<usize>));
+    let pairing: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
     let app = PairApp {
         devices,
         scanning,
         status,
         selected,
+        pairing,
         rt,
     };
 
@@ -42,6 +46,7 @@ struct PairApp {
     scanning: Arc<Mutex<bool>>,
     status: Arc<Mutex<String>>,
     selected: Arc<Mutex<Option<usize>>>,
+    pairing: Arc<Mutex<bool>>,
     rt: Runtime,
 }
 
@@ -52,15 +57,17 @@ impl eframe::App for PairApp {
             ui.separator();
 
             let scanning = *self.scanning.lock().unwrap();
+            let pairing = *self.pairing.lock().unwrap();
             let devices = self.devices.lock().unwrap().clone();
             let status = self.status.lock().unwrap().clone();
 
             // Scan button
             ui.horizontal(|ui| {
-                if ui.add_sized([120.0, 36.0], eframe::egui::Button::new("🔍 Scan")).clicked() && !scanning {
+                if ui.add_sized([120.0, 36.0], eframe::egui::Button::new("🔍 Scan")).clicked() && !scanning && !pairing {
                     *self.scanning.lock().unwrap() = true;
                     *self.status.lock().unwrap() = "Scanning for 30 seconds…".to_string();
                     self.devices.lock().unwrap().clear();
+                    *self.selected.lock().unwrap() = None;
                     
                     let devices = self.devices.clone();
                     let scanning = self.scanning.clone();
@@ -126,11 +133,41 @@ impl eframe::App for PairApp {
                             *self.selected.lock().unwrap() = Some(idx);
                         }
                         
-                        if is_selected {
+                        if is_selected && !pairing {
                             ui.horizontal(|ui| {
                                 ui.add_space(24.0);
                                 if ui.button("🔗 Pair with this device").clicked() {
+                                    *self.pairing.lock().unwrap() = true;
                                     *self.status.lock().unwrap() = format!("Pairing with {}…", dev.name.as_deref().unwrap_or("Unknown"));
+                                    
+                                    let devices = self.devices.clone();
+                                    let status = self.status.clone();
+                                    let pairing = self.pairing.clone();
+                                    let selected = self.selected.clone();
+                                    let ctx = ctx.clone();
+                                    
+                                    self.rt.spawn(async move {
+                                        let idx = selected.lock().unwrap().unwrap_or(0);
+                                        let dev = {
+                                            let d = devices.lock().unwrap();
+                                            d.get(idx).cloned()
+                                        };
+                                        
+                                        if let Some(dev) = dev {
+                                            match do_pairing(dev).await {
+                                                Ok(_) => {
+                                                    *status.lock().unwrap() = "✅ Paired successfully!".to_string();
+                                                }
+                                                Err(e) => {
+                                                    *status.lock().unwrap() = format!("❌ Pairing failed: {}", e);
+                                                }
+                                            }
+                                        } else {
+                                            *status.lock().unwrap() = "Device not found".to_string();
+                                        }
+                                        *pairing.lock().unwrap() = false;
+                                        ctx.request_repaint();
+                                    });
                                 }
                             });
                         }
@@ -148,4 +185,16 @@ impl eframe::App for PairApp {
             });
         });
     }
+}
+
+async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error>> {
+    let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
+    let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
+    
+    // TODO: send challenge, verify response, save public key
+    // For now just connect and disconnect to test
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    
+    adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
+    Ok(())
 }

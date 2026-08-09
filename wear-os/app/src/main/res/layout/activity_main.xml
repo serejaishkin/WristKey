@@ -7,6 +7,15 @@
     android:padding="16dp">
 
     <TextView
+        android:id="@+id/mac_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="MAC: --"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
         android:id="@+id/status_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

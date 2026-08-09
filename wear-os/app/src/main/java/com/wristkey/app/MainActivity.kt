@@ -1,6 +1,8 @@
 package com.wristkey.app
 
 import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -17,6 +19,7 @@ import com.wristkey.ble.WristKeyBleService
 
 class MainActivity : Activity() {
 
+    private lateinit var macText: TextView
     private lateinit var statusText: TextView
     private lateinit var actionButton: Button
     private lateinit var resetButton: Button
@@ -42,9 +45,13 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        macText = findViewById(R.id.mac_text)
         statusText = findViewById(R.id.status_text)
         actionButton = findViewById(R.id.action_button)
         resetButton = findViewById(R.id.reset_button)
+
+        // Show Bluetooth MAC address
+        showMacAddress()
 
         actionButton.setOnClickListener {
             bleService?.confirmUserPresent()
@@ -63,6 +70,17 @@ class MainActivity : Activity() {
             startBleService()
         } else {
             requestBluetoothPermissions()
+        }
+    }
+
+    private fun showMacAddress() {
+        try {
+            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val adapter = bluetoothManager.adapter
+            val address = adapter?.address ?: "Unknown"
+            macText.text = "MAC: $address"
+        } catch (e: SecurityException) {
+            macText.text = "MAC: permission denied"
         }
     }
 
@@ -104,6 +122,7 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_BT_PERMISSIONS) {
             if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
                 startBleService()
+                showMacAddress() // refresh MAC after permissions granted
             } else {
                 statusText.text = "Bluetooth permissions denied"
                 Toast.makeText(this, "Bluetooth permissions required", Toast.LENGTH_LONG).show()
