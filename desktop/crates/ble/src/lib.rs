@@ -293,6 +293,7 @@ impl BleAdapter for MockBleAdapter {
         let _ = tx.send(PeripheralInfo {
             id: "AA:BB:CC:DD:EE:FF".into(),
             pin: None,
+            device_id: None,
             name: Some("Mock Watch".into()),
             rssi: Some(-45),
             service_uuids: vec![service_uuid],
