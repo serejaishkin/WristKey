@@ -172,9 +172,13 @@ impl Daemon {
         };
 
         let baseline_rssi = self.ble.read_rssi(conn).await?;
+        let device_id = response_data.get(130..134).map(|b| hex::encode(b));
+        let device_id = response_data.get(130..134).map(|b| hex::encode(b));
         self.session.complete_pairing(
             info.name.unwrap_or_else(|| "Unknown Watch".into()),
             public_key,
+            device_id,
+            device_id,
             &response,
             baseline_rssi,
         ).await
