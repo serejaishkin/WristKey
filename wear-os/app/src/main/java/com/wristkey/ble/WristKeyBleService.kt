@@ -287,12 +287,15 @@ class WristKeyBleService : Service() {
             .build()
 
         val pinBytes = pairingPin.toByteArray(Charsets.UTF_8)
+        // Primary packet: UUID + PIN (must fit 31 bytes)
         val data = AdvertiseData.Builder()
             .setIncludeTxPowerLevel(false)
-            .setIncludeTxPowerLevel(false)
-            .setIncludeDeviceName(true)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .addManufacturerData(0xFFFF, pinBytes)
+            .build()
+        // Scan response: device name (separate packet)
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
             .build()
 
         advertiseCallback = object : AdvertiseCallback() {
