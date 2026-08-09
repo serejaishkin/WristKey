@@ -97,14 +97,13 @@ impl BleAdapter for BtleplugAdapter {
                                         continue;
                                     }
                                     let manufacturer_data = props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default();
-                        let pin = String::from_utf8(manufacturer_data.clone()).ok();
-                        let device_id = if manufacturer_data.len() > 4 {
-                            Some(hex::encode(&manufacturer_data[manufacturer_data.len()-4..]))
-                        } else { None };
-                                        .and_then(|v| String::from_utf8(v.clone()).ok());
+                                    let pin = String::from_utf8(manufacturer_data.clone()).ok();
+                                    let device_id = if manufacturer_data.len() > 4 {
+                                        Some(hex::encode(&manufacturer_data[manufacturer_data.len()-4..]))
+                                    } else { None };
                                     let info = PeripheralInfo {
                                         pin,
-                            device_id,
+                                        device_id,
                                         id: peripheral.address().to_string(),
                                         name: props.local_name.clone(),
                                         rssi: props.rssi,
