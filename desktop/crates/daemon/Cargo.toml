@@ -17,7 +17,7 @@ name = "wristkey-pair"
 path = "src/pair_gui.rs"
 
 [features]
-default = []
+default = ["tray"]
 tray = ["dep:tray-icon", "dep:winit"]
 
 [dependencies]
