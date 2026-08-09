@@ -9,16 +9,16 @@ extern "system" {
     fn LockWorkStation() -> i32;
 }
 
-pub struct WindowsPlatform;
+pub struct WindowsSecurity;
 
-impl WindowsPlatform {
+impl WindowsSecurity {
     pub fn new() -> Self {
         Self
     }
 }
 
 #[async_trait]
-impl PlatformSecurity for WindowsPlatform {
+impl PlatformSecurity for WindowsSecurity {
     async fn lock_screen(&self) -> Result<()> {
         info!("Locking workstation");
         unsafe {
