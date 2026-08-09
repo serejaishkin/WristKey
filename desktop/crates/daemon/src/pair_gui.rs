@@ -238,7 +238,7 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     
     // 8. Verify ECDSA signature
     match verify_ecdsa_p256(&public_key, &payload, signature) {
-        Ok(true) => info!("✅ Signature verified!"),
+        Ok(true) => println!("✅ Signature verified!"),
         Ok(false) | Err(_) => return Err("Signature verification failed".into()),
     }
     

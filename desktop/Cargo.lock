@@ -6020,6 +6020,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wristkey-crypto"
+version = "0.1.0"
+dependencies = [
+ "ecdsa",
+ "p256",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "wristkey-daemon"
 version = "0.1.0"
 dependencies = [
@@ -6038,6 +6048,7 @@ dependencies = [
  "winit 0.30.13",
  "wristkey-ble",
  "wristkey-core",
+ "wristkey-crypto",
  "wristkey-platform-linux",
  "wristkey-platform-macos",
  "wristkey-platform-win",
