@@ -157,6 +157,14 @@ impl BleAdapter for BtleplugAdapter {
         peripheral.discover_services().await
             .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
 
+        let services = peripheral.services();
+        info!("Discovered {} services", services.len());
+        for svc in services {
+            info!("  Service: {}", svc.uuid);
+            for char in svc.characteristics {
+                info!("    Char: {} props={:?}", char.uuid, char.properties);
+            }
+        }
         self.connected.write().await.insert(info.id.clone(), peripheral);
 
         info!("connected to {} ({})", info.name.as_deref().unwrap_or("unknown"), info.id);

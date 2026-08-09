@@ -13,6 +13,7 @@ const PUBKEY_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567894";
 
 fn main() {
     let rt = Runtime::new().expect("tokio runtime");
+    tracing_subscriber::fmt::init();
     
     let devices: Arc<Mutex<Vec<PeripheralInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let scanning: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
