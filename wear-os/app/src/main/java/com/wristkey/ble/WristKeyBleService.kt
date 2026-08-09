@@ -169,7 +169,7 @@ class WristKeyBleService : Service() {
         val challengeChar = BluetoothGattCharacteristic(
             CHALLENGE_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_WRITE,
-            BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED or BluetoothGattCharacteristic.PERMISSION_WRITE
+            BluetoothGattCharacteristic.PERMISSION_WRITE
         )
 
         responseCharacteristic = BluetoothGattCharacteristic(
