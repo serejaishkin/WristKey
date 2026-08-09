@@ -66,7 +66,7 @@ impl BtleplugAdapter {
 impl BleAdapter for BtleplugAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
         let (tx, rx) = mpsc::channel(32);
-        let filter = ScanFilter { services: vec![service_uuid] };
+        let filter = ScanFilter::default();
 
         self.adapter.start_scan(filter).await
             .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;
@@ -87,6 +87,11 @@ impl BleAdapter for BtleplugAdapter {
                         Ok(peripheral) => {
                             match peripheral.properties().await {
                                 Ok(Some(props)) => {
+                                    info!("BLE discovered: {} name={:?} rssi={:?} svcs={:?}", peripheral.address(), props.local_name, props.rssi, props.services);
+                                    if !props.services.contains(&service_uuid) {
+                                        debug!("  → skipping, no matching service UUID");
+                                        continue;
+                                    }
                                     let info = PeripheralInfo {
                                         id: peripheral.address().to_string(),
                                         name: props.local_name.clone(),

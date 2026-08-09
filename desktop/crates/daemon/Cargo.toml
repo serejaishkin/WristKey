@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "wristkeyd"
 path = "src/main.rs"
 
+[[bin]]
+name = "wristkey-pair"
+path = "src/pair_gui.rs"
+
 [features]
 default = []
 tray = ["dep:tray-icon", "dep:winit"]
@@ -35,3 +39,4 @@ directories = "5"
 
 tray-icon = { version = "0.19", optional = true }
 winit = { version = "0.30", optional = true }
+eframe = "0.28"
