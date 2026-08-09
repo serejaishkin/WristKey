@@ -45,7 +45,7 @@ class MotionDetector(context: Context) : SensorEventListener {
             if (kotlin.math.abs(magnitude - SensorManager.GRAVITY_EARTH) > motionThreshold) {
                 lastMotionTime = System.currentTimeMillis()
                 isMoving = true
-            } else if (System.currentTimeMillis() - lastMotionTime > 3000) {
+            } else if (System.currentTimeMillis() - lastMotionTime > 10000) {
                 isMoving = false
             }
         }

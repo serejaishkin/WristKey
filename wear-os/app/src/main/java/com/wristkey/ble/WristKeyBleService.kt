@@ -13,6 +13,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.os.ParcelUuid
+import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
@@ -235,7 +236,11 @@ class WristKeyBleService : Service() {
             return
         }
 
-        if (false) { // TODO: fix motion timeout {
+        // Vibrate to prompt user to move the watch
+        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        vibrator?.vibrate(200)
+
+        if (!motionDetector.isMoving) {
             Log.w(TAG, "Rejecting challenge: watch not in motion (possible relay attack)")
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
