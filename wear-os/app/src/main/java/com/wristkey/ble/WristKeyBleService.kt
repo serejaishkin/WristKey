@@ -180,7 +180,7 @@ class WristKeyBleService : Service() {
 
         responseCharacteristic = BluetoothGattCharacteristic(
             RESPONSE_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE,
             BluetoothGattCharacteristic.PERMISSION_READ
         ).apply {
             addDescriptor(BluetoothGattDescriptor(
@@ -191,7 +191,7 @@ class WristKeyBleService : Service() {
 
         statusCharacteristic = BluetoothGattCharacteristic(
             STATUS_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE,
             BluetoothGattCharacteristic.PERMISSION_READ
         ).apply {
             addDescriptor(BluetoothGattDescriptor(
@@ -211,7 +211,6 @@ class WristKeyBleService : Service() {
             Log.e(TAG, "Failed to get public key", e)
             byteArrayOf()
         }
-        Log.i(TAG, "pubkeyChar added: ${pubkeyChar.uuid}, value size: ${pubkeyBytes.size}")
 
         gattServer?.addService(service)
         Log.i(TAG, "GATT server started with ${service.characteristics.size} characteristics")
