@@ -33,6 +33,13 @@ class SecurityManager {
         return signature.sign()
     }
 
+    /** Return 4-byte device identifier (first 4 bytes of SHA-256 of public key) */
+    fun getDeviceId(): ByteArray {
+        val pubKey = getPublicKey()
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        return digest.digest(pubKey).copyOfRange(0, 4)
+    }
+
     /**
      * Return the public key as a raw SEC1 uncompressed point: 0x04 || X(32) || Y(32) = 65 bytes.
      *
