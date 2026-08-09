@@ -118,12 +118,32 @@ impl BleAdapter for BtleplugAdapter {
     async fn connect(&self, info: &PeripheralInfo) -> Result<Connection> {
         debug!("connecting to {}", info.id);
 
-        let peripherals = self.adapter.peripherals().await
-            .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
+        let mut peripheral = {
+            let peripherals = self.adapter.peripherals().await
+                .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
+            peripherals.into_iter()
+                .find(|p| p.address().to_string() == info.id)
+        };
 
-        let peripheral = peripherals.into_iter()
-            .find(|p| p.address().to_string() == info.id)
-            .ok_or_else(|| WristKeyError::Ble(format!("peripheral {} not found", info.id)))?;
+        if peripheral.is_none() {
+            info!("peripheral {} not in cache, starting discovery scan", info.id);
+            let filter = ScanFilter::default();
+            self.adapter.start_scan(filter).await
+                .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;
+            for _ in 0..50 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                let peripherals = self.adapter.peripherals().await
+                    .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
+                if let Some(p) = peripherals.into_iter().find(|p| p.address().to_string() == info.id) {
+                    peripheral = Some(p);
+                    break;
+                }
+            }
+            let _ = self.adapter.stop_scan().await;
+        }
+
+        let peripheral = peripheral
+            .ok_or_else(|| WristKeyError::Ble(format!("peripheral {} not found after scan", info.id)))?;
 
         peripheral.connect().await
             .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
