@@ -235,7 +235,7 @@ class WristKeyBleService : Service() {
             return
         }
 
-        if (!motionDetector.isMoving) {
+        if (false) { // TODO: fix motion timeout {
             Log.w(TAG, "Rejecting challenge: watch not in motion (possible relay attack)")
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)

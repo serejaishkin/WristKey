@@ -6,6 +6,7 @@ import android.util.Log
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
+import java.security.interfaces.ECPublicKey
 
 class SecurityManager {
     companion object {
@@ -32,11 +33,34 @@ class SecurityManager {
         return signature.sign()
     }
 
-    /** Return X.509 encoded public key for pairing */
+    /**
+     * Return the public key as a raw SEC1 uncompressed point: 0x04 || X(32) || Y(32) = 65 bytes.
+     *
+     * IMPORTANT: `entry.certificate.publicKey.encoded` returns X.509 SubjectPublicKeyInfo DER
+     * (~91 bytes with the curve OID header), which p256::PublicKey::from_sec1_bytes() on the
+     * desktop side cannot parse. We must extract the raw EC point ourselves instead.
+     */
     fun getPublicKey(): ByteArray {
         val entry = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
             ?: throw IllegalStateException("Key not found")
-        return entry.certificate.publicKey.encoded
+        val ecPublicKey = entry.certificate.publicKey as ECPublicKey
+        val x = padTo32(ecPublicKey.w.affineX.toByteArray())
+        val y = padTo32(ecPublicKey.w.affineY.toByteArray())
+        return byteArrayOf(0x04) + x + y
+    }
+
+    /**
+     * BigInteger.toByteArray() is signed two's-complement, so it can return 31, 32, or 33
+     * bytes (an extra leading 0x00 sign byte when the high bit of the true value is set).
+     * Normalize to exactly 32 bytes, dropping any sign byte / left-padding with zeros.
+     */
+    private fun padTo32(raw: ByteArray): ByteArray {
+        val trimmed = if (raw.size == 33 && raw[0] == 0.toByte()) raw.copyOfRange(1, 33) else raw
+        return if (trimmed.size < 32) {
+            ByteArray(32 - trimmed.size) + trimmed
+        } else {
+            trimmed
+        }
     }
 
     /** Delete the auth key pair to force re-pairing. */

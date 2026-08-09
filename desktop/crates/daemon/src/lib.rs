@@ -129,14 +129,16 @@ impl Daemon {
             .map_err(|_| WristKeyError::Ble("pairing timeout".into()))?
             .ok_or_else(|| WristKeyError::Ble("no pairing response".into()))?;
 
-        if response_data.len() < 65 {
+        // Watch always sends: raw_signature(64) || user_present(1) || public_key(rest).
+        // This MUST match wristkey-ble/WristKeyBleService.handleChallenge byte order.
+        if response_data.len() < 66 {
             return Err(WristKeyError::Protocol(
                 format!("pairing response too short: {} bytes", response_data.len())
             ));
         }
-        let public_key = response_data[..65].to_vec();
-        let signature = response_data[65..129].to_vec();
-        let user_present = response_data[129] != 0;
+        let signature = response_data[..64].to_vec();
+        let user_present = response_data[64] != 0;
+        let public_key = response_data[65..].to_vec();
 
         let response = Response {
             signature,
@@ -154,7 +156,9 @@ impl Daemon {
     }
 
     async fn perform_unlock(&self, conn: &Connection, device_id: Uuid) -> Result<()> {
-        let challenge = Challenge::generate();
+        // begin_unlock stores this exact challenge in session state so that
+        // verify_unlock checks the signature against what was actually sent.
+        let challenge = self.session.begin_unlock(device_id).await?;
         self.ble.write(conn, self.challenge_char, &challenge.to_bytes()).await?;
 
         let mut rx = self.ble.notify(conn, self.response_char).await?;
@@ -177,7 +181,7 @@ impl Daemon {
             timestamp: Utc::now(),
         };
 
-        self.session.verify_unlock(device_id, &response).await
+        self.session.verify_unlock(&response).await
     }
 
     async fn cleanup(&self) {

@@ -362,6 +362,7 @@ impl PlatformSecurity for MockPlatformSecurity {
 pub enum SessionState {
     Disconnected,
     Pairing { challenge: Challenge, started_at: DateTime<Utc> },
+    Verifying { device_id: Uuid, challenge: Challenge, started_at: DateTime<Utc> },
     Authenticated { device_id: Uuid, last_rssi: i16, last_seen: DateTime<Utc> },
     Locked,
 }
@@ -426,9 +427,27 @@ impl SessionManager {
         info!("pairing completed for {}", device.id);
         Ok(device)
     }
-    pub async fn verify_unlock(&self, device_id: Uuid, response: &Response) -> Result<()> {
-        let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+    /// Starts an unlock attempt for a specific paired device and returns the challenge
+    /// that must be sent to it. The challenge is stored in session state so that
+    /// `verify_unlock` checks the signature against the exact bytes that were sent,
+    /// not a freshly generated (and therefore never-signed) challenge.
+    pub async fn begin_unlock(&self, device_id: Uuid) -> Result<Challenge> {
         let challenge = Challenge::generate();
+        *self.state.write().await = SessionState::Verifying {
+            device_id,
+            challenge: challenge.clone(),
+            started_at: Utc::now(),
+        };
+        info!("unlock verification started for {}", device_id);
+        Ok(challenge)
+    }
+
+    pub async fn verify_unlock(&self, response: &Response) -> Result<()> {
+        let (device_id, challenge) = match self.state.read().await.clone() {
+            SessionState::Verifying { device_id, challenge, .. } => (device_id, challenge),
+            other => return Err(WristKeyError::Session(format!("expected Verifying, got {:?}", other))),
+        };
+        let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         self.crypto.verify(&device.public_key, &challenge.to_bytes(), &response.signature).await?;
         if !response.user_present {
             return Err(WristKeyError::Protocol("user presence required".into()));
@@ -491,10 +510,54 @@ mod tests {
         let challenge = manager.begin_pairing().await.unwrap();
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response { signature: sig.clone(), user_present: true, timestamp: Utc::now() };
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
         let device = manager.complete_pairing("Watch".into(), pub_key, &response, -50).await.unwrap();
-        let bad = Response { signature: sig, user_present: false, timestamp: Utc::now() };
-        assert!(manager.verify_unlock(device.id, &bad).await.is_err());
+
+        // begin_unlock issues a fresh challenge; the watch must sign THIS one.
+        let unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
+        let good_sig = crypto.sign(&priv_key, &unlock_challenge.to_bytes()).await.unwrap();
+        let bad = Response { signature: good_sig, user_present: false, timestamp: Utc::now() };
+        assert!(manager.verify_unlock(&bad).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unlock_rejects_signature_for_wrong_challenge() {
+        // Regression test for the bug where verify_unlock generated its own
+        // random challenge instead of checking against the one actually sent.
+        let crypto = Arc::new(EcdsaP256Crypto);
+        let storage = Arc::new(MemoryStorage::new());
+        let manager = SessionManager::new(crypto.clone(), storage.clone());
+        let challenge = manager.begin_pairing().await.unwrap();
+        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
+        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
+        let device = manager.complete_pairing("Watch".into(), pub_key, &response, -50).await.unwrap();
+
+        let _unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
+        // Sign a DIFFERENT (stale) challenge, simulating a watch response
+        // that doesn't match what was actually sent this round.
+        let stale = Challenge::generate();
+        let stale_sig = crypto.sign(&priv_key, &stale.to_bytes()).await.unwrap();
+        let bad = Response { signature: stale_sig, user_present: true, timestamp: Utc::now() };
+        assert!(manager.verify_unlock(&bad).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unlock_succeeds_for_matching_challenge() {
+        let crypto = Arc::new(EcdsaP256Crypto);
+        let storage = Arc::new(MemoryStorage::new());
+        let manager = SessionManager::new(crypto.clone(), storage.clone());
+        let challenge = manager.begin_pairing().await.unwrap();
+        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
+        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
+        let device = manager.complete_pairing("Watch".into(), pub_key, &response, -50).await.unwrap();
+
+        let unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
+        let good_sig = crypto.sign(&priv_key, &unlock_challenge.to_bytes()).await.unwrap();
+        let good = Response { signature: good_sig, user_present: true, timestamp: Utc::now() };
+        assert!(manager.verify_unlock(&good).await.is_ok());
+        assert!(manager.state().await.is_authenticated());
     }
 
     #[tokio::test]
