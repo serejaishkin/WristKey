@@ -86,6 +86,9 @@ impl Daemon {
                     self.session.disconnect().await;
                 }
             }
+            SessionState::Verifying { .. } => {
+                debug!("state: verifying unlock challenge...");
+            }
             SessionState::Pairing { .. } => {
                 debug!("state: pairing in progress...");
             }
