@@ -40,8 +40,9 @@ class WristKeyBleService : Service() {
         const val STATUS_PAIRING: Byte = 0x01
         const val STATUS_AUTHENTICATED: Byte = 0x02
 
-        // Pairing PIN — shown on watch screen, embedded in advertising
         var pairingPin: String = (1000..9999).random().toString()
+            private set
+        var deviceIdHex: String = ""
             private set
     }
 
@@ -83,6 +84,9 @@ class WristKeyBleService : Service() {
             return START_NOT_STICKY
         }
 
+        deviceIdHex = securityManager.getDeviceId().joinToString("") { "%02x".format(it) }
+        Log.i(TAG, "Device ID: $deviceIdHex")
+
         startGattServer()
         startAdvertising()
         return START_NOT_STICKY
@@ -99,17 +103,15 @@ class WristKeyBleService : Service() {
 
     fun resetPairing() {
         Log.i(TAG, "Resetting pairing state")
-        currentDevice?.let { device ->
-            gattServer?.cancelConnection(device)
-        }
+        currentDevice?.let { device -> gattServer?.cancelConnection(device) }
         currentDevice = null
         updateStatus(STATUS_DISCONNECTED)
         securityManager.resetKeys()
-        // Generate new PIN on reset
         pairingPin = (1000..9999).random().toString()
+        deviceIdHex = securityManager.getDeviceId().joinToString("") { "%02x".format(it) }
         stopAdvertising()
         startAdvertising()
-        Log.i(TAG, "Pairing reset complete, new PIN: $pairingPin")
+        Log.i(TAG, "Pairing reset complete, new PIN: $pairingPin, Device ID: $deviceIdHex")
     }
 
     private fun startGattServer() {
@@ -118,6 +120,11 @@ class WristKeyBleService : Service() {
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         Log.i(TAG, "Device connected: ${device.address}")
+                        if (device.bondState != BluetoothDevice.BOND_BONDED) {
+                            Log.i(TAG, "Requesting BLE bond...")
+                            val result = device.createBond()
+                            Log.i(TAG, "createBond() result: $result")
+                        }
                         currentDevice = device
                         updateStatus(STATUS_AUTHENTICATED)
                         updateNotification("Connected to ${device.name ?: "PC"}")
@@ -134,13 +141,10 @@ class WristKeyBleService : Service() {
             }
 
             override fun onCharacteristicWriteRequest(
-                device: BluetoothDevice,
-                requestId: Int,
+                device: BluetoothDevice, requestId: Int,
                 characteristic: BluetoothGattCharacteristic,
-                preparedWrite: Boolean,
-                responseNeeded: Boolean,
-                offset: Int,
-                value: ByteArray?
+                preparedWrite: Boolean, responseNeeded: Boolean,
+                offset: Int, value: ByteArray?
             ) {
                 if (characteristic.uuid == CHALLENGE_CHAR_UUID) {
                     handleChallenge(device, requestId, responseNeeded, value)
@@ -150,13 +154,10 @@ class WristKeyBleService : Service() {
             }
 
             override fun onDescriptorWriteRequest(
-                device: BluetoothDevice,
-                requestId: Int,
+                device: BluetoothDevice, requestId: Int,
                 descriptor: BluetoothGattDescriptor,
-                preparedWrite: Boolean,
-                responseNeeded: Boolean,
-                offset: Int,
-                value: ByteArray?
+                preparedWrite: Boolean, responseNeeded: Boolean,
+                offset: Int, value: ByteArray?
             ) {
                 if (descriptor.uuid == CLIENT_CONFIG_UUID) {
                     descriptor.value = value
@@ -206,13 +207,6 @@ class WristKeyBleService : Service() {
         service.addCharacteristic(responseCharacteristic)
         service.addCharacteristic(statusCharacteristic)
 
-        val pubkeyBytes = try {
-            securityManager.getPublicKey()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get public key", e)
-            byteArrayOf()
-        }
-
         gattServer?.addService(service)
         Log.i(TAG, "GATT server started with ${service.characteristics.size} characteristics")
     }
@@ -223,55 +217,42 @@ class WristKeyBleService : Service() {
     }
 
     private fun handleChallenge(
-        device: BluetoothDevice,
-        requestId: Int,
-        responseNeeded: Boolean,
-        value: ByteArray?
+        device: BluetoothDevice, requestId: Int,
+        responseNeeded: Boolean, value: ByteArray?
     ) {
         if (value == null || value.size < 24) {
             Log.w(TAG, "Invalid challenge length: ${value?.size}")
-            if (responseNeeded) {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, 0, null)
-            }
+            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, 0, null)
             return
         }
 
-        // Vibrate to prompt user to move the watch
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         vibrator?.vibrate(200)
 
         if (!motionDetector.isMoving) {
             Log.w(TAG, "Rejecting challenge: watch not in motion (possible relay attack)")
-            if (responseNeeded) {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            }
+            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             return
         }
 
         val nonce = value.copyOfRange(0, 16)
         val timestamp = ByteBuffer.wrap(value.copyOfRange(16, 24)).order(ByteOrder.LITTLE_ENDIAN).long
-
         val now = System.currentTimeMillis() / 1000
         if (kotlin.math.abs(now - timestamp) > 30) {
             Log.w(TAG, "Challenge timestamp expired: $timestamp vs $now")
-            if (responseNeeded) {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            }
+            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             return
         }
 
         val userPresent = isUserPresent()
         val userPresentByte: Byte = if (userPresent) 1 else 0
-
         val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
 
         val signature = try {
             securityManager.sign(payload)
         } catch (e: Exception) {
             Log.e(TAG, "Signing failed", e)
-            if (responseNeeded) {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            }
+            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             return
         }
 
@@ -283,9 +264,7 @@ class WristKeyBleService : Service() {
         val notified = gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
         Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
 
-        if (responseNeeded) {
-            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-        }
+        if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
     }
 
     private fun startAdvertising() {
@@ -300,23 +279,24 @@ class WristKeyBleService : Service() {
             .build()
 
         val pinBytes = pairingPin.toByteArray(Charsets.UTF_8)
-        // Primary packet: UUID + PIN (must fit 31 bytes)
+        val deviceIdBytes = deviceIdHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val manufacturerData = pinBytes + deviceIdBytes
+
         val data = AdvertiseData.Builder()
             .setIncludeTxPowerLevel(false)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
-            .addManufacturerData(0xFFFF, pinBytes)
+            .addManufacturerData(0xFFFF, manufacturerData)
             .build()
-        // Scan response: device name (separate packet)
+
         val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
             .build()
 
         advertiseCallback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                Log.i(TAG, "Advertising started successfully, PIN: $pairingPin")
+                Log.i(TAG, "Advertising started successfully, PIN: $pairingPin, Device ID: $deviceIdHex")
                 updateNotification("PIN: $pairingPin")
             }
-
             override fun onStartFailure(errorCode: Int) {
                 Log.e(TAG, "Advertising failed: $errorCode")
             }
@@ -344,11 +324,7 @@ class WristKeyBleService : Service() {
     }
 
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "WristKey BLE",
-            NotificationManager.IMPORTANCE_LOW
-        )
+        val channel = NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW)
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
@@ -391,7 +367,6 @@ class WristKeyBleService : Service() {
         val s = der.copyOfRange(idx, idx + sLen).let {
             if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
         }
-
         val rPadded = ByteArray(32) { i -> if (i < 32 - r.size) 0 else r[i - (32 - r.size)] }
         val sPadded = ByteArray(32) { i -> if (i < 32 - s.size) 0 else s[i - (32 - s.size)] }
         return rPadded + sPadded
