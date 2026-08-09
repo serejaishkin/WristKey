@@ -70,7 +70,6 @@ class WristKeyBleService : Service() {
         createNotificationChannel()
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
-        bluetoothAdapter?.name = "WK"
         motionDetector.start()
     }
 
@@ -307,7 +306,7 @@ class WristKeyBleService : Service() {
             }
         }
 
-        advertiser?.startAdvertising(settings, data, advertiseCallback!!)
+        advertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback!!)
     }
 
     private fun stopAdvertising() {

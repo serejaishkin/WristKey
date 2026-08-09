@@ -261,7 +261,6 @@ impl BleAdapter for MockBleAdapter {
         let (tx, rx) = mpsc::channel(4);
         let _ = tx.send(PeripheralInfo {
                     pin: None,
-            id: "AA:BB:CC:DD:EE:FF".into(),
             name: Some("Mock Watch".into()),
             rssi: Some(-45),
             service_uuids: vec![service_uuid],
