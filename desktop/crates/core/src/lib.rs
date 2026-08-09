@@ -422,7 +422,7 @@ impl SessionManager {
         if !response.user_present {
             return Err(WristKeyError::Protocol("user presence required".into()));
         }
-        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, paired_at: Utc::now(), baseline_rssi };
+        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id: None, paired_at: Utc::now(), baseline_rssi };
         self.storage.save_device(&device).await?;
         *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
         info!("pairing completed for {}", device.id);
