@@ -309,6 +309,7 @@ class WristKeyBleService : Service() {
     private fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiseCallback)
         advertiser = null
+        advertiseCallback = null
     }
 
     private fun updateStatus(status: Byte) {
