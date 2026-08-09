@@ -33,6 +33,7 @@ class WristKeyBleService : Service() {
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
         val STATUS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
+        val PUBKEY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
         val CLIENT_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         const val STATUS_DISCONNECTED: Byte = 0x00
@@ -204,6 +205,15 @@ class WristKeyBleService : Service() {
         service.addCharacteristic(challengeChar)
         service.addCharacteristic(responseCharacteristic)
         service.addCharacteristic(statusCharacteristic)
+
+        val pubkeyChar = BluetoothGattCharacteristic(
+            PUBKEY_CHAR_UUID,
+            BluetoothGattCharacteristic.PROPERTY_READ,
+            BluetoothGattCharacteristic.PERMISSION_READ
+        ).apply {
+            setValue(securityManager.getPublicKey())
+        }
+        service.addCharacteristic(pubkeyChar)
 
         gattServer?.addService(service)
         Log.i(TAG, "GATT server started with service $SERVICE_UUID")

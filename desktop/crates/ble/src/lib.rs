@@ -34,6 +34,8 @@ pub trait BleAdapter: Send + Sync {
     async fn write(&self, conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()>;
     async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>>;
     async fn read_rssi(&self, conn: &Connection) -> Result<i16>;
+    async fn read(&self, _conn: &Connection, _char: Uuid) -> Result<Vec<u8>> { Ok(vec![]) }
+    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
 }
 
 pub struct BtleplugAdapter {
@@ -53,6 +55,18 @@ impl BtleplugAdapter {
             adapter,
             connected: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>> {
+        debug!("read {}", characteristic);
+        let peripheral = self.get_connected(&conn.peripheral_id).await?;
+        let characteristics = peripheral.characteristics();
+        let char = characteristics.iter()
+            .find(|c| c.uuid == characteristic)
+            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
+        let value = peripheral.read(char).await
+            .map_err(|e| WristKeyError::Ble(format!("read: {}", e)))?;
+        Ok(value)
     }
 
     async fn get_connected(&self, peripheral_id: &str) -> Result<Peripheral> {
@@ -219,6 +233,8 @@ impl BleAdapter for BtleplugAdapter {
     }
 
     async fn read_rssi(&self, conn: &Connection) -> Result<i16> {
+    async fn read(&self, _conn: &Connection, _char: Uuid) -> Result<Vec<u8>> { Ok(vec![]) }
+    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
         debug!("rssi for {}", conn.peripheral_id);
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
@@ -227,6 +243,18 @@ impl BleAdapter for BtleplugAdapter {
             .ok_or_else(|| WristKeyError::Ble("no properties".into()))?;
 
         Ok(props.rssi.unwrap_or(-100))
+    }
+
+    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>> {
+        debug!("read {}", characteristic);
+        let peripheral = self.get_connected(&conn.peripheral_id).await?;
+        let characteristics = peripheral.characteristics();
+        let char = characteristics.iter()
+            .find(|c| c.uuid == characteristic)
+            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
+        let value = peripheral.read(char).await
+            .map_err(|e| WristKeyError::Ble(format!("read: {}", e)))?;
+        Ok(value)
     }
 }
 
@@ -283,7 +311,21 @@ impl BleAdapter for MockBleAdapter {
         Ok(rx)
     }
     async fn read_rssi(&self, _conn: &Connection) -> Result<i16> {
+    async fn read(&self, _conn: &Connection, _char: Uuid) -> Result<Vec<u8>> { Ok(vec![]) }
+    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
         let rssi = self.scripted_rssi.lock().unwrap().pop();
         Ok(rssi.unwrap_or(-50))
+    }
+
+    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>> {
+        debug!("read {}", characteristic);
+        let peripheral = self.get_connected(&conn.peripheral_id).await?;
+        let characteristics = peripheral.characteristics();
+        let char = characteristics.iter()
+            .find(|c| c.uuid == characteristic)
+            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
+        let value = peripheral.read(char).await
+            .map_err(|e| WristKeyError::Ble(format!("read: {}", e)))?;
+        Ok(value)
     }
 }

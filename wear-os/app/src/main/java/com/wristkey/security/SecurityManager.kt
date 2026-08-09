@@ -71,3 +71,9 @@ class SecurityManager {
         Log.i(TAG, "Generated new ECDSA P-256 key pair: ${keyPair.public.format}")
     }
 }
+    /** Return X.509 encoded public key for pairing */
+    fun getPublicKey(): ByteArray {
+        val entry = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
+            ?: throw IllegalStateException("Key not found")
+        return entry.certificate.publicKey.encoded
+    }

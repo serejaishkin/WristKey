@@ -1,14 +1,15 @@
-//! Standalone pairing GUI — scan for watches and pair
+//! Standalone pairing GUI — scan for watches and pair with ECDSA verify
 
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo};
 use uuid::Uuid;
+use wristkey_crypto::verify_ecdsa_p256;
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
-const STATUS_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567893";
+const PUBKEY_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567894";
 
 fn main() {
     let rt = Runtime::new().expect("tokio runtime");
@@ -62,7 +63,6 @@ impl eframe::App for PairApp {
             let devices = self.devices.lock().unwrap().clone();
             let status = self.status.lock().unwrap().clone();
 
-            // Scan button
             ui.horizontal(|ui| {
                 if ui.add_sized([120.0, 36.0], eframe::egui::Button::new("🔍 Scan")).clicked() && !scanning && !pairing {
                     *self.scanning.lock().unwrap() = true;
@@ -89,14 +89,10 @@ impl eframe::App for PairApp {
                                             ctx.request_repaint();
                                         }
                                     }
-                                    Err(e) => {
-                                        *status.lock().unwrap() = format!("Scan error: {}", e);
-                                    }
+                                    Err(e) => *status.lock().unwrap() = format!("Scan error: {}", e),
                                 }
                             }
-                            Err(e) => {
-                                *status.lock().unwrap() = format!("BLE adapter error: {}", e);
-                            }
+                            Err(e) => *status.lock().unwrap() = format!("BLE adapter error: {}", e),
                         }
                         *scanning.lock().unwrap() = false;
                         ctx.request_repaint();
@@ -112,7 +108,6 @@ impl eframe::App for PairApp {
             ui.separator();
             ui.label(&status);
 
-            // Device list
             ui.separator();
             ui.heading("Found devices");
             
@@ -156,12 +151,8 @@ impl eframe::App for PairApp {
                                         
                                         if let Some(dev) = dev {
                                             match do_pairing(dev).await {
-                                                Ok(_) => {
-                                                    *status.lock().unwrap() = "✅ Paired successfully!".to_string();
-                                                }
-                                                Err(e) => {
-                                                    *status.lock().unwrap() = format!("❌ Pairing failed: {}", e);
-                                                }
+                                                Ok(_) => *status.lock().unwrap() = "✅ Paired successfully!".to_string(),
+                                                Err(e) => *status.lock().unwrap() = format!("❌ Pairing failed: {}", e),
                                             }
                                         } else {
                                             *status.lock().unwrap() = "Device not found".to_string();
@@ -192,11 +183,21 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
     
-    // Subscribe to response notifications
-    let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
-    let mut rx = adapter.notify(&conn, response_uuid).await.map_err(|e| format!("notify: {}", e))?;
+    // 1. Read public key from watch
+    let pubkey_uuid = Uuid::parse_str(PUBKEY_CHAR).unwrap();
+    let public_key = adapter.read(&conn, pubkey_uuid).await
+        .map_err(|e| format!("read pubkey: {}", e))?;
     
-    // Generate challenge: 16-byte nonce + 8-byte timestamp (little-endian)
+    if public_key.is_empty() {
+        return Err("Empty public key from watch".into());
+    }
+    
+    // 2. Subscribe to response notifications
+    let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
+    let mut rx = adapter.notify(&conn, response_uuid).await
+        .map_err(|e| format!("notify: {}", e))?;
+    
+    // 3. Generate challenge
     let mut challenge = vec![0u8; 24];
     let nonce = uuid::Uuid::new_v4().as_bytes()[..16].to_vec();
     challenge[..16].copy_from_slice(&nonce);
@@ -206,12 +207,12 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
         .as_secs();
     challenge[16..24].copy_from_slice(&timestamp.to_le_bytes());
     
-    // Write challenge
+    // 4. Write challenge
     let challenge_uuid = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
     adapter.write(&conn, challenge_uuid, &challenge).await
         .map_err(|e| format!("write challenge: {}", e))?;
     
-    // Wait for response (signature + userPresent byte)
+    // 5. Wait for response
     let response = tokio::time::timeout(
         tokio::time::Duration::from_secs(10),
         rx.recv()
@@ -223,8 +224,26 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
         return Err("response too short".into());
     }
     
-    // TODO: verify ECDSA signature here
-    // For now just check we got something
+    // 6. Parse response
+    let signature = &response[..64];
+    let user_present = response[64] == 1;
+    
+    if !user_present {
+        return Err("User not present on watch".into());
+    }
+    
+    // 7. Build payload for verification (same as watch: nonce + timestamp + user_present)
+    let mut payload = challenge.clone();
+    payload.push(1); // user_present = true
+    
+    // 8. Verify ECDSA signature
+    match verify_ecdsa_p256(&public_key, &payload, signature) {
+        Ok(true) => info!("✅ Signature verified!"),
+        Ok(false) | Err(_) => return Err("Signature verification failed".into()),
+    }
+    
+    // 9. TODO: Save to DeviceStore
+    // let device = PairedDevice { mac: dev.id, name: ..., public_key, ... };
     
     adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
     Ok(())
