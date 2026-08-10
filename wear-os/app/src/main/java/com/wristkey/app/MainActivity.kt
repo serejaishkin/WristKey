@@ -1,6 +1,7 @@
 package com.wristkey.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -21,10 +22,13 @@ class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var actionButton: Button
     private lateinit var resetButton: Button
+    private lateinit var helpButton: Button
     private var bleService: WristKeyBleService? = null
     private var bound = false
 
     private val REQUEST_BT_PERMISSIONS = 1001
+    private val PREFS_NAME = "WristKeyPrefs"
+    private val KEY_FIRST_RUN = "first_run"
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -49,6 +53,7 @@ class MainActivity : Activity() {
         statusText = findViewById(R.id.status_text)
         actionButton = findViewById(R.id.action_button)
         resetButton = findViewById(R.id.reset_button)
+        helpButton = findViewById(R.id.help_button)
 
         updatePinDisplay()
 
@@ -66,11 +71,38 @@ class MainActivity : Activity() {
             Toast.makeText(this, R.string.reset_done, Toast.LENGTH_SHORT).show()
         }
 
+        helpButton.setOnClickListener {
+            showInstructionDialog()
+        }
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_FIRST_RUN, true)) {
+            showInstructionDialog()
+            prefs.edit().putBoolean(KEY_FIRST_RUN, false).apply()
+        }
+
         if (hasBluetoothPermissions()) {
             startBleService()
         } else {
             requestBluetoothPermissions()
         }
+    }
+
+    private fun showInstructionDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("📖 Как подключить часы к ПК")
+            .setMessage(
+                "1️⃣ На ПК запустите wristkey-pair.exe\n" +
+                "2️⃣ Нажмите 🔍 Scan на ПК\n" +
+                "3️⃣ Выберите часы из списка (PIN: ${WristKeyBleService.pairingPin})\n" +
+                "4️⃣ Нажмите 🔗 Pair на ПК\n" +
+                "5️⃣ Часы вибрируют → потрясите рукой или нажмите кнопку ниже\n" +
+                "6️⃣ ✅ Paired! Теперь запустите wristkeyd.exe\n\n" +
+                "💡 Если не видит часы: нажмите Reset pairing и повторите"
+            )
+            .setPositiveButton("Понятно") { dialog, _ -> dialog.dismiss() }
+            .setCancelable(false)
+            .show()
     }
 
     private fun updatePinDisplay() {

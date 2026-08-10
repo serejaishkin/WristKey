@@ -7,4 +7,4 @@
     <string name="action_unlock">Unlock PC</string>
     <string name="action_reset">Reset Pairing</string>
     <string name="reset_done">Pairing reset</string>
-</resources>
+    <string name="reset_pairing">Reset Pairing</string>\n</resources>
