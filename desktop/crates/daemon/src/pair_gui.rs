@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo};
 use uuid::Uuid;
-use wristkey_crypto::verify_ecdsa_p256;
+
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
@@ -233,7 +233,7 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let mut payload = challenge.clone();
     payload.push(1);
     
-    match verify_ecdsa_p256(&public_key, &payload, signature) {
+    match wristkey_core::EcdsaP256Crypto.verify(&public_key, &payload, signature).await {
         Ok(true) => println!("✅ Signature verified!"),
         Ok(false) | Err(_) => return Err("Signature verification failed".into()),
     }

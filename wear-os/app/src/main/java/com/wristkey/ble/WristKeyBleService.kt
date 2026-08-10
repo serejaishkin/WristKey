@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
-import android.os.ParcelUuid
 import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -89,7 +88,7 @@ class WristKeyBleService : Service() {
 
         startGattServer()
         startAdvertising()
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -229,8 +228,10 @@ class WristKeyBleService : Service() {
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         vibrator?.vibrate(200)
 
-        if (!motionDetector.isMoving) {
-            Log.w(TAG, "Rejecting challenge: watch not in motion (possible relay attack)")
+        val userPresent = isUserPresent()
+
+        if (!motionDetector.isMoving && !userPresent) {
+            Log.w(TAG, "Rejecting challenge: watch not in motion and no recent button press")
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
             return
         }
@@ -244,7 +245,6 @@ class WristKeyBleService : Service() {
             return
         }
 
-        val userPresent = isUserPresent()
         val userPresentByte: Byte = if (userPresent) 1 else 0
         val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
 
@@ -256,13 +256,12 @@ class WristKeyBleService : Service() {
             return
         }
 
-        val rawSignature = derToRaw(signature)
         val publicKey = securityManager.getPublicKey()
-        val response = rawSignature + byteArrayOf(userPresentByte) + publicKey
+        val response = signature + byteArrayOf(userPresentByte) + publicKey
 
         responseCharacteristic?.value = response
         val notified = gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
-        Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
+        Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified, sigLen=${signature.size}, pkLen=${publicKey.size}")
 
         if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
     }
@@ -284,13 +283,8 @@ class WristKeyBleService : Service() {
 
         val data = AdvertiseData.Builder()
             .setIncludeTxPowerLevel(false)
-            
+            .setIncludeDeviceName(false)
             .addManufacturerData(0xFFFF, manufacturerData)
-            .build()
-
-        val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
-            .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .build()
 
         advertiseCallback = object : AdvertiseCallback() {
@@ -303,7 +297,7 @@ class WristKeyBleService : Service() {
             }
         }
 
-        advertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback!!)
+        advertiser?.startAdvertising(settings, data, advertiseCallback!!)
     }
 
     private fun stopAdvertising() {
@@ -346,31 +340,5 @@ class WristKeyBleService : Service() {
 
     private fun isUserPresent(): Boolean {
         return System.currentTimeMillis() - lastUserPresentTime < 60_000
-    }
-
-    private fun derToRaw(der: ByteArray): ByteArray {
-        if (der.size < 70 || der[0] != 0x30.toByte()) {
-            Log.w(TAG, "Unexpected DER format, returning as-is")
-            return der
-        }
-        var idx = 2
-        if (der[idx] != 0x02.toByte()) return der
-        idx++
-        val rLen = der[idx].toInt() and 0xFF
-        idx++
-        val r = der.copyOfRange(idx, idx + rLen).let {
-            if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
-        }
-        idx += rLen
-        if (der[idx] != 0x02.toByte()) return der
-        idx++
-        val sLen = der[idx].toInt() and 0xFF
-        idx++
-        val s = der.copyOfRange(idx, idx + sLen).let {
-            if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
-        }
-        val rPadded = ByteArray(32) { i -> if (i < 32 - r.size) 0 else r[i - (32 - r.size)] }
-        val sPadded = ByteArray(32) { i -> if (i < 32 - s.size) 0 else s[i - (32 - s.size)] }
-        return rPadded + sPadded
     }
 }

@@ -25,7 +25,7 @@ class SecurityManager {
         val signature = Signature.getInstance("SHA256withECDSA")
         signature.initSign(entry.privateKey)
         signature.update(data)
-        return signature.sign()
+        return derToRaw(signature.sign())
     }
 
     fun getDeviceId(): ByteArray {
@@ -43,11 +43,6 @@ class SecurityManager {
         return byteArrayOf(0x04) + x + y
     }
 
-    private fun padTo32(raw: ByteArray): ByteArray {
-        val trimmed = if (raw.size == 33 && raw[0] == 0.toByte()) raw.copyOfRange(1, 33) else raw
-        return if (trimmed.size < 32) ByteArray(32 - trimmed.size) + trimmed else trimmed
-    }
-
     fun resetKeys() {
         try {
             if (keyStore.containsAlias(KEY_ALIAS)) {
@@ -60,13 +55,49 @@ class SecurityManager {
         generateKeyPairIfNeeded()
     }
 
+    private fun padTo32(raw: ByteArray): ByteArray {
+        val trimmed = if (raw.size == 33 && raw[0] == 0.toByte()) raw.copyOfRange(1, 33) else raw
+        return if (trimmed.size < 32) ByteArray(32 - trimmed.size) + trimmed else trimmed
+    }
+
+    private fun derToRaw(der: ByteArray): ByteArray {
+        if (der.size < 70 || der[0] != 0x30.toByte()) {
+            Log.w(TAG, "Unexpected DER format, returning as-is")
+            return der
+        }
+        var idx = 2
+        if (der[idx] != 0x02.toByte()) return der
+        idx++
+        val rLen = der[idx].toInt() and 0xFF
+        idx++
+        val r = der.copyOfRange(idx, idx + rLen).let {
+            if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
+        }
+        idx += rLen
+        if (der[idx] != 0x02.toByte()) return der
+        idx++
+        val sLen = der[idx].toInt() and 0xFF
+        idx++
+        val s = der.copyOfRange(idx, idx + sLen).let {
+            if (it.size == 33 && it[0] == 0.toByte()) it.copyOfRange(1, 33) else it
+        }
+        val rPadded = ByteArray(32) { i -> if (i < 32 - r.size) 0 else r[i - (32 - r.size)] }
+        val sPadded = ByteArray(32) { i -> if (i < 32 - s.size) 0 else s[i - (32 - s.size)] }
+        return rPadded + sPadded
+    }
+
     private fun generateKeyPairIfNeeded() {
         if (keyStore.containsAlias(KEY_ALIAS)) {
             Log.i(TAG, "Key pair already exists")
             return
         }
-        val keyPairGenerator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
-        val spec = KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
+        val keyPairGenerator = KeyPairGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE
+        )
+        val spec = KeyGenParameterSpec.Builder(
+            KEY_ALIAS,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+        )
             .setDigests(KeyProperties.DIGEST_SHA256)
             .setUserAuthenticationRequired(false)
             .setInvalidatedByBiometricEnrollment(false)
