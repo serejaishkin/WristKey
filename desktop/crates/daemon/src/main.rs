@@ -37,17 +37,9 @@ fn main() {
     if cli.pair {
         // PAIRING MODE: no tokio on main thread (winit requirement on Windows)
         println!("Pairing mode: opening GUI…");
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
         let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
-        let (session, storage) = rt.block_on(async {
-            let storage = Arc::new(SledStorage::open_default().expect("storage"));
-            let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-            (session, storage)
-        });
-        drop(rt); // kill tokio before GUI
+        let storage = Arc::new(SledStorage::open_default().expect("storage"));
+        let session = Arc::new(SessionManager::new(crypto, storage.clone()));
         wristkey_daemon::pair_gui::run_pairing_gui(session, storage);
         return;
     }
@@ -80,20 +72,20 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     info!("WristKey daemon starting");
 
-    let config_path = cli.config.unwrap_or_else(|| {
+    let _config_path = cli.config.clone().unwrap_or_else(|| {
         directories::ProjectDirs::from("", "", "WristKey")
             .map(|d| d.config_dir().join("config.toml"))
             .unwrap_or_else(|| std::path::PathBuf::from("config.toml"))
     });
 
-    let config = if config_path.exists() {
-        Config::from_file(&config_path)?
+    let _config = if _config_path.exists() {
+        Config::from_file(&_config_path)?
     } else {
         let default = Config::default();
-        if let Some(parent) = config_path.parent() {
+        if let Some(parent) = _config_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        default.to_file(&config_path)?;
+        default.to_file(&_config_path)?;
         default
     };
 
@@ -138,8 +130,8 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     let platform = create_platform_adapter();
 
-    let mut storage: Arc<dyn Storage> = Arc::new(SledStorage::open_default()?);
-    let mut session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
+    let mut storage: Option<Arc<dyn Storage>> = Some(Arc::new(SledStorage::open_default()?));
+    let mut session: Option<Arc<SessionManager>> = Some(Arc::new(SessionManager::new(crypto.clone(), storage.as_ref().unwrap().clone())));
 
     loop {
         let _ = std::fs::remove_file(&pair_flag_path);
@@ -162,12 +154,17 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        let daemon = wristkey_daemon::Daemon::new(session.clone(), ble, platform.clone(), mgr, config.clone());
-        let daemon_handle = tokio::spawn(async move {
+        let daemon = wristkey_daemon::Daemon::new(
+            session.as_ref().unwrap().clone(),
+            ble,
+            platform.clone(),
+            mgr,
+        );
+        let mut daemon_handle: Option<tokio::task::JoinHandle<()>> = Some(tokio::spawn(async move {
             if let Err(e) = daemon.run().await {
                 error!("daemon crashed: {}", e);
             }
-        });
+        }));
 
         let mut quit = false;
         let mut restart = false;
@@ -175,13 +172,15 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             if pair_flag_path.exists() {
                 let _ = std::fs::remove_file(&pair_flag_path);
                 info!("Pairing GUI requested — showing instructions");
-                daemon_handle.abort();
-                while !daemon_handle.is_finished() {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                if let Some(handle) = daemon_handle.take() {
+                    handle.abort();
+                    while !handle.is_finished() {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    drop(handle);
                 }
-                drop(daemon_handle);
-                drop(session);
-                drop(storage);
+                drop(session.take());
+                drop(storage.take());
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 println!("========================================");
                 println!("To pair a new device, please run:");
@@ -195,7 +194,9 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             match tray_rx.try_recv() {
                 Ok(tray::TrayCommand::Quit) => {
                     info!("Quit command from tray");
-                    daemon_handle.abort();
+                    if let Some(handle) = daemon_handle.take() {
+                        handle.abort();
+                    }
                     quit = true;
                 }
                 Ok(tray::TrayCommand::PairDevice) => {
@@ -221,7 +222,9 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    daemon_handle.abort();
+                    if let Some(handle) = daemon_handle.take() {
+                        handle.abort();
+                    }
                     quit = true;
                 }
             }
@@ -232,8 +235,8 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         if quit {
             break;
         }
-        storage = Arc::new(SledStorage::open_default()?);
-        session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
+        storage = Some(Arc::new(SledStorage::open_default()?));
+        session = Some(Arc::new(SessionManager::new(crypto.clone(), storage.as_ref().unwrap().clone())));
     }
 
     tray_thread.join().unwrap();

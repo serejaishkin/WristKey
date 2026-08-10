@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    
     "crates/core",
     "crates/ble",
     "crates/platform-win",
@@ -26,4 +25,3 @@ rand = "0.8"
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
 tracing-appender = "0.2"
-

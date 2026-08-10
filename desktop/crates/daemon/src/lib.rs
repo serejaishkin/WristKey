@@ -78,17 +78,27 @@ impl Daemon {
             }
             SessionState::Authenticated { device_id, .. } => {
                 debug!("state: authenticated, checking RSSI for {}", device_id);
-                if let Some(conn) = self.current_conn.read().await.as_ref() {
-                    let rssi = self.ble.read_rssi(conn).await?;
-                    let should_lock = self.session.update_rssi(rssi).await?;
-                    if should_lock {
-                        info!("RSSI too low ({} dBm), locking screen", rssi);
-                        self.platform.lock_screen().await?;
-                        self.session.disconnect().await;
-                        self.cleanup().await;
+                let devices = self.session.list_devices().await?;
+                let device = devices.into_iter().find(|d| d.id == device_id);
+                if let Some(device) = device {
+                    if let Some(device_id_hex) = &device.device_id {
+                        if let Some(rssi) = self.conn_mgr.get_rssi_by_device_id(device_id_hex).await {
+                            let should_lock = self.session.update_rssi(rssi).await?;
+                            if should_lock {
+                                info!("RSSI too low ({} dBm), locking screen", rssi);
+                                self.platform.lock_screen().await?;
+                                self.session.disconnect().await;
+                            }
+                        } else {
+                            info!("device {} not seen in advertisements, locking", device_id);
+                            self.platform.lock_screen().await?;
+                            self.session.disconnect().await;
+                        }
+                    } else {
+                        warn!("no device_id for paired device {}, cannot use conn_mgr", device_id);
                     }
                 } else {
-                    warn!("authenticated but no connection, resetting state");
+                    warn!("authenticated device {} not found in storage, resetting", device_id);
                     self.session.disconnect().await;
                 }
             }
@@ -129,12 +139,11 @@ impl Daemon {
             self.perform_unlock(&conn, device.id).await?;
             self.cleanup().await;
             return Ok(());
-        } else {
-            info!("no matched paired device, starting pairing");
-            let _device = self.perform_pairing(&conn, info).await?;
-            self.cleanup().await;
-            return Ok(());
         }
+
+        info!("no matched paired device, disconnecting");
+        self.cleanup().await;
+        Ok(())
     }
 
     async fn write_with_retry(&self, conn: &Connection, char: Uuid, data: &[u8]) -> Result<()> {
@@ -181,7 +190,7 @@ impl Daemon {
         };
 
         let baseline_rssi = self.ble.read_rssi(conn).await?;
-        let device_id = response_data.get(130..134).map(|b| hex::encode(b));
+        let device_id = info.device_id.clone();
         self.session.complete_pairing(
             info.name.unwrap_or_else(|| "Unknown Watch".into()),
             public_key,
@@ -219,7 +228,10 @@ impl Daemon {
             timestamp: Utc::now(),
         };
 
-        self.session.verify_unlock(&response).await
+        self.session.verify_unlock(&response).await?;
+        self.platform.unlock_screen().await?;
+        info!("screen unlocked");
+        Ok(())
     }
 
     async fn cleanup(&self) {
@@ -240,6 +252,8 @@ mod tests {
         assert!(!platform.is_locked().await.unwrap());
         platform.lock_screen().await.unwrap();
         assert!(platform.is_locked().await.unwrap());
+        platform.unlock_screen().await.unwrap();
+        assert!(!platform.is_locked().await.unwrap());
     }
 
     #[tokio::test]
