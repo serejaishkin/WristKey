@@ -6,6 +6,8 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::{error, info, warn};
 use wristkey_core::{Config, CryptoEngine, EcdsaP256Crypto, SessionManager, SledStorage, Storage};
+use wristkey_ble::BleAdapter;
+use wristkey_daemon::conn_mgr::{ConnectionManager, run_presence_loop};
 
 #[cfg(target_os = "linux")]
 use wristkey_platform_linux::LinuxSecurity;

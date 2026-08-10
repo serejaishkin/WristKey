@@ -246,7 +246,7 @@ mod tests {
         let crypto = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(MemoryStorage::new());
         let session = Arc::new(SessionManager::new(crypto.clone(), storage));
-        let _daemon = Daemon::new(session.clone(), Arc::new(MockBleAdapter::new()), Arc::new(MockPlatformSecurity::new()));
+        let _daemon = Daemon::new(session.clone(), Arc::new(MockBleAdapter::new()), Arc::new(MockPlatformSecurity::new()), Arc::new(ConnectionManager::new()));
 
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let challenge = session.begin_pairing().await.unwrap();
@@ -264,7 +264,7 @@ mod tests {
         let session = Arc::new(SessionManager::new(crypto.clone(), storage.clone()));
         let ble = Arc::new(MockBleAdapter::new());
         let platform = Arc::new(MockPlatformSecurity::new());
-        let daemon = Daemon::new(session.clone(), ble.clone(), platform.clone());
+        let daemon = Daemon::new(session.clone(), ble.clone(), platform.clone(), Arc::new(ConnectionManager::new()));
 
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let challenge = session.begin_pairing().await.unwrap();
