@@ -21,6 +21,7 @@ import com.wristkey.sensors.MotionDetector
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
+import kotlinx.coroutines.*
 
 class WristKeyBleService : Service() {
 
@@ -54,6 +55,7 @@ class WristKeyBleService : Service() {
 
     private val securityManager = SecurityManager()
     private val motionDetector by lazy { MotionDetector(this) }
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var currentDevice: BluetoothDevice? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
@@ -97,6 +99,7 @@ class WristKeyBleService : Service() {
         stopAdvertising()
         stopGattServer()
         motionDetector.stop()
+        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -225,17 +228,6 @@ class WristKeyBleService : Service() {
             return
         }
 
-        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        vibrator?.vibrate(200)
-
-        val userPresent = isUserPresent()
-
-        if (!motionDetector.isMoving && !userPresent) {
-            Log.w(TAG, "Rejecting challenge: watch not in motion and no recent button press")
-            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            return
-        }
-
         val nonce = value.copyOfRange(0, 16)
         val timestamp = ByteBuffer.wrap(value.copyOfRange(16, 24)).order(ByteOrder.LITTLE_ENDIAN).long
         val now = System.currentTimeMillis() / 1000
@@ -245,25 +237,59 @@ class WristKeyBleService : Service() {
             return
         }
 
-        val userPresentByte: Byte = if (userPresent) 1 else 0
-        val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
-
-        val signature = try {
-            securityManager.sign(payload)
-        } catch (e: Exception) {
-            Log.e(TAG, "Signing failed", e)
-            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            return
+        // Acknowledge write immediately to avoid blocking PC
+        if (responseNeeded) {
+            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
         }
 
-        val publicKey = securityManager.getPublicKey()
-        val response = signature + byteArrayOf(userPresentByte) + publicKey
+        // Prompt user to move wrist
+        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        vibrator?.vibrate(longArrayOf(0, 300, 200, 300), -1)
+        updateNotification("Подвигайте рукой для подтверждения")
+        Log.i(TAG, "Challenge received, waiting for wrist motion...")
 
-        responseCharacteristic?.value = response
-        val notified = gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
-        Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified, sigLen=${signature.size}, pkLen=${publicKey.size}")
+        // Wait for motion in background (up to 6 seconds)
+        serviceScope.launch {
+            val startTime = System.currentTimeMillis()
+            var motionConfirmed = false
 
-        if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            while (System.currentTimeMillis() - startTime < 6000) {
+                if (motionDetector.isMoving || isUserPresent()) {
+                    motionConfirmed = true
+                    break
+                }
+                delay(300)
+            }
+
+            if (!motionConfirmed) {
+                Log.w(TAG, "Challenge rejected: no wrist motion detected")
+                updateNotification("Подтверждение не получено")
+                return@launch
+            }
+
+            Log.i(TAG, "Wrist motion confirmed, signing challenge")
+            updateNotification("Подтверждено, отправка ответа...")
+
+            val userPresent = isUserPresent()
+            val userPresentByte: Byte = if (userPresent) 1 else 0
+            val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
+
+            val signature = try {
+                securityManager.sign(payload)
+            } catch (e: Exception) {
+                Log.e(TAG, "Signing failed", e)
+                updateNotification("Ошибка подписи")
+                return@launch
+            }
+
+            val publicKey = securityManager.getPublicKey()
+            val response = signature + byteArrayOf(userPresentByte) + publicKey
+
+            responseCharacteristic?.value = response
+            val notified = gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
+            Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
+            updateNotification("Подключено к ${device.name ?: "PC"}")
+        }
     }
 
     private fun startAdvertising() {

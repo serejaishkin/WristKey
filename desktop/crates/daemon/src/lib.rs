@@ -186,6 +186,8 @@ impl Daemon {
         // begin_unlock stores this exact challenge in session state so that
         // verify_unlock checks the signature against what was actually sent.
         let challenge = self.session.begin_unlock(device_id).await?;
+        info!("🖐️ Двигайте рукой на часах для подтверждения разблокировки");
+        println!("🖐️ Двигайте рукой на часах для подтверждения разблокировки");
         self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
 
         let mut rx = self.ble.notify(conn, self.response_char).await?;
