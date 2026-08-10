@@ -220,6 +220,7 @@ impl Daemon {
 
 #[cfg(test)]
 mod tests {
+pub mod conn_mgr;
     use super::*;
     use wristkey_ble::MockBleAdapter;
 

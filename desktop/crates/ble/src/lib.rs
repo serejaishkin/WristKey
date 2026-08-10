@@ -164,7 +164,7 @@ impl BleAdapter for BtleplugAdapter {
         for attempt in 1..=5 {
             peripheral.discover_services().await
                 .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
-            services = peripheral.services();
+            services = peripheral.services().into_iter().collect();
             if !services.is_empty() {
                 info!("Discovered {} services on attempt {}", services.len(), attempt);
                 break;
