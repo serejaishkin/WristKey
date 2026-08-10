@@ -11,7 +11,6 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-wristkey-crypto = { path = "crates/crypto" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"

@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo};
+use wristkey_core::CryptoEngine;
 use uuid::Uuid;
 
 
@@ -233,10 +234,10 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
     let mut payload = challenge.clone();
     payload.push(1);
     
-    match wristkey_core::EcdsaP256Crypto.verify(&public_key, &payload, signature).await {
-        Ok(true) => println!("✅ Signature verified!"),
-        Ok(false) | Err(_) => return Err("Signature verification failed".into()),
+    if let Err(e) = wristkey_core::EcdsaP256Crypto.verify(&public_key, &payload, signature).await {
+        return Err(format!("Signature verification failed: {}", e).into());
     }
+    println!("✅ Signature verified!");
     
     adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
     Ok(())
