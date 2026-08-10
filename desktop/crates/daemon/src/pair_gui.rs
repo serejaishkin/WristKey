@@ -6,7 +6,6 @@ use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo};
 use wristkey_core::CryptoEngine;
 use uuid::Uuid;
 
-
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
@@ -15,11 +14,11 @@ const PUBKEY_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567894";
 fn main() {
     let rt = Runtime::new().expect("tokio runtime");
     tracing_subscriber::fmt::init();
-    
+
     let devices: Arc<Mutex<Vec<PeripheralInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let scanning: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     let status: Arc<Mutex<String>> = Arc::new(Mutex::new("Click Scan to find watches".to_string()));
-    let selected: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None::<usize>));
+    let selected: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
     let pairing: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
     let app = PairApp {
@@ -71,12 +70,12 @@ impl eframe::App for PairApp {
                     *self.status.lock().unwrap() = "Scanning for 30 seconds…".to_string();
                     self.devices.lock().unwrap().clear();
                     *self.selected.lock().unwrap() = None;
-                    
+
                     let devices = self.devices.clone();
                     let scanning = self.scanning.clone();
                     let status = self.status.clone();
                     let ctx = ctx.clone();
-                    
+
                     self.rt.spawn(async move {
                         match BtleplugAdapter::new().await {
                             Ok(adapter) => {
@@ -100,7 +99,7 @@ impl eframe::App for PairApp {
                         ctx.request_repaint();
                     });
                 }
-                
+
                 if scanning {
                     ui.spinner();
                     ui.label("Scanning…");
@@ -112,45 +111,45 @@ impl eframe::App for PairApp {
 
             ui.separator();
             ui.heading("Found devices");
-            
+
             eframe::egui::ScrollArea::vertical().show(ui, |ui| {
                 if devices.is_empty() && !scanning {
                     ui.label("No devices found. Click Scan.");
                 } else {
                     for (idx, dev) in devices.iter().enumerate() {
                         let is_selected = self.selected.lock().unwrap().map(|s| s == idx).unwrap_or(false);
-                        
+
                         let response = ui.selectable_label(is_selected, format!(
-                            "📱 {}  |  {}  |  {} dBm",
+                            "📱 {} | {} | {} dBm",
                             dev.pin.as_deref().or(dev.name.as_deref()).unwrap_or("Unknown"),
                             dev.id,
                             dev.rssi.map(|r| r.to_string()).unwrap_or_else(|| "N/A".into())
                         ));
-                        
+
                         if response.clicked() {
                             *self.selected.lock().unwrap() = Some(idx);
                         }
-                        
+
                         if is_selected && !pairing {
                             ui.horizontal(|ui| {
                                 ui.add_space(24.0);
                                 if ui.button("🔗 Pair with this device").clicked() {
                                     *self.pairing.lock().unwrap() = true;
                                     *self.status.lock().unwrap() = format!("Pairing with {}…", dev.pin.as_deref().or(dev.name.as_deref()).unwrap_or("Unknown"));
-                                    
+
                                     let devices = self.devices.clone();
                                     let status = self.status.clone();
                                     let pairing = self.pairing.clone();
                                     let selected = self.selected.clone();
                                     let ctx = ctx.clone();
-                                    
+
                                     self.rt.spawn(async move {
                                         let idx = selected.lock().unwrap().unwrap_or(0);
                                         let dev = {
                                             let d = devices.lock().unwrap();
                                             d.get(idx).cloned()
                                         };
-                                        
+
                                         if let Some(dev) = dev {
                                             match do_pairing(dev).await {
                                                 Ok(_) => *status.lock().unwrap() = "✅ Paired successfully!".to_string(),
@@ -183,18 +182,14 @@ impl eframe::App for PairApp {
 
 async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error>> {
     let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
+
+    // FIX: connect RIGHT before writing — minimize idle time to prevent Windows BLE timeout
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
-    
-    // Windows BLE cache fix: disconnect and reconnect to force service discovery
-    println!("Reconnecting to bypass Windows BLE cache...");
-    adapter.disconnect(&conn).await.ok();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    let conn = adapter.connect(&dev).await.map_err(|e| format!("reconnect: {}", e))?;
-    
+
     let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
     let mut rx = adapter.notify(&conn, response_uuid).await
         .map_err(|e| format!("notify: {}", e))?;
-    
+
     let mut challenge = vec![0u8; 24];
     let nonce = uuid::Uuid::new_v4().as_bytes()[..16].to_vec();
     challenge[..16].copy_from_slice(&nonce);
@@ -203,42 +198,59 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
         .unwrap()
         .as_secs();
     challenge[16..24].copy_from_slice(&timestamp.to_le_bytes());
-    
+
     let challenge_uuid = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
-    adapter.write(&conn, challenge_uuid, &challenge).await
-        .map_err(|e| format!("write challenge: {}", e))?;
-    
+
+    // Windows BLE needs a moment after connection before accepting writes
+    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+    // Retry write up to 3 times (Windows BLE can be flaky right after connect)
+    let mut write_ok = false;
+    for attempt in 1..=3 {
+        match adapter.write(&conn, challenge_uuid, &challenge).await {
+            Ok(()) => { write_ok = true; break; }
+            Err(e) if attempt < 3 => {
+                eprintln!("write attempt {} failed: {}, retrying...", attempt, e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            }
+            Err(e) => return Err(format!("write challenge: {}", e).into()),
+        }
+    }
+    if !write_ok {
+        return Err("write challenge failed after 3 attempts".into());
+    }
+
     let response = tokio::time::timeout(
         tokio::time::Duration::from_secs(10),
         rx.recv()
     ).await
     .map_err(|_| "timeout waiting for response")?
     .ok_or("no response received")?;
-    
+
     if response.len() < 66 {
         return Err("response too short".into());
     }
-    
+
     let signature = &response[0..64];
     let user_present = response[64] == 1;
     let public_key = response[65..].to_vec();
-    
+
     if !user_present {
         return Err("User not present on watch".into());
     }
-    
+
     if public_key.is_empty() {
         return Err("No public key in response".into());
     }
-    
+
     let mut payload = challenge.clone();
     payload.push(1);
-    
+
     if let Err(e) = wristkey_core::EcdsaP256Crypto.verify(&public_key, &payload, signature).await {
         return Err(format!("Signature verification failed: {}", e).into());
     }
     println!("✅ Signature verified!");
-    
+
     adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
     Ok(())
 }
