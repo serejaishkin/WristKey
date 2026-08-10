@@ -1,279 +1,289 @@
-//! Standalone pairing GUI — scan for watches and pair with ECDSA verify
+//! Pairing GUI — launched via `wristkeyd.exe --pair` or tray menu
+//!
+//! Runs GUI on caller thread, BLE operations in background threads with own tokio runtime.
 
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::runtime::Runtime;
-use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo};
-use wristkey_core::CryptoEngine;
+use std::sync::Arc;
+use std::time::Duration;
+use eframe::egui;
+use tokio::time::timeout;
 use uuid::Uuid;
+use chrono::Utc;
+use wristkey_core::{SessionManager, Storage, PairedDevice, Response};
+use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 
-const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
-const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
-const PUBKEY_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567894";
-
-fn main() {
-    let rt = Runtime::new().expect("tokio runtime");
-    tracing_subscriber::fmt::init();
-
-    let app = PairApp {
-        devices: Arc::new(Mutex::new(Vec::new())),
-        scanning: Arc::new(Mutex::new(false)),
-        scan_active: Arc::new(AtomicBool::new(false)),
-        status: Arc::new(Mutex::new("Click Scan to find watches".to_string())),
-        selected: Arc::new(Mutex::new(None)),
-        pairing: Arc::new(Mutex::new(false)),
-        rt,
+pub fn run_pairing_gui(session: Arc<SessionManager>, storage: Arc<dyn Storage>) {
+    let paired_devices = {
+        let storage = storage.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async {
+                storage.list_devices().await.unwrap_or_default()
+            })
+        }).join().expect("list devices thread")
     };
 
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 600.0])
-            .with_min_inner_size([320.0, 400.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([520.0, 640.0]),
         ..Default::default()
     };
 
+    let app = PairingApp::new(session, storage, paired_devices);
+
     eframe::run_native(
-        "WristKey — Pair Device",
+        "WristKey — Pairing",
         options,
         Box::new(|_cc| Ok(Box::new(app))),
-    ).unwrap();
+    ).expect("eframe");
 }
 
-struct PairApp {
-    devices: Arc<Mutex<Vec<PeripheralInfo>>>,
-    scanning: Arc<Mutex<bool>>,
-    scan_active: Arc<AtomicBool>,
-    status: Arc<Mutex<String>>,
-    selected: Arc<Mutex<Option<usize>>>,
-    pairing: Arc<Mutex<bool>>,
-    rt: Runtime,
+struct PairingApp {
+    session: Arc<SessionManager>,
+    storage: Arc<dyn Storage>,
+    state: AppState,
+    status: String,
+    discovered: Vec<PeripheralInfo>,
+    paired_devices: Vec<PairedDevice>,
 }
 
-impl eframe::App for PairApp {
-    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        eframe::egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("🔷 WristKey Pairing");
-            ui.separator();
-
-            let scanning = *self.scanning.lock().unwrap();
-            let pairing = *self.pairing.lock().unwrap();
-            let devices = self.devices.lock().unwrap().clone();
-            let status = self.status.lock().unwrap().clone();
-
-            ui.horizontal(|ui| {
-                if ui.add_sized([100.0, 32.0], eframe::egui::Button::new("🔍 Scan")).clicked() && !scanning && !pairing {
-                    self.start_scan(ctx.clone());
-                }
-
-                if scanning {
-                    if ui.add_sized([100.0, 32.0], eframe::egui::Button::new("⏹ Stop")).clicked() {
-                        self.scan_active.store(false, Ordering::Relaxed);
-                        *self.scanning.lock().unwrap() = false;
-                        *self.status.lock().unwrap() = "Scan stopped".to_string();
-                    }
-                    ui.spinner();
-                    ui.label("Scanning…");
-                }
-
-                if !scanning && !devices.is_empty() {
-                    if ui.add_sized([100.0, 32.0], eframe::egui::Button::new("🗑 Clear")).clicked() {
-                        self.devices.lock().unwrap().clear();
-                        *self.selected.lock().unwrap() = None;
-                        *self.status.lock().unwrap() = "List cleared".to_string();
-                    }
-                }
-            });
-
-            ui.separator();
-            ui.label(&status);
-
-            ui.separator();
-            ui.heading("Found devices");
-
-            eframe::egui::ScrollArea::vertical().show(ui, |ui| {
-                if devices.is_empty() && !scanning {
-                    ui.label("No devices found. Click Scan.");
-                } else {
-                    for (idx, dev) in devices.iter().enumerate() {
-                        let is_selected = self.selected.lock().unwrap().map(|s| s == idx).unwrap_or(false);
-
-                        let response = ui.selectable_label(is_selected, format!(
-                            "📱 {} | {} | {} dBm",
-                            dev.pin.as_deref().or(dev.name.as_deref()).unwrap_or("Unknown"),
-                            dev.id,
-                            dev.rssi.map(|r| r.to_string()).unwrap_or_else(|| "N/A".into())
-                        ));
-
-                        if response.clicked() {
-                            *self.selected.lock().unwrap() = Some(idx);
-                        }
-
-                        if is_selected && !pairing {
-                            ui.horizontal(|ui| {
-                                ui.add_space(24.0);
-                                if ui.button("🔗 Pair with this device").clicked() {
-                                    self.start_pairing(idx, ctx.clone());
-                                }
-                            });
-                        }
-                    }
-                }
-            });
-
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
-                        std::process::exit(0);
-                    }
-                });
-            });
-        });
-    }
+#[derive(PartialEq)]
+enum AppState {
+    Scanning,
+    Discovered,
+    Pairing,
+    Paired,
+    Failed(String),
 }
 
-impl PairApp {
-    fn start_scan(&self, ctx: eframe::egui::Context) {
-        *self.scanning.lock().unwrap() = true;
-        self.scan_active.store(true, Ordering::Relaxed);
-        *self.status.lock().unwrap() = "Scanning for 30 seconds…".to_string();
-        self.devices.lock().unwrap().clear();
-        *self.selected.lock().unwrap() = None;
+impl PairingApp {
+    fn new(
+        session: Arc<SessionManager>,
+        storage: Arc<dyn Storage>,
+        paired_devices: Vec<PairedDevice>,
+    ) -> Self {
+        let (scan_tx, scan_rx) = std::sync::mpsc::channel::<Vec<PeripheralInfo>>();
 
-        let devices = self.devices.clone();
-        let scanning = self.scanning.clone();
-        let scan_active = self.scan_active.clone();
-        let status = self.status.clone();
-        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async {
+                let adapter = match BtleplugAdapter::new().await {
+                    Ok(a) => a,
+                    Err(e) => { eprintln!("BLE adapter error: {}", e); return; }
+                };
 
-        self.rt.spawn(async move {
-            match BtleplugAdapter::new().await {
-                Ok(adapter) => {
-                    let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
-                    match adapter.scan(service_uuid).await {
-                        Ok(mut rx) => {
-                            let mut found = 0;
-                            while let Some(info) = rx.recv().await {
-                                if !scan_active.load(Ordering::Relaxed) {
-                                    break;
-                                }
-                                found += 1;
-                                devices.lock().unwrap().push(info);
-                                *status.lock().unwrap() = format!("Found {} device(s)", found);
-                                ctx.request_repaint();
+                let service_uuid = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567890").unwrap();
+                let mut rx_scan = match adapter.scan(service_uuid).await {
+                    Ok(r) => r,
+                    Err(e) => { eprintln!("Scan error: {}", e); return; }
+                };
+
+                let mut devices = Vec::new();
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+
+                while tokio::time::Instant::now() < deadline {
+                    match timeout(Duration::from_secs(1), rx_scan.recv()).await {
+                        Ok(Some(info)) => {
+                            if !devices.iter().any(|d: &PeripheralInfo| d.id == info.id) {
+                                devices.push(info);
+                                let _ = scan_tx.send(devices.clone());
                             }
                         }
-                        Err(e) => *status.lock().unwrap() = format!("Scan error: {}", e),
+                        _ => {}
                     }
                 }
-                Err(e) => *status.lock().unwrap() = format!("BLE adapter error: {}", e),
-            }
-            *scanning.lock().unwrap() = false;
-            ctx.request_repaint();
+            });
         });
+
+        let mut app = Self {
+            session,
+            storage,
+            state: AppState::Scanning,
+            status: "🔍 Scanning for WristKey devices…".into(),
+            discovered: Vec::new(),
+            paired_devices,
+        };
+
+        // Drain scan channel in background
+        std::thread::spawn(move || {
+            while let Ok(devs) = scan_rx.recv() {
+                if devs.is_empty() { break; }
+            }
+        });
+
+        app
     }
 
-    fn start_pairing(&self, idx: usize, ctx: eframe::egui::Context) {
-        *self.pairing.lock().unwrap() = true;
-        *self.status.lock().unwrap() = "Pairing…".to_string();
+    fn do_pairing(&mut self, info: PeripheralInfo) {
+        self.state = AppState::Pairing;
+        self.status = format!("🖐️ Pairing with {}…\nMove your wrist to confirm", info.name.as_deref().unwrap_or("Unknown"));
 
-        let devices = self.devices.clone();
-        let status = self.status.clone();
-        let pairing = self.pairing.clone();
-        let ctx = ctx.clone();
+        let session = self.session.clone();
+        let storage = self.storage.clone();
 
-        self.rt.spawn(async move {
-            let dev = {
-                let d = devices.lock().unwrap();
-                d.get(idx).cloned()
-            };
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async {
+                let adapter = match BtleplugAdapter::new().await {
+                    Ok(a) => a,
+                    Err(e) => { eprintln!("BLE error: {}", e); return; }
+                };
 
-            if let Some(dev) = dev {
-                match do_pairing(dev).await {
-                    Ok(_) => *status.lock().unwrap() = "✅ Paired successfully!".to_string(),
-                    Err(e) => *status.lock().unwrap() = format!("❌ Pairing failed: {}", e),
+                let conn = match adapter.connect(&info).await {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("Connect error: {}", e); return; }
+                };
+
+                let challenge = match session.begin_pairing().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Session error: {}", e);
+                        let _ = adapter.disconnect(&conn).await;
+                        return;
+                    }
+                };
+
+                let challenge_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap();
+                let response_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap();
+
+                let mut write_ok = false;
+                for attempt in 1..=3 {
+                    match adapter.write(&conn, challenge_char, &challenge.to_bytes()).await {
+                        Ok(_) => { write_ok = true; break; }
+                        Err(e) => eprintln!("Write attempt {} failed: {}", attempt, e),
+                    }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                 }
-            } else {
-                *status.lock().unwrap() = "Device not found".to_string();
-            }
-            *pairing.lock().unwrap() = false;
-            ctx.request_repaint();
+
+                if !write_ok {
+                    eprintln!("Write challenge failed after 3 attempts");
+                    let _ = adapter.disconnect(&conn).await;
+                    return;
+                }
+
+                eprintln!("🖐️ Move your wrist on the watch to confirm pairing");
+
+                let mut rx = match adapter.notify(&conn, response_char).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Notify error: {}", e);
+                        let _ = adapter.disconnect(&conn).await;
+                        return;
+                    }
+                };
+
+                let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
+                    Ok(Some(d)) => d,
+                    _ => {
+                        eprintln!("Pairing timeout");
+                        let _ = adapter.disconnect(&conn).await;
+                        return;
+                    }
+                };
+
+                if response_data.len() < 66 {
+                    eprintln!("Response too short: {}", response_data.len());
+                    let _ = adapter.disconnect(&conn).await;
+                    return;
+                }
+
+                let pubkey_len = 65;
+                let sig_len = response_data.len() - pubkey_len - 1;
+                let signature = response_data[..sig_len].to_vec();
+                let user_present = response_data[sig_len] != 0;
+                let public_key = response_data[sig_len + 1..].to_vec();
+
+                let response = Response {
+                    signature,
+                    user_present,
+                    timestamp: Utc::now(),
+                };
+
+                match session.complete_pairing(
+                    info.name.as_deref().unwrap_or("WristKey").to_string(),
+                    public_key,
+                    info.device_id,
+                    &response,
+                    info.rssi.unwrap_or(-50),
+                ).await {
+                    Ok(device) => {
+                        let _ = storage.save_device(&device).await;
+                        eprintln!("✅ Paired: {} (ID: {})", device.name, device.id);
+                    }
+                    Err(e) => eprintln!("❌ Verify error: {}", e),
+                }
+
+                let _ = adapter.disconnect(&conn).await;
+            });
         });
     }
 }
 
-async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error>> {
-    let adapter = BtleplugAdapter::new().await.map_err(|e| format!("adapter: {}", e))?;
+impl eframe::App for PairingApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("WristKey Pairing");
+            ui.separator();
 
-    let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
+            ui.collapsing("Already Paired Devices", |ui| {
+                if self.paired_devices.is_empty() {
+                    ui.label("No paired devices yet.");
+                } else {
+                    for d in &self.paired_devices {
+                        ui.label(format!("📱 {} (ID: {}, RSSI: {} dBm)", d.name, d.id, d.baseline_rssi));
+                    }
+                }
+            });
 
-    // Windows BLE needs time after connect+discover before subscribing
-    tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+            ui.separator();
+            ui.label(&self.status);
 
-    let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
-    let mut rx = adapter.notify(&conn, response_uuid).await
-        .map_err(|e| format!("notify: {}", e))?;
-
-    let mut challenge = vec![0u8; 24];
-    let nonce = uuid::Uuid::new_v4().as_bytes()[..16].to_vec();
-    challenge[..16].copy_from_slice(&nonce);
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    challenge[16..24].copy_from_slice(&timestamp.to_le_bytes());
-
-    let challenge_uuid = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-
-    let mut write_ok = false;
-    for attempt in 1..=3 {
-        match adapter.write(&conn, challenge_uuid, &challenge).await {
-            Ok(()) => { write_ok = true; break; }
-            Err(e) if attempt < 3 => {
-                eprintln!("write attempt {} failed: {}, retrying...", attempt, e);
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if !self.discovered.is_empty() && self.state == AppState::Scanning {
+                self.state = AppState::Discovered;
+                self.status = format!("Found {} device(s). Select one to pair.", self.discovered.len());
             }
-            Err(e) => return Err(format!("write challenge: {}", e).into()),
-        }
+
+            if self.state == AppState::Discovered || self.state == AppState::Scanning {
+                ui.label("Discovered devices:");
+                let mut clicked = None;
+                for info in &self.discovered {
+                    let name = info.name.as_deref().unwrap_or("Unknown");
+                    if ui.button(format!("🔗 Pair with {} ({})", name, info.id)).clicked() {
+                        clicked = Some(info.clone());
+                    }
+                }
+                if let Some(info) = clicked {
+                    self.do_pairing(info);
+                }
+            }
+
+            if self.state == AppState::Pairing {
+                ui.spinner();
+                ui.label("Waiting for watch confirmation…");
+            }
+
+            if let AppState::Failed(ref msg) = self.state {
+                ui.colored_label(egui::Color32::RED, format!("❌ {}", msg));
+            }
+
+            if self.state == AppState::Paired {
+                ui.colored_label(egui::Color32::GREEN, "✅ Successfully paired!");
+            }
+
+            ui.separator();
+            if ui.button("🔄 Rescan").clicked() {
+                self.discovered.clear();
+                self.state = AppState::Scanning;
+                self.status = "🔍 Scanning…".into();
+            }
+        });
     }
-    if !write_ok {
-        return Err("write challenge failed after 3 attempts".into());
-    }
-
-    let response = tokio::time::timeout(
-        tokio::time::Duration::from_secs(10),
-        rx.recv()
-    ).await
-    .map_err(|_| "timeout waiting for response")?
-    .ok_or("no response received")?;
-
-    if response.len() < 66 {
-        return Err("response too short".into());
-    }
-
-    let signature = &response[0..64];
-    let user_present = response[64] == 1;
-    let public_key = response[65..].to_vec();
-
-    if !user_present {
-        return Err("User not present on watch".into());
-    }
-
-    if public_key.is_empty() {
-        return Err("No public key in response".into());
-    }
-
-    let mut payload = challenge.clone();
-    payload.push(1);
-
-    if let Err(e) = wristkey_core::EcdsaP256Crypto.verify(&public_key, &payload, signature).await {
-        return Err(format!("Signature verification failed: {}", e).into());
-    }
-    println!("✅ Signature verified!");
-
-    adapter.disconnect(&conn).await.map_err(|e| format!("disconnect: {}", e))?;
-    Ok(())
 }

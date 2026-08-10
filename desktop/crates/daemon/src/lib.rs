@@ -8,6 +8,7 @@ use uuid::Uuid;
 use chrono::Utc;
 use wristkey_core::*;
 pub mod conn_mgr;
+pub mod pair_gui;
 use crate::conn_mgr::ConnectionManager;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
 

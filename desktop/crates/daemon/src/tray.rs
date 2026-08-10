@@ -5,12 +5,12 @@ pub enum TrayCommand {
     Quit,
     ResetPairing,
     OpenLogs,
+    PairDevice,
 }
 
 #[cfg(feature = "tray")]
 pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     use tray_icon::{
-        Icon,
         menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
         TrayIconBuilder,
     };
@@ -24,6 +24,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         quit_id: tray_icon::menu::MenuId,
         reset_id: tray_icon::menu::MenuId,
         logs_id: tray_icon::menu::MenuId,
+        pair_id: tray_icon::menu::MenuId,
     }
 
     impl ApplicationHandler for TrayApp {
@@ -55,6 +56,9 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
                 } else if event.id == self.logs_id {
                     tracing::info!("Open logs selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::OpenLogs);
+                } else if event.id == self.pair_id {
+                    tracing::info!("Pair device selected from tray");
+                    let _ = self.cmd_tx.send(TrayCommand::PairDevice);
                 }
             }
         }
@@ -67,6 +71,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     let _status_i = MenuItem::new("Status: Waiting for watch…", false, None);
     let _sep1 = PredefinedMenuItem::separator();
     let _devices_i = MenuItem::new("Paired Devices", false, None);
+    let pair_i = MenuItem::new("Pair New Device", true, None);
     let _settings_i = MenuItem::new("Settings", false, None);
     let logs_i = MenuItem::new("Open Logs Folder", true, None);
     let reset_i = MenuItem::new("Reset Pairing", true, None);
@@ -76,6 +81,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     menu.append(&_status_i).unwrap();
     menu.append(&_sep1).unwrap();
     menu.append(&_devices_i).unwrap();
+    menu.append(&pair_i).unwrap();
     menu.append(&_settings_i).unwrap();
     menu.append(&logs_i).unwrap();
     menu.append(&reset_i).unwrap();
@@ -97,6 +103,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         quit_id: quit_i.id().clone(),
         reset_id: reset_i.id().clone(),
         logs_id: logs_i.id().clone(),
+        pair_id: pair_i.id().clone(),
     };
     event_loop.run_app(&mut app).expect("event loop");
 }

@@ -12,9 +12,6 @@ path = "src/lib.rs"
 name = "wristkeyd"
 path = "src/main.rs"
 
-[[bin]]
-name = "wristkey-pair"
-path = "src/pair_gui.rs"
 
 [features]
 default = ["tray"]
