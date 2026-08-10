@@ -36,6 +36,8 @@ clap = { workspace = true }
 toml = { workspace = true }
 tracing-appender = { workspace = true }
 directories = "5"
+futures = "0.3"
+btleplug = "0.11"
 
 tray-icon = { version = "0.19", optional = true }
 winit = { version = "0.30", optional = true }

@@ -147,8 +147,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match wristkey_ble::BtleplugAdapter::new().await {
         Ok(adapter) => {
             info!("BLE adapter initialized");
+            let mgr = Arc::new(ConnectionManager::new());
+            
+            // Start advertisement-only presence loop (solves Windows BLE conflict)
+            let adapter_clone = adapter.btleplug_adapter().expect("BtleplugAdapter required");
+            let mgr_clone = mgr.clone();
+            tokio::spawn(async move {
+                if let Err(e) = run_presence_loop(adapter_clone, mgr_clone).await {
+                    error!("presence loop crashed: {}", e);
+                }
+            });
+            
             let ble = Arc::new(adapter);
-            let daemon = wristkey_daemon::Daemon::new(session, ble, platform);
+            let daemon = wristkey_daemon::Daemon::new(session, ble, platform, mgr);
 
             let daemon_handle = tokio::spawn(async move {
                 if let Err(e) = daemon.run().await {

@@ -6098,10 +6098,12 @@ dependencies = [
 name = "wristkey-daemon"
 version = "0.1.0"
 dependencies = [
+ "btleplug",
  "chrono",
  "clap",
  "directories",
  "eframe",
+ "futures",
  "hex",
  "serde",
  "tokio",

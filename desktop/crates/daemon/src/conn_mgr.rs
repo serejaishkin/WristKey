@@ -1,13 +1,15 @@
 //! Stateless BLE presence tracker for WristKey
-//! 
+//!
 //! Solves Windows BLE conflict:
 //! - Presence detection via advertisement ONLY (no connect)
 //! - RSSI tracking without persistent connection
 //! - Maps device_id (from advertisement) to MAC address
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use futures::StreamExt;
 use btleplug::api::{Central, CentralEvent, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Peripheral};
 use tracing::{info, warn};
@@ -48,21 +50,21 @@ impl ConnectionManager {
                     let device_id_hex = hex::encode(&device_id);
                     let addr = peripheral.address().to_string();
                     let rssi = props.rssi.unwrap_or(-100);
-                    
+
                     let mut p = self.presence.lock().await;
                     p.insert(addr.clone(), WristKeyPresence {
                         last_seen: Instant::now(),
                         last_rssi: rssi,
                         device_id: device_id.clone(),
-                        pin,
+                        pin: pin.clone(),
                     });
-                    
+
                     let mut m = self.device_id_to_addr.lock().await;
                     m.insert(device_id_hex, addr.clone());
-                    
+
                     let mut per = self.peripherals.lock().await;
-                    per.insert(addr, peripheral.clone());
-                    
+                    per.insert(addr.clone(), peripheral.clone());
+
                     info!(%addr, %rssi, %pin, "Presence updated (advertisement)");
                 }
             }
@@ -118,11 +120,11 @@ impl ConnectionManager {
 
 pub async fn run_presence_loop(
     adapter: Adapter,
-    mgr: std::sync::Arc<ConnectionManager>,
+    mgr: Arc<ConnectionManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     adapter.start_scan(ScanFilter::default()).await?;
     info!("Presence loop started (advertisement-only)");
-    
+
     let mut events = adapter.events().await?;
     while let Some(event) = events.next().await {
         match event {

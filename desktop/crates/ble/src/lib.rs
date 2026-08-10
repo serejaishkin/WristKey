@@ -36,6 +36,9 @@ pub trait BleAdapter: Send + Sync {
     async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>>;
     async fn read_rssi(&self, conn: &Connection) -> Result<i16>;
     async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
+    
+    /// Returns the underlying btleplug Adapter for presence scanning.
+    fn btleplug_adapter(&self) -> Option<btleplug::platform::Adapter> { None }
 }
 
 pub struct BtleplugAdapter {
@@ -287,6 +290,10 @@ impl BleAdapter for BtleplugAdapter {
             .map_err(|e| WristKeyError::Ble(format!("read: {}", e)))?;
 
         Ok(value)
+    }
+    
+    fn btleplug_adapter(&self) -> Option<btleplug::platform::Adapter> {
+        Some(self.adapter.clone())
     }
 }
 

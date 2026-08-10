@@ -7,12 +7,15 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use chrono::Utc;
 use wristkey_core::*;
+pub mod conn_mgr;
+use crate::conn_mgr::ConnectionManager;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
 
 pub struct Daemon {
     session: Arc<SessionManager>,
     ble: Arc<dyn BleAdapter>,
     platform: Arc<dyn PlatformSecurity>,
+    conn_mgr: Arc<ConnectionManager>,
     service_uuid: Uuid,
     challenge_char: Uuid,
     response_char: Uuid,
@@ -24,11 +27,13 @@ impl Daemon {
         session: Arc<SessionManager>,
         ble: Arc<dyn BleAdapter>,
         platform: Arc<dyn PlatformSecurity>,
+        conn_mgr: Arc<ConnectionManager>,
     ) -> Self {
         Self {
             session,
             ble,
             platform,
+            conn_mgr,
             service_uuid: Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567890").unwrap(),
             challenge_char: Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap(),
             response_char: Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap(),
@@ -121,11 +126,14 @@ impl Daemon {
         if let Some(device) = matched {
             info!("matched device: {} (id={:?})", device.name, device.device_id);
             self.perform_unlock(&conn, device.id).await?;
+            self.cleanup().await;
+            return Ok(());
         } else {
             info!("no matched paired device, starting pairing");
             let _device = self.perform_pairing(&conn, info).await?;
+            self.cleanup().await;
+            return Ok(());
         }
-        Ok(())
     }
 
     async fn write_with_retry(&self, conn: &Connection, char: Uuid, data: &[u8]) -> Result<()> {
@@ -222,7 +230,6 @@ impl Daemon {
 
 #[cfg(test)]
 mod tests {
-pub mod conn_mgr;
     use super::*;
     use wristkey_ble::MockBleAdapter;
 
