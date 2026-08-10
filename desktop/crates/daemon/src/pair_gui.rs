@@ -208,6 +208,9 @@ async fn do_pairing(dev: PeripheralInfo) -> Result<(), Box<dyn std::error::Error
 
     let conn = adapter.connect(&dev).await.map_err(|e| format!("connect: {}", e))?;
 
+    // Windows BLE needs time after connect+discover before subscribing
+    tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+
     let response_uuid = Uuid::parse_str(RESPONSE_CHAR).unwrap();
     let mut rx = adapter.notify(&conn, response_uuid).await
         .map_err(|e| format!("notify: {}", e))?;

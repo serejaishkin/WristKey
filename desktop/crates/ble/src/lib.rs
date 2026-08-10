@@ -159,11 +159,19 @@ impl BleAdapter for BtleplugAdapter {
         peripheral.connect().await
             .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
 
-        peripheral.discover_services().await
-            .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
-
-        let services = peripheral.services();
-        info!("Discovered {} services", services.len());
+        // Windows BLE: retry discover_services up to 5 times with delay
+        let mut services = vec![];
+        for attempt in 1..=5 {
+            peripheral.discover_services().await
+                .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
+            services = peripheral.services();
+            if !services.is_empty() {
+                info!("Discovered {} services on attempt {}", services.len(), attempt);
+                break;
+            }
+            info!("discover_services attempt {} returned 0 services, retrying...", attempt);
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
         for svc in services {
             info!("  Service: {}", svc.uuid);
             for char in svc.characteristics {
@@ -195,7 +203,13 @@ impl BleAdapter for BtleplugAdapter {
         debug!("write {} bytes to {}", data.len(), characteristic);
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let characteristics = peripheral.characteristics();
+        let mut characteristics = peripheral.characteristics();
+        if characteristics.is_empty() {
+            warn!("characteristics empty, re-discovering services...");
+            peripheral.discover_services().await
+                .map_err(|e| WristKeyError::Ble(format!("discover_services fallback: {}", e)))?;
+            characteristics = peripheral.characteristics();
+        }
         info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
         let char = characteristics.iter()
             .find(|c| c.uuid == characteristic)
@@ -211,7 +225,13 @@ impl BleAdapter for BtleplugAdapter {
         debug!("subscribe {}", characteristic);
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let characteristics = peripheral.characteristics();
+        let mut characteristics = peripheral.characteristics();
+        if characteristics.is_empty() {
+            warn!("characteristics empty, re-discovering services...");
+            peripheral.discover_services().await
+                .map_err(|e| WristKeyError::Ble(format!("discover_services fallback: {}", e)))?;
+            characteristics = peripheral.characteristics();
+        }
         info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
         let char = characteristics.iter()
             .find(|c| c.uuid == characteristic)
@@ -251,7 +271,13 @@ impl BleAdapter for BtleplugAdapter {
         debug!("read {}", characteristic);
 
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let characteristics = peripheral.characteristics();
+        let mut characteristics = peripheral.characteristics();
+        if characteristics.is_empty() {
+            warn!("characteristics empty, re-discovering services...");
+            peripheral.discover_services().await
+                .map_err(|e| WristKeyError::Ble(format!("discover_services fallback: {}", e)))?;
+            characteristics = peripheral.characteristics();
+        }
         info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
         let char = characteristics.iter()
             .find(|c| c.uuid == characteristic)
