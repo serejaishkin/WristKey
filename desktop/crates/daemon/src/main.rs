@@ -169,7 +169,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
     storage.as_ref().unwrap().save_config(&_config).await?;
 
     loop {
-        let _ = std::fs::remove_file(&pair_flag_path);
+        let _ = std::fs::remove_file(&_pair_flag_path);
 
         let ble = match wristkey_ble::BtleplugAdapter::new().await {
             Ok(adapter) => Arc::new(adapter),
@@ -204,29 +204,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
         let mut quit = false;
         let mut restart = false;
         while !quit && !restart {
-            if pair_flag_path.exists() {
-                let _ = std::fs::remove_file(&pair_flag_path);
-                info!("Pairing GUI requested — showing instructions");
-                if let Some(handle) = daemon_handle.take() {
-                    handle.abort();
-                    while !handle.is_finished() {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                    }
-                    drop(handle);
-                }
-                drop(session.take());
-                drop(storage.take());
-                tokio::time::sleep(Duration::from_millis(300)).await;
-                println!("========================================");
-                println!("To pair a new device, please run:");
-                println!("  wristkeyd.exe --pair");
-                println!("  (close this daemon first)");
-                println!("========================================");
-                restart = true;
-                continue;
-            }
-
-            match tray_rx.try_recv() {
+match tray_rx.try_recv() {
                 Ok(tray::TrayCommand::Quit) => {
                     info!("Quit command from tray");
                     if let Some(handle) = daemon_handle.take() {
@@ -235,7 +213,22 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
                     quit = true;
                 }
                 Ok(tray::TrayCommand::PairDevice) => {
-                    let _ = std::fs::write(&pair_flag_path, b"1");
+                    info!("Pairing requested — restarting in GUI mode");
+                    if let Some(handle) = daemon_handle.take() {
+                        handle.abort();
+                    }
+                    drop(session.take());
+                    drop(storage.take());
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    
+                    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("wristkeyd"));
+                    match std::process::Command::new(&exe).arg("--pair").spawn() {
+                        Ok(_) => info!("Launched pairing GUI"),
+                        Err(e) => warn!("Failed to launch pairing GUI: {}", e),
+                    }
+                    
+                    // Exit daemon thread — GUI process takes over
+                    return Ok(());
                 }
                 Ok(tray::TrayCommand::ResetPairing) => {
                     let db_path = data_dir.join("wristkey.db");
