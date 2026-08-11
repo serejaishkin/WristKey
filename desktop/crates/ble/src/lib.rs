@@ -19,6 +19,7 @@ pub struct PeripheralInfo {
     pub name: Option<String>,
     pub rssi: Option<i16>,
     pub service_uuids: Vec<Uuid>,
+    pub raw_manufacturer_data: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
@@ -38,7 +39,6 @@ pub trait BleAdapter: Send + Sync {
     async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
     async fn stop_scan(&self) -> Result<()>;
 
-    /// Returns the underlying btleplug Adapter for presence scanning.
     fn btleplug_adapter(&self) -> Option<Adapter> { None }
 }
 
@@ -94,18 +94,22 @@ impl BleAdapter for BtleplugAdapter {
                         Ok(peripheral) => {
                             match peripheral.properties().await {
                                 Ok(Some(props)) => {
-                                    info!("BLE discovered: {} name={:?} rssi={:?} svcs={:?}", peripheral.address(), props.local_name, props.rssi, props.services);
-                                    info!(" ALL: addr={} name={:?} rssi={:?} manuf={:?}", peripheral.address(), props.local_name, props.rssi, props.manufacturer_data);
-                                    if !props.manufacturer_data.contains_key(&0xFFFF) {
-                                        debug!(" skipping, no WristKey manufacturer data");
-                                        continue;
-                                    }
+                                    // DEBUG: log EVERY discovered device
+                                    info!(">>> DISCOVERED: addr={} name={:?} rssi={:?} manuf_keys={:?}", 
+                                        peripheral.address(), props.local_name, props.rssi, 
+                                        props.manufacturer_data.keys().collect::<Vec<_>>());
+                                    
+                                    let has_wristkey = props.manufacturer_data.contains_key(&0xFFFF);
                                     let manufacturer_data = props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default();
-                                    // FIX: parse PIN from first 4 bytes only, not entire manufacturer_data
-                                    let pin = String::from_utf8(manufacturer_data[..4.min(manufacturer_data.len())].to_vec()).ok();
+                                    
+                                    let pin = if manufacturer_data.len() >= 4 {
+                                        String::from_utf8(manufacturer_data[..4].to_vec()).ok()
+                                    } else { None };
+                                    
                                     let device_id = if manufacturer_data.len() > 4 {
                                         Some(hex::encode(&manufacturer_data[manufacturer_data.len()-4..]))
                                     } else { None };
+                                    
                                     let info = PeripheralInfo {
                                         pin,
                                         device_id,
@@ -113,7 +117,16 @@ impl BleAdapter for BtleplugAdapter {
                                         name: props.local_name.clone(),
                                         rssi: props.rssi,
                                         service_uuids: props.services.clone(),
+                                        raw_manufacturer_data: if has_wristkey { Some(manufacturer_data) } else { None },
                                     };
+                                    
+                                    if has_wristkey {
+                                        info!(">>> WRISTKEY FOUND: addr={} pin={:?} device_id={:?} rssi={:?}", 
+                                            info.id, info.pin, info.device_id, info.rssi);
+                                    } else {
+                                        info!(">>> NON-WRISTKEY: addr={} name={:?}", info.id, info.name);
+                                    }
+                                    
                                     if tx.send(info).await.is_err() {
                                         break;
                                     }
@@ -164,7 +177,6 @@ impl BleAdapter for BtleplugAdapter {
         peripheral.connect().await
             .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
 
-        // Windows BLE: retry discover_services up to 5 times with delay
         let mut services = vec![];
         for attempt in 1..=5 {
             peripheral.discover_services().await
@@ -341,6 +353,7 @@ impl BleAdapter for MockBleAdapter {
             name: Some("Mock Watch".into()),
             rssi: Some(-45),
             service_uuids: vec![_service_uuid],
+            raw_manufacturer_data: None,
         }).await;
         Ok(rx)
     }

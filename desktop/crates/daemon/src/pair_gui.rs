@@ -49,9 +49,10 @@ struct PairingApp {
     state: AppState,
     status: String,
     discovered: Vec<PeripheralInfo>,
+    all_devices_count: usize,
+    wristkey_count: usize,
     paired_devices: Vec<PairedDevice>,
     scan_rx: Option<mpsc::Receiver<ScanUpdate>>,
-    scan_adapter: Option<Arc<dyn BleAdapter>>,
     scan_abort: Arc<AtomicBool>,
     pairing_result_rx: Option<mpsc::Receiver<Result<(), String>>>,
 }
@@ -77,9 +78,10 @@ impl PairingApp {
             state: AppState::Scanning,
             status: "🔍 Scanning for WristKey devices…".into(),
             discovered: Vec::new(),
+            all_devices_count: 0,
+            wristkey_count: 0,
             paired_devices,
             scan_rx: None,
-            scan_adapter: None,
             scan_abort: Arc::new(AtomicBool::new(false)),
             pairing_result_rx: None,
         };
@@ -93,6 +95,8 @@ impl PairingApp {
         self.scan_rx = Some(scan_rx);
         self.state = AppState::Scanning;
         self.status = "🔍 Scanning for WristKey devices…".into();
+        self.all_devices_count = 0;
+        self.wristkey_count = 0;
 
         let abort = self.scan_abort.clone();
         std::thread::spawn(move || {
@@ -117,14 +121,22 @@ impl PairingApp {
                     }
                 };
                 let mut devices = Vec::new();
+                let mut all_count = 0usize;
+                let mut wk_count = 0usize;
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
                 while tokio::time::Instant::now() < deadline && !abort.load(Ordering::Relaxed) {
                     match timeout(Duration::from_secs(1), rx_scan.recv()).await {
                         Ok(Some(info)) => {
-                            if !devices.iter().any(|d: &PeripheralInfo| d.id == info.id) {
-                                devices.push(info);
-                                let _ = scan_tx.send(ScanUpdate::Devices(devices.clone()));
+                            all_count += 1;
+                            let is_wristkey = info.raw_manufacturer_data.is_some();
+                            if is_wristkey {
+                                wk_count += 1;
+                                if !devices.iter().any(|d: &PeripheralInfo| d.id == info.id) {
+                                    devices.push(info);
+                                    let _ = scan_tx.send(ScanUpdate::Devices(devices.clone()));
+                                }
                             }
+                            let _ = scan_tx.send(ScanUpdate::Error(format!("__STATS__:{}:{}", all_count, wk_count)));
                         }
                         _ => {}
                     }
@@ -136,17 +148,6 @@ impl PairingApp {
 
     fn stop_scan_internal(&mut self) {
         self.scan_abort.store(true, Ordering::Relaxed);
-        if let Some(adapter) = self.scan_adapter.take() {
-            let _ = std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("tokio runtime");
-                rt.block_on(async {
-                    let _ = adapter.stop_scan().await;
-                });
-            });
-        }
         self.scan_rx = None;
     }
 
@@ -196,7 +197,6 @@ impl PairingApp {
                 let challenge_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap();
                 let response_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap();
 
-                // FIX 1: subscribe BEFORE writing challenge (race condition)
                 let mut rx = match adapter.notify(&conn, response_char).await {
                     Ok(r) => r,
                     Err(e) => {
@@ -206,7 +206,7 @@ impl PairingApp {
                 };
 
                 let mut write_ok = false;
-                for attempt in 1..=3 {
+                for _attempt in 1..=3 {
                     if adapter.write(&conn, challenge_char, &challenge.to_bytes()).await.is_ok() {
                         write_ok = true;
                         break;
@@ -241,7 +241,6 @@ impl PairingApp {
                 let public_key = response_data[sig_len + 1..].to_vec();
                 let response = Response { signature, user_present, timestamp: Utc::now() };
 
-                // FIX 2: session.complete_pairing already saves the device — no duplicate storage.save_device()
                 match session.complete_pairing(
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
                     public_key.clone(), info.device_id.clone(), &response, info.rssi.unwrap_or(-50),
@@ -263,7 +262,6 @@ impl PairingApp {
 
 impl eframe::App for PairingApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Poll scan results
         if let Some(rx) = &self.scan_rx {
             while let Ok(update) = rx.try_recv() {
                 match update {
@@ -271,20 +269,29 @@ impl eframe::App for PairingApp {
                         self.discovered = devs;
                         if !self.discovered.is_empty() && self.state == AppState::Scanning {
                             self.state = AppState::Discovered;
-                            self.status = format!("Found {} device(s).", self.discovered.len());
                         }
                         ctx.request_repaint();
                     }
                     ScanUpdate::Error(msg) => {
-                        self.state = AppState::Failed(msg.clone());
-                        self.status = format!("❌ {}", msg);
+                        if msg.starts_with("__STATS__") {
+                            let parts: Vec<&str> = msg.split(':').collect();
+                            if parts.len() == 3 {
+                                if let (Ok(a), Ok(w)) = (parts[1].parse(), parts[2].parse()) {
+                                    self.all_devices_count = a;
+                                    self.wristkey_count = w;
+                                    self.status = format!("🔍 Scanning… Found {} BLE devices total ({} WristKey)", a, w);
+                                }
+                            }
+                        } else {
+                            self.state = AppState::Failed(msg.clone());
+                            self.status = format!("❌ {}", msg);
+                        }
                         ctx.request_repaint();
                     }
                 }
             }
         }
 
-        // Poll pairing result
         if let Some(rx) = &self.pairing_result_rx {
             if let Ok(result) = rx.try_recv() {
                 match result {
@@ -338,8 +345,12 @@ impl eframe::App for PairingApp {
             ui.separator();
             ui.label(&self.status);
 
+            if self.state == AppState::Scanning {
+                ui.label(format!("Total BLE devices seen: {} | WristKey devices: {}", self.all_devices_count, self.wristkey_count));
+            }
+
             if self.state == AppState::Discovered || self.state == AppState::Scanning {
-                ui.label("Discovered devices:");
+                ui.label("Discovered WristKey devices:");
                 let mut clicked = None;
                 for info in &self.discovered {
                     let name = info.name.as_deref().unwrap_or("Unknown");
