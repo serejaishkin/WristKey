@@ -44,18 +44,74 @@ fn main() {
         return;
     }
 
-    // DAEMON MODE: tokio runtime
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime");
-    if let Err(e) = rt.block_on(run_daemon(cli)) {
-        eprintln!("Daemon error: {}", e);
-        std::process::exit(1);
+    if cli.list_devices {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        if let Err(e) = rt.block_on(list_devices()) {
+            eprintln!("Error: {}", e);
+        }
+        return;
     }
+
+    // DAEMON MODE.
+    //
+    // winit's EventLoop (used by the tray icon, see tray.rs) must be created
+    // on the real process main thread — a hard requirement, especially
+    // strict on Windows and macOS. Previously it was spawned on a background
+    // std::thread, which made EventLoop::new() panic immediately on Windows,
+    // right after the startup banner printed — that's the "console flashes
+    // and closes" symptom. The panic then propagated a second time via the
+    // old `tray_thread.join().unwrap()` call that used to live here.
+    //
+    // Fix: invert ownership. The async daemon (BLE scanning, session state,
+    // presence loop, etc.) now runs on a background OS thread with its own
+    // tokio runtime, and this — the actual main thread — just blocks on the
+    // tray event loop, exactly like the --pair branch above already does for
+    // its own winit-based GUI.
+    let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayCommand>();
+
+    let daemon_thread = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        if let Err(e) = rt.block_on(run_daemon(cli, tray_rx)) {
+            eprintln!("Daemon error: {}", e);
+        }
+    });
+
+    // Blocks until "Quit" is selected from the tray menu (or the event loop
+    // otherwise exits) — must run here, on the main thread.
+    tray::run_tray(tray_tx);
+
+    // Tray exited — give the daemon thread a moment to notice (it polls
+    // tray_rx) and shut down cleanly, then just move on either way.
+    let _ = daemon_thread.join();
 }
 
-async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+async fn list_devices() -> Result<(), Box<dyn std::error::Error>> {
+    let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
+    let storage = Arc::new(SledStorage::open_default()?);
+    let session = Arc::new(SessionManager::new(crypto, storage.clone()));
+    match session.list_devices().await {
+        Ok(devices) => {
+            if devices.is_empty() {
+                println!("No paired devices.");
+            } else {
+                for d in &devices {
+                    println!("{} - {} (paired at {}, baseline RSSI: {} dBm)",
+                        d.id, d.name, d.paired_at.format("%Y-%m-%d %H:%M"), d.baseline_rssi);
+                }
+            }
+        }
+        Err(e) => println!("Error: {}", e),
+    }
+    Ok(())
+}
+
+async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayCommand>) -> Result<(), Box<dyn std::error::Error>> {
     let log_dir = directories::ProjectDirs::from("", "", "WristKey")
         .map(|d| d.data_dir().join("logs"))
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp/wristkey/logs"));
@@ -94,31 +150,6 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .map(|d| d.data_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp/wristkey"));
 
-    if cli.list_devices {
-        let storage = Arc::new(SledStorage::open_default()?);
-        let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-        match session.list_devices().await {
-            Ok(devices) => {
-                if devices.is_empty() {
-                    println!("No paired devices.");
-                } else {
-                    for d in &devices {
-                        println!("{} - {} (paired at {}, baseline RSSI: {} dBm)",
-                            d.id, d.name, d.paired_at.format("%Y-%m-%d %H:%M"), d.baseline_rssi);
-                    }
-                }
-            }
-            Err(e) => println!("Error: {}", e),
-        }
-        return Ok(());
-    }
-
-    let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayCommand>();
-
-    let tray_thread = std::thread::spawn(move || {
-        tray::run_tray(tray_tx);
-    });
-
     let pair_flag_path = data_dir.join(".pairing_request");
 
     println!("╔══════════════════════════════════════╗");
@@ -132,6 +163,10 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut storage: Option<Arc<dyn Storage>> = Some(Arc::new(SledStorage::open_default()?));
     let mut session: Option<Arc<SessionManager>> = Some(Arc::new(SessionManager::new(crypto.clone(), storage.as_ref().unwrap().clone())));
+    // SessionManager reads config exclusively from storage (see
+    // check_response_freshness/update_rssi in core), never from the TOML file
+    // directly — without persisting it here, editing config.toml had zero effect.
+    storage.as_ref().unwrap().save_config(&_config).await?;
 
     loop {
         let _ = std::fs::remove_file(&pair_flag_path);
@@ -235,11 +270,29 @@ async fn run_daemon(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         if quit {
             break;
         }
-        storage = Some(Arc::new(SledStorage::open_default()?));
+        // Give the person real time to actually run `wristkeyd.exe --pair` and
+        // finish pairing before this process takes the Bluetooth radio and sled
+        // database back — resuming after a fixed short delay regardless of
+        // whether they'd actually done that was racing against the separate
+        // --pair process for the same BLE radio and the same sled database.
+        info!("Waiting for the pairing database to be free before resuming...");
+        let reopened = loop {
+            if let Ok(tray::TrayCommand::Quit) = tray_rx.try_recv() {
+                info!("Quit received while waiting for pairing to finish");
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            match SledStorage::open_default() {
+                Ok(s) => break Arc::new(s),
+                Err(e) => {
+                    warn!("pairing database still in use ({}), still waiting...", e);
+                }
+            }
+        };
+        storage = Some(reopened as Arc<dyn Storage>);
         session = Some(Arc::new(SessionManager::new(crypto.clone(), storage.as_ref().unwrap().clone())));
     }
 
-    tray_thread.join().unwrap();
     info!("WristKey daemon stopped");
     Ok(())
 }
