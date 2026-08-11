@@ -123,12 +123,15 @@ impl BleAdapter for BtleplugAdapter {
                                     if has_wristkey {
                                         info!(">>> WRISTKEY FOUND: addr={} pin={:?} device_id={:?} rssi={:?}", 
                                             info.id, info.pin, info.device_id, info.rssi);
+                                        // Only forward actual WristKey devices — this used to send
+                                        // EVERY nearby BLE device (speakers, phones, appliances...)
+                                        // to the scan channel, since `service_uuid` was accepted as
+                                        // a parameter but never actually used to filter anything.
+                                        if tx.send(info).await.is_err() {
+                                            break;
+                                        }
                                     } else {
-                                        info!(">>> NON-WRISTKEY: addr={} name={:?}", info.id, info.name);
-                                    }
-                                    
-                                    if tx.send(info).await.is_err() {
-                                        break;
+                                        debug!(">>> NON-WRISTKEY: addr={} name={:?}", info.id, info.name);
                                     }
                                 }
                                 Ok(None) => {}

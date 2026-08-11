@@ -26,6 +26,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         reset_id: tray_icon::menu::MenuId,
         logs_id: tray_icon::menu::MenuId,
         pair_id: tray_icon::menu::MenuId,
+        settings_id: tray_icon::menu::MenuId,
         list_id: tray_icon::menu::MenuId,
     }
 
@@ -59,7 +60,10 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
                     tracing::info!("Open logs selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::OpenLogs);
                 } else if event.id == self.pair_id {
-                    tracing::info!("Pair device selected from tray");
+                    tracing::info!("Open WristKey selected from tray");
+                    let _ = self.cmd_tx.send(TrayCommand::PairDevice);
+                } else if event.id == self.settings_id {
+                    tracing::info!("Settings selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::PairDevice);
                 } else if event.id == self.list_id {
                     tracing::info!("List devices selected from tray");
@@ -75,9 +79,9 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     let menu = Menu::new();
     let _status_i = MenuItem::new("Status: Waiting for watch…", false, None);
     let _sep1 = PredefinedMenuItem::separator();
-    let list_i = MenuItem::new("Paired Devices", true, None);
-    let pair_i = MenuItem::new("Pair New Device", true, None);
-    let _settings_i = MenuItem::new("Settings", false, None);
+    let list_i = MenuItem::new("Paired Devices (log)", true, None);
+    let pair_i = MenuItem::new("Open WristKey…", true, None);
+    let settings_i = MenuItem::new("Settings…", true, None);
     let logs_i = MenuItem::new("Open Logs Folder", true, None);
     let reset_i = MenuItem::new("Reset Pairing", true, None);
     let _sep2 = PredefinedMenuItem::separator();
@@ -87,7 +91,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     menu.append(&_sep1).unwrap();
     menu.append(&list_i).unwrap();
     menu.append(&pair_i).unwrap();
-    menu.append(&_settings_i).unwrap();
+    menu.append(&settings_i).unwrap();
     menu.append(&logs_i).unwrap();
     menu.append(&reset_i).unwrap();
     menu.append(&_sep2).unwrap();
@@ -109,6 +113,7 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         reset_id: reset_i.id().clone(),
         logs_id: logs_i.id().clone(),
         pair_id: pair_i.id().clone(),
+        settings_id: settings_i.id().clone(),
         list_id: list_i.id().clone(),
     };
     event_loop.run_app(&mut app).expect("event loop");

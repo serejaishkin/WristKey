@@ -23,6 +23,10 @@ use wristkey_platform_macos::MacOSSecurity;
 struct Cli {
     #[arg(short, long)]
     config: Option<std::path::PathBuf>,
+    /// Opens the unified GUI (Status / Devices / Settings). `--pair` is kept
+    /// as an alias for backward compatibility with existing shortcuts/docs.
+    #[arg(long)]
+    gui: bool,
     #[arg(long)]
     pair: bool,
     #[arg(long)]
@@ -34,12 +38,12 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
-    if cli.pair {
-        println!("Pairing mode: opening GUI…");
+    if cli.gui || cli.pair {
+        println!("Opening WristKey…");
         let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(SledStorage::open_default().expect("storage"));
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-        wristkey_daemon::pair_gui::run_pairing_gui(session, storage);
+        wristkey_daemon::gui::run_app(session, storage);
         return;
     }
 
@@ -185,7 +189,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
                     quit = true;
                 }
                 Ok(tray::TrayCommand::PairDevice) => {
-                    info!("Pairing requested — restarting in GUI mode");
+                    info!("Pairing requested — opening GUI");
                     if let Some(handle) = daemon_handle.take() {
                         handle.abort();
                     }
@@ -194,11 +198,15 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
                     tokio::time::sleep(Duration::from_millis(500)).await;
 
                     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("wristkeyd"));
-                    match std::process::Command::new(&exe).arg("--pair").spawn() {
-                        Ok(_) => info!("Launched pairing GUI"),
-                        Err(e) => warn!("Failed to launch pairing GUI: {}", e),
+                    match std::process::Command::new(&exe).arg("--gui").spawn() {
+                        Ok(_) => info!("Launched WristKey GUI"),
+                        Err(e) => warn!("Failed to launch WristKey GUI: {}", e),
                     }
-                    return Ok(());
+                    // Fall through to the wait-for-storage-to-free loop below
+                    // instead of returning — otherwise the daemon would die
+                    // permanently every time "Pair Device" is used from the tray,
+                    // requiring the person to manually restart wristkeyd.exe.
+                    restart = true;
                 }
                 Ok(tray::TrayCommand::ListDevices) => {
                     if let Some(ref s) = session {
