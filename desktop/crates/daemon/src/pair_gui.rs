@@ -1,6 +1,6 @@
 //! Pairing GUI — launched via `wristkeyd.exe --pair` or tray menu
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use eframe::egui;
 use tokio::time::timeout;
@@ -8,6 +8,11 @@ use uuid::Uuid;
 use chrono::Utc;
 use wristkey_core::{SessionManager, Storage, PairedDevice, Response};
 use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
+
+enum ScanUpdate {
+    Devices(Vec<PeripheralInfo>),
+    Error(String),
+}
 
 pub fn run_pairing_gui(session: Arc<SessionManager>, storage: Arc<dyn Storage>) {
     let paired_devices = {
@@ -45,7 +50,7 @@ struct PairingApp {
     status: String,
     discovered: Vec<PeripheralInfo>,
     paired_devices: Vec<PairedDevice>,
-    scan_thread: Option<std::thread::JoinHandle<()>>,
+    scan_rx: Option<mpsc::Receiver<ScanUpdate>>,
 }
 
 #[derive(PartialEq)]
@@ -63,9 +68,26 @@ impl PairingApp {
         storage: Arc<dyn Storage>,
         paired_devices: Vec<PairedDevice>,
     ) -> Self {
-        let (scan_tx, scan_rx) = std::sync::mpsc::channel::<Vec<PeripheralInfo>>();
+        let mut app = Self {
+            session,
+            storage,
+            state: AppState::Scanning,
+            status: "🔍 Scanning for WristKey devices…".into(),
+            discovered: Vec::new(),
+            paired_devices,
+            scan_rx: None,
+        };
+        app.start_scan();
+        app
+    }
 
-        let scan_thread = std::thread::spawn(move || {
+    fn start_scan(&mut self) {
+        let (scan_tx, scan_rx) = mpsc::channel::<ScanUpdate>();
+        self.scan_rx = Some(scan_rx);
+        self.state = AppState::Scanning;
+        self.status = "🔍 Scanning for WristKey devices…".into();
+
+        std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -73,12 +95,18 @@ impl PairingApp {
             rt.block_on(async {
                 let adapter = match BtleplugAdapter::new().await {
                     Ok(a) => a,
-                    Err(e) => { eprintln!("BLE adapter error: {}", e); let _ = scan_tx.send(vec![]); return; }
+                    Err(e) => {
+                        let _ = scan_tx.send(ScanUpdate::Error(format!("BLE adapter error: {}", e)));
+                        return;
+                    }
                 };
                 let service_uuid = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567890").unwrap();
                 let mut rx_scan = match adapter.scan(service_uuid).await {
                     Ok(r) => r,
-                    Err(e) => { eprintln!("Scan error: {}", e); let _ = scan_tx.send(vec![]); return; }
+                    Err(e) => {
+                        let _ = scan_tx.send(ScanUpdate::Error(format!("Scan error: {}", e)));
+                        return;
+                    }
                 };
                 let mut devices = Vec::new();
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -87,7 +115,7 @@ impl PairingApp {
                         Ok(Some(info)) => {
                             if !devices.iter().any(|d: &PeripheralInfo| d.id == info.id) {
                                 devices.push(info);
-                                let _ = scan_tx.send(devices.clone());
+                                let _ = scan_tx.send(ScanUpdate::Devices(devices.clone()));
                             }
                         }
                         _ => {}
@@ -95,32 +123,23 @@ impl PairingApp {
                 }
             });
         });
-
-        let mut app = Self {
-            session, storage, state: AppState::Scanning,
-            status: "🔍 Scanning for WristKey devices…".into(),
-            discovered: Vec::new(), paired_devices,
-            scan_thread: Some(scan_thread),
-        };
-        std::thread::spawn(move || {
-            while let Ok(devs) = scan_rx.recv() { if devs.is_empty() { break; } }
-        });
-        app
     }
 
     fn stop_scan(&mut self) {
-        if let Some(_handle) = self.scan_thread.take() {
-            // Note: we can't truly abort the thread, but dropping the receiver
-            // and ignoring results effectively stops the UI updates.
-            self.status = "⏹️ Scan stopped".into();
-            self.state = AppState::Discovered;
-        }
+        self.scan_rx = None;
+        self.status = "⏹️ Scan stopped".into();
+        self.state = AppState::Discovered;
     }
 
     fn clear_list(&mut self) {
         self.discovered.clear();
         self.state = AppState::Scanning;
         self.status = "🗑️ List cleared".into();
+    }
+
+    fn rescan(&mut self) {
+        self.discovered.clear();
+        self.start_scan();
     }
 
     fn do_pairing(&mut self, info: PeripheralInfo) {
@@ -172,6 +191,26 @@ impl PairingApp {
 
 impl eframe::App for PairingApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(rx) = &self.scan_rx {
+            while let Ok(update) = rx.try_recv() {
+                match update {
+                    ScanUpdate::Devices(devs) => {
+                        self.discovered = devs;
+                        if !self.discovered.is_empty() && self.state == AppState::Scanning {
+                            self.state = AppState::Discovered;
+                            self.status = format!("Found {} device(s).", self.discovered.len());
+                        }
+                        ctx.request_repaint();
+                    }
+                    ScanUpdate::Error(msg) => {
+                        self.state = AppState::Failed(msg.clone());
+                        self.status = format!("❌ {}", msg);
+                        ctx.request_repaint();
+                    }
+                }
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("WristKey Pairing");
             ui.separator();
@@ -183,7 +222,6 @@ impl eframe::App for PairingApp {
 
             ui.separator();
 
-            // Control buttons row
             ui.horizontal(|ui| {
                 if ui.button("⏹️ Stop Scan").clicked() {
                     self.stop_scan();
@@ -192,19 +230,12 @@ impl eframe::App for PairingApp {
                     self.clear_list();
                 }
                 if ui.button("🔄 Rescan").clicked() {
-                    self.discovered.clear();
-                    self.state = AppState::Scanning;
-                    self.status = "🔍 Scanning…".into();
+                    self.rescan();
                 }
             });
 
             ui.separator();
             ui.label(&self.status);
-
-            if !self.discovered.is_empty() && self.state == AppState::Scanning {
-                self.state = AppState::Discovered;
-                self.status = format!("Found {} device(s).", self.discovered.len());
-            }
 
             if self.state == AppState::Discovered || self.state == AppState::Scanning {
                 ui.label("Discovered devices:");
