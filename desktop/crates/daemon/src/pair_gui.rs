@@ -154,13 +154,13 @@ impl PairingApp {
                 let response = Response { signature, user_present, timestamp: Utc::now() };
                 let _ = session.complete_pairing(
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
-                    public_key, info.device_id, &response, info.rssi.unwrap_or(-50),
+                    public_key, info.device_id.clone(), &response, info.rssi.unwrap_or(-50),
                 ).await;
                 let _ = storage.save_device(&PairedDevice {
                     id: uuid::Uuid::new_v4(),
-                    name: info.name.as_deref().unwrap_or("WristKey").to_string(),
+                    name: info.name.clone().unwrap_or_else(|| "WristKey".to_string()),
                     public_key,
-                    device_id: info.device_id,
+                    device_id: info.device_id.clone(),
                     paired_at: Utc::now(),
                     baseline_rssi: info.rssi.unwrap_or(-50),
                 }).await;
