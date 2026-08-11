@@ -36,9 +36,10 @@ pub trait BleAdapter: Send + Sync {
     async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>>;
     async fn read_rssi(&self, conn: &Connection) -> Result<i16>;
     async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
-    
+    async fn stop_scan(&self) -> Result<()>;
+
     /// Returns the underlying btleplug Adapter for presence scanning.
-    fn btleplug_adapter(&self) -> Option<btleplug::platform::Adapter> { None }
+    fn btleplug_adapter(&self) -> Option<Adapter> { None }
 }
 
 pub struct BtleplugAdapter {
@@ -94,13 +95,14 @@ impl BleAdapter for BtleplugAdapter {
                             match peripheral.properties().await {
                                 Ok(Some(props)) => {
                                     info!("BLE discovered: {} name={:?} rssi={:?} svcs={:?}", peripheral.address(), props.local_name, props.rssi, props.services);
-                                    info!("  ALL: addr={} name={:?} rssi={:?} manuf={:?}", peripheral.address(), props.local_name, props.rssi, props.manufacturer_data);
+                                    info!(" ALL: addr={} name={:?} rssi={:?} manuf={:?}", peripheral.address(), props.local_name, props.rssi, props.manufacturer_data);
                                     if !props.manufacturer_data.contains_key(&0xFFFF) {
-                                        debug!("  skipping, no WristKey manufacturer data");
+                                        debug!(" skipping, no WristKey manufacturer data");
                                         continue;
                                     }
                                     let manufacturer_data = props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default();
-                                    let pin = String::from_utf8(manufacturer_data.clone()).ok();
+                                    // FIX: parse PIN from first 4 bytes only, not entire manufacturer_data
+                                    let pin = String::from_utf8(manufacturer_data[..4.min(manufacturer_data.len())].to_vec()).ok();
                                     let device_id = if manufacturer_data.len() > 4 {
                                         Some(hex::encode(&manufacturer_data[manufacturer_data.len()-4..]))
                                     } else { None };
@@ -178,7 +180,7 @@ impl BleAdapter for BtleplugAdapter {
         for svc in services {
             info!("  Service: {}", svc.uuid);
             for char in svc.characteristics {
-                info!("    Char: {} props={:?}", char.uuid, char.properties);
+                info!("  Char: {} props={:?}", char.uuid, char.properties);
             }
         }
         self.connected.write().await.insert(info.id.clone(), peripheral);
@@ -291,8 +293,13 @@ impl BleAdapter for BtleplugAdapter {
 
         Ok(value)
     }
-    
-    fn btleplug_adapter(&self) -> Option<btleplug::platform::Adapter> {
+
+    async fn stop_scan(&self) -> Result<()> {
+        self.adapter.stop_scan().await
+            .map_err(|e| WristKeyError::Ble(format!("stop_scan: {}", e)))
+    }
+
+    fn btleplug_adapter(&self) -> Option<Adapter> {
         Some(self.adapter.clone())
     }
 }
@@ -325,7 +332,7 @@ impl MockBleAdapter {
 
 #[async_trait]
 impl BleAdapter for MockBleAdapter {
-    async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
+    async fn scan(&self, _service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
         let (tx, rx) = mpsc::channel(4);
         let _ = tx.send(PeripheralInfo {
             id: "AA:BB:CC:DD:EE:FF".into(),
@@ -333,7 +340,7 @@ impl BleAdapter for MockBleAdapter {
             device_id: None,
             name: Some("Mock Watch".into()),
             rssi: Some(-45),
-            service_uuids: vec![service_uuid],
+            service_uuids: vec![_service_uuid],
         }).await;
         Ok(rx)
     }
@@ -358,4 +365,5 @@ impl BleAdapter for MockBleAdapter {
     async fn read(&self, _conn: &Connection, _char: Uuid) -> Result<Vec<u8>> {
         Ok(vec![])
     }
+    async fn stop_scan(&self) -> Result<()> { Ok(()) }
 }

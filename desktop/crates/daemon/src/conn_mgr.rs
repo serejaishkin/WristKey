@@ -151,5 +151,9 @@ pub async fn run_presence_loop(
         }
         mgr.cleanup().await;
     }
+
+    // FIX: stop scan when loop exits (daemon shutdown, error, etc.)
+    let _ = adapter.stop_scan().await;
+    info!("Presence loop stopped, scan cleaned up");
     Ok(())
 }
