@@ -6,6 +6,8 @@ pub enum TrayCommand {
     ResetPairing,
     OpenLogs,
     PairDevice,
+    StopScan,
+    ClearScanList,
 }
 
 #[cfg(feature = "tray")]
@@ -25,6 +27,8 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         reset_id: tray_icon::menu::MenuId,
         logs_id: tray_icon::menu::MenuId,
         pair_id: tray_icon::menu::MenuId,
+        stop_scan_id: tray_icon::menu::MenuId,
+        clear_scan_id: tray_icon::menu::MenuId,
     }
 
     impl ApplicationHandler for TrayApp {
@@ -59,6 +63,12 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
                 } else if event.id == self.pair_id {
                     tracing::info!("Pair device selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::PairDevice);
+                } else if event.id == self.stop_scan_id {
+                    tracing::info!("Stop scan selected from tray");
+                    let _ = self.cmd_tx.send(TrayCommand::StopScan);
+                } else if event.id == self.clear_scan_id {
+                    tracing::info!("Clear scan list selected from tray");
+                    let _ = self.cmd_tx.send(TrayCommand::ClearScanList);
                 }
             }
         }
@@ -72,6 +82,8 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     let _sep1 = PredefinedMenuItem::separator();
     let _devices_i = MenuItem::new("Paired Devices", false, None);
     let pair_i = MenuItem::new("Pair New Device", true, None);
+    let stop_scan_i = MenuItem::new("Stop Scan", true, None);
+    let clear_scan_i = MenuItem::new("Clear Scan List", true, None);
     let _settings_i = MenuItem::new("Settings", false, None);
     let logs_i = MenuItem::new("Open Logs Folder", true, None);
     let reset_i = MenuItem::new("Reset Pairing", true, None);
@@ -82,6 +94,8 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
     menu.append(&_sep1).unwrap();
     menu.append(&_devices_i).unwrap();
     menu.append(&pair_i).unwrap();
+    menu.append(&stop_scan_i).unwrap();
+    menu.append(&clear_scan_i).unwrap();
     menu.append(&_settings_i).unwrap();
     menu.append(&logs_i).unwrap();
     menu.append(&reset_i).unwrap();
@@ -104,6 +118,8 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
         reset_id: reset_i.id().clone(),
         logs_id: logs_i.id().clone(),
         pair_id: pair_i.id().clone(),
+        stop_scan_id: stop_scan_i.id().clone(),
+        clear_scan_id: clear_scan_i.id().clone(),
     };
     event_loop.run_app(&mut app).expect("event loop");
 }

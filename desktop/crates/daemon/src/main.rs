@@ -169,7 +169,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
     storage.as_ref().unwrap().save_config(&_config).await?;
 
     loop {
-        let _ = std::fs::remove_file(&_pair_flag_path);
+        let _ = std::fs::remove_file(&_pair_flag_pathpair_flag_path);
 
         let ble = match wristkey_ble::BtleplugAdapter::new().await {
             Ok(adapter) => Arc::new(adapter),
@@ -183,7 +183,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
         let mgr = Arc::new(ConnectionManager::new());
         let adapter_clone = ble.btleplug_adapter().expect("BtleplugAdapter required");
         let mgr_clone = mgr.clone();
-        tokio::spawn(async move {
+        let presence_handle = tokio::spawn(async move {
             if let Err(e) = run_presence_loop(adapter_clone, mgr_clone).await {
                 error!("presence loop crashed: {}", e);
             }
@@ -211,6 +211,15 @@ match tray_rx.try_recv() {
                         handle.abort();
                     }
                     quit = true;
+                }
+                Ok(tray::TrayCommand::StopScan) => {
+                    info!("Stop scan requested from tray");
+                    presence_handle.abort();
+                    info!("Presence loop stopped");
+                }
+                Ok(tray::TrayCommand::ClearScanList) => {
+                    info!("Clear scan list requested from tray");
+                    mgr.clear().await;
                 }
                 Ok(tray::TrayCommand::PairDevice) => {
                     info!("Pairing requested — restarting in GUI mode");

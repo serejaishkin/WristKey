@@ -108,6 +108,17 @@ impl ConnectionManager {
         self.peripherals.lock().await.get(addr).cloned()
     }
 
+    pub async fn clear(&self) {
+        let mut p = self.presence.lock().await;
+        let count = p.len();
+        p.clear();
+        let mut m = self.device_id_to_addr.lock().await;
+        m.clear();
+        let mut per = self.peripherals.lock().await;
+        per.clear();
+        info!("Cleared {} presence entries", count);
+    }
+
     pub async fn cleanup(&self) {
         let mut p = self.presence.lock().await;
         let before = p.len();
