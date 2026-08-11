@@ -109,7 +109,7 @@ impl PairingApp {
     }
 
     fn stop_scan(&mut self) {
-        if let Some(handle) = self.scan_thread.take() {
+        if let Some(_handle) = self.scan_thread.take() {
             // Note: we can't truly abort the thread, but dropping the receiver
             // and ignoring results effectively stops the UI updates.
             self.status = "⏹️ Scan stopped".into();
@@ -154,7 +154,7 @@ impl PairingApp {
                 let response = Response { signature, user_present, timestamp: Utc::now() };
                 let _ = session.complete_pairing(
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
-                    public_key, info.device_id.clone(), &response, info.rssi.unwrap_or(-50),
+                    public_key.clone(), info.device_id.clone(), &response, info.rssi.unwrap_or(-50),
                 ).await;
                 let _ = storage.save_device(&PairedDevice {
                     id: uuid::Uuid::new_v4(),
