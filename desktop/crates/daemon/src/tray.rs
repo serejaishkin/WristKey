@@ -69,6 +69,12 @@ pub fn run_tray(cmd_tx: std::sync::mpsc::Sender<TrayCommand>) {
                 } else if event.id == self.clear_scan_id {
                     tracing::info!("Clear scan list selected from tray");
                     let _ = self.cmd_tx.send(TrayCommand::ClearScanList);
+                } else if event.id == self.stop_scan_id {
+                    tracing::info!("Stop scan selected from tray");
+                    let _ = self.cmd_tx.send(TrayCommand::StopScan);
+                } else if event.id == self.clear_scan_id {
+                    tracing::info!("Clear scan list selected from tray");
+                    let _ = self.cmd_tx.send(TrayCommand::ClearScanList);
                 }
             }
         }

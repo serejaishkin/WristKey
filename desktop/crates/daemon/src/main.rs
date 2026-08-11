@@ -169,7 +169,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
     storage.as_ref().unwrap().save_config(&_config).await?;
 
     loop {
-        let _ = std::fs::remove_file(&_pair_flag_pathpair_flag_path);
+        let _ = std::fs::remove_file(&_pair_flag_pathpair_flag_pathpair_flag_path);
 
         let ble = match wristkey_ble::BtleplugAdapter::new().await {
             Ok(adapter) => Arc::new(adapter),
@@ -211,6 +211,15 @@ match tray_rx.try_recv() {
                         handle.abort();
                     }
                     quit = true;
+                }
+                Ok(tray::TrayCommand::StopScan) => {
+                    info!("Stop scan requested from tray");
+                    presence_handle.abort();
+                    info!("Presence loop stopped");
+                }
+                Ok(tray::TrayCommand::ClearScanList) => {
+                    info!("Clear scan list requested from tray");
+                    mgr.clear().await;
                 }
                 Ok(tray::TrayCommand::StopScan) => {
                     info!("Stop scan requested from tray");
