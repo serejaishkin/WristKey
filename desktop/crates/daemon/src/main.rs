@@ -35,7 +35,6 @@ fn main() {
     let cli = Cli::parse();
 
     if cli.pair {
-        // PAIRING MODE: no tokio on main thread (winit requirement on Windows)
         println!("Pairing mode: opening GUI…");
         let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
         let storage = Arc::new(SledStorage::open_default().expect("storage"));
@@ -55,21 +54,6 @@ fn main() {
         return;
     }
 
-    // DAEMON MODE.
-    //
-    // winit's EventLoop (used by the tray icon, see tray.rs) must be created
-    // on the real process main thread — a hard requirement, especially
-    // strict on Windows and macOS. Previously it was spawned on a background
-    // std::thread, which made EventLoop::new() panic immediately on Windows,
-    // right after the startup banner printed — that's the "console flashes
-    // and closes" symptom. The panic then propagated a second time via the
-    // old `tray_thread.join().unwrap()` call that used to live here.
-    //
-    // Fix: invert ownership. The async daemon (BLE scanning, session state,
-    // presence loop, etc.) now runs on a background OS thread with its own
-    // tokio runtime, and this — the actual main thread — just blocks on the
-    // tray event loop, exactly like the --pair branch above already does for
-    // its own winit-based GUI.
     let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayCommand>();
 
     let daemon_thread = std::thread::spawn(move || {
@@ -82,12 +66,7 @@ fn main() {
         }
     });
 
-    // Blocks until "Quit" is selected from the tray menu (or the event loop
-    // otherwise exits) — must run here, on the main thread.
     tray::run_tray(tray_tx);
-
-    // Tray exited — give the daemon thread a moment to notice (it polls
-    // tray_rx) and shut down cleanly, then just move on either way.
     let _ = daemon_thread.join();
 }
 
@@ -150,8 +129,6 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
         .map(|d| d.data_dir().to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp/wristkey"));
 
-    let pair_flag_path = data_dir.join(".pairing_request");
-
     println!("╔══════════════════════════════════════╗");
     println!("║  WristKey Daemon v0.1.0              ║");
     println!("║  PC unlock via Wear OS               ║");
@@ -163,14 +140,9 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
 
     let mut storage: Option<Arc<dyn Storage>> = Some(Arc::new(SledStorage::open_default()?));
     let mut session: Option<Arc<SessionManager>> = Some(Arc::new(SessionManager::new(crypto.clone(), storage.as_ref().unwrap().clone())));
-    // SessionManager reads config exclusively from storage (see
-    // check_response_freshness/update_rssi in core), never from the TOML file
-    // directly — without persisting it here, editing config.toml had zero effect.
     storage.as_ref().unwrap().save_config(&_config).await?;
 
     loop {
-        let _ = std::fs::remove_file(&_pair_flag_pathpair_flag_pathpair_flag_path);
-
         let ble = match wristkey_ble::BtleplugAdapter::new().await {
             Ok(adapter) => Arc::new(adapter),
             Err(e) => {
@@ -204,31 +176,13 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
         let mut quit = false;
         let mut restart = false;
         while !quit && !restart {
-match tray_rx.try_recv() {
+            match tray_rx.try_recv() {
                 Ok(tray::TrayCommand::Quit) => {
                     info!("Quit command from tray");
                     if let Some(handle) = daemon_handle.take() {
                         handle.abort();
                     }
                     quit = true;
-                }
-                Ok(tray::TrayCommand::StopScan) => {
-                    info!("Stop scan requested from tray");
-                    presence_handle.abort();
-                    info!("Presence loop stopped");
-                }
-                Ok(tray::TrayCommand::ClearScanList) => {
-                    info!("Clear scan list requested from tray");
-                    mgr.clear().await;
-                }
-                Ok(tray::TrayCommand::StopScan) => {
-                    info!("Stop scan requested from tray");
-                    presence_handle.abort();
-                    info!("Presence loop stopped");
-                }
-                Ok(tray::TrayCommand::ClearScanList) => {
-                    info!("Clear scan list requested from tray");
-                    mgr.clear().await;
                 }
                 Ok(tray::TrayCommand::PairDevice) => {
                     info!("Pairing requested — restarting in GUI mode");
@@ -238,15 +192,35 @@ match tray_rx.try_recv() {
                     drop(session.take());
                     drop(storage.take());
                     tokio::time::sleep(Duration::from_millis(500)).await;
-                    
+
                     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("wristkeyd"));
                     match std::process::Command::new(&exe).arg("--pair").spawn() {
                         Ok(_) => info!("Launched pairing GUI"),
                         Err(e) => warn!("Failed to launch pairing GUI: {}", e),
                     }
-                    
-                    // Exit daemon thread — GUI process takes over
                     return Ok(());
+                }
+                Ok(tray::TrayCommand::ListDevices) => {
+                    if let Some(ref s) = session {
+                        match s.list_devices().await {
+                            Ok(devices) => {
+                                if devices.is_empty() {
+                                    info!("No paired devices.");
+                                    println!("No paired devices.");
+                                } else {
+                                    info!("Paired devices:");
+                                    println!("=== Paired Devices ===");
+                                    for d in &devices {
+                                        let line = format!("📱 {} (ID: {}, RSSI: {} dBm)", d.name, d.id, d.baseline_rssi);
+                                        info!("{}", line);
+                                        println!("{}", line);
+                                    }
+                                    println!("=======================");
+                                }
+                            }
+                            Err(e) => warn!("Failed to list devices: {}", e),
+                        }
+                    }
                 }
                 Ok(tray::TrayCommand::ResetPairing) => {
                     let db_path = data_dir.join("wristkey.db");
@@ -281,11 +255,6 @@ match tray_rx.try_recv() {
         if quit {
             break;
         }
-        // Give the person real time to actually run `wristkeyd.exe --pair` and
-        // finish pairing before this process takes the Bluetooth radio and sled
-        // database back — resuming after a fixed short delay regardless of
-        // whether they'd actually done that was racing against the separate
-        // --pair process for the same BLE radio and the same sled database.
         info!("Waiting for the pairing database to be free before resuming...");
         let reopened = loop {
             if let Ok(tray::TrayCommand::Quit) = tray_rx.try_recv() {

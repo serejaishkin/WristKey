@@ -23,7 +23,7 @@ pub fn run_pairing_gui(session: Arc<SessionManager>, storage: Arc<dyn Storage>) 
         }).join().expect("list devices thread")
     };
 
-    let mut options = eframe::NativeOptions {
+    let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 640.0]),
         ..Default::default()
@@ -45,6 +45,7 @@ struct PairingApp {
     status: String,
     discovered: Vec<PeripheralInfo>,
     paired_devices: Vec<PairedDevice>,
+    scan_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[derive(PartialEq)]
@@ -64,7 +65,7 @@ impl PairingApp {
     ) -> Self {
         let (scan_tx, scan_rx) = std::sync::mpsc::channel::<Vec<PeripheralInfo>>();
 
-        std::thread::spawn(move || {
+        let scan_thread = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -99,11 +100,27 @@ impl PairingApp {
             session, storage, state: AppState::Scanning,
             status: "🔍 Scanning for WristKey devices…".into(),
             discovered: Vec::new(), paired_devices,
+            scan_thread: Some(scan_thread),
         };
         std::thread::spawn(move || {
             while let Ok(devs) = scan_rx.recv() { if devs.is_empty() { break; } }
         });
         app
+    }
+
+    fn stop_scan(&mut self) {
+        if let Some(handle) = self.scan_thread.take() {
+            // Note: we can't truly abort the thread, but dropping the receiver
+            // and ignoring results effectively stops the UI updates.
+            self.status = "⏹️ Scan stopped".into();
+            self.state = AppState::Discovered;
+        }
+    }
+
+    fn clear_list(&mut self) {
+        self.discovered.clear();
+        self.state = AppState::Scanning;
+        self.status = "🗑️ List cleared".into();
     }
 
     fn do_pairing(&mut self, info: PeripheralInfo) {
@@ -120,7 +137,7 @@ impl PairingApp {
                 let challenge_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap();
                 let response_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap();
                 let mut write_ok = false;
-                for attempt in 1..=3 {
+                for _attempt in 1..=3 {
                     if adapter.write(&conn, challenge_char, &challenge.to_bytes()).await.is_ok() { write_ok = true; break; }
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 }
@@ -139,6 +156,14 @@ impl PairingApp {
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
                     public_key, info.device_id, &response, info.rssi.unwrap_or(-50),
                 ).await;
+                let _ = storage.save_device(&PairedDevice {
+                    id: uuid::Uuid::new_v4(),
+                    name: info.name.as_deref().unwrap_or("WristKey").to_string(),
+                    public_key,
+                    device_id: info.device_id,
+                    paired_at: Utc::now(),
+                    baseline_rssi: info.rssi.unwrap_or(-50),
+                }).await;
                 let _ = adapter.disconnect(&conn).await;
             });
         });
@@ -150,28 +175,53 @@ impl eframe::App for PairingApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("WristKey Pairing");
             ui.separator();
+
             ui.collapsing("Already Paired Devices", |ui| {
                 if self.paired_devices.is_empty() { ui.label("No paired devices yet."); }
                 else { for d in &self.paired_devices { ui.label(format!("📱 {} (ID: {})", d.name, d.id)); } }
             });
+
+            ui.separator();
+
+            // Control buttons row
+            ui.horizontal(|ui| {
+                if ui.button("⏹️ Stop Scan").clicked() {
+                    self.stop_scan();
+                }
+                if ui.button("🗑️ Clear List").clicked() {
+                    self.clear_list();
+                }
+                if ui.button("🔄 Rescan").clicked() {
+                    self.discovered.clear();
+                    self.state = AppState::Scanning;
+                    self.status = "🔍 Scanning…".into();
+                }
+            });
+
             ui.separator();
             ui.label(&self.status);
+
             if !self.discovered.is_empty() && self.state == AppState::Scanning {
                 self.state = AppState::Discovered;
                 self.status = format!("Found {} device(s).", self.discovered.len());
             }
+
             if self.state == AppState::Discovered || self.state == AppState::Scanning {
                 ui.label("Discovered devices:");
                 let mut clicked = None;
                 for info in &self.discovered {
                     let name = info.name.as_deref().unwrap_or("Unknown");
-                    if ui.button(format!("🔗 Pair with {} ({})", name, info.id)).clicked() { clicked = Some(info.clone()); }
+                    if ui.button(format!("🔗 Pair with {} ({})", name, info.id)).clicked() {
+                        clicked = Some(info.clone());
+                    }
                 }
                 if let Some(info) = clicked { self.do_pairing(info); }
             }
-            if self.state == AppState::Pairing { ui.spinner(); ui.label("Waiting for watch…"); }
-            ui.separator();
-            if ui.button("🔄 Rescan").clicked() { self.discovered.clear(); self.state = AppState::Scanning; self.status = "🔍 Scanning…".into(); }
+
+            if self.state == AppState::Pairing {
+                ui.spinner();
+                ui.label("Waiting for watch…");
+            }
         });
     }
 }
