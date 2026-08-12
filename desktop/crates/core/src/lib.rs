@@ -68,10 +68,14 @@ impl CryptoEngine for EcdsaP256Crypto {
         let pubkey = p256::PublicKey::from_sec1_bytes(public_key)
             .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
         let verifying_key = VerifyingKey::from(pubkey);
-        let sig_bytes: [u8; 64] = signature.try_into()
-            .map_err(|_| WristKeyError::Crypto("invalid signature length".into()))?;
-        let sig = Signature::from_slice(&sig_bytes)
-            .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
+        
+        // FIX: support both raw (64 bytes) and DER-encoded (70-72 bytes) signatures
+        let sig = if signature.len() == 64 {
+            Signature::from_slice(signature)
+        } else {
+            Signature::from_der(signature)
+        }.map_err(|e| WristKeyError::Crypto(format!("invalid signature: {}", e)))?;
+        
         verifying_key.verify(data, &sig)
             .map_err(|_| WristKeyError::InvalidSignature)
     }
@@ -435,10 +439,6 @@ impl SessionManager {
         info!("pairing completed for {}", device.id);
         Ok(device)
     }
-    /// Starts an unlock attempt for a specific paired device and returns the challenge
-    /// that must be sent to it. The challenge is stored in session state so that
-    /// `verify_unlock` checks the signature against the exact bytes that were sent,
-    /// not a freshly generated (and therefore never-signed) challenge.
     pub async fn begin_unlock(&self, device_id: Uuid) -> Result<Challenge> {
         let challenge = Challenge::generate();
         *self.state.write().await = SessionState::Verifying {
