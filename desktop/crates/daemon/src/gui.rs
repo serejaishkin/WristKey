@@ -456,6 +456,26 @@ impl WristKeyApp {
                         to_forget = Some(d.id);
                     }
                 });
+				ui.horizontal(|ui| {
+    if ui.button("📏 Calibrate touch").clicked() {
+        let device_id = device.id;
+        let daemon = self.daemon.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap();
+            rt.block_on(async {
+                match daemon.calibrate_proximity(device_id).await {
+                    Ok(threshold) => {
+                        gui_log(&format!("✅ Calibrated: {} dBm", threshold));
+                    }
+                    Err(e) => {
+                        gui_log(&format!("❌ Calibration failed: {}", e));
+                    }
+                }
+            });
+        });
+    }
+});
             }
             if let Some(id) = to_forget {
                 self.pending_forget = Some(id);

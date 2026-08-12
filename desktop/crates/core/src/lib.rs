@@ -42,6 +42,12 @@ pub trait CryptoEngine: Send + Sync {
     async fn sign(&self, private_key: &[u8], data: &[u8]) -> Result<Vec<u8>>;
     async fn verify(&self, public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<()>;
 }
+#[async_trait]
+pub trait PasswordVault: Send + Sync {
+    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>>;
+    async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String>;
+}
+
 
 /// Software ECDSA P-256 crypto engine.
 pub struct EcdsaP256Crypto;
@@ -247,6 +253,7 @@ impl Storage for SledStorage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairedDevice {
+	
     pub id: Uuid,
     pub name: String,
     pub public_key: Vec<u8>,

@@ -1,403 +1,97 @@
-//! BLE abstraction layer over `btleplug`.
+//! WristKey daemon library — GUI, connection manager, and presence loop.
 
-use async_trait::async_trait;
-use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter, WriteType};
-use btleplug::platform::{Adapter, Manager, Peripheral};
-use std::collections::HashMap;
+pub mod conn_mgr;
+pub mod gui;
+pub mod pair_gui;
+pub mod tray;
+
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tokio_stream::StreamExt;
-use tracing::{debug, error, info, warn};
+use std::time::Duration;
+use tokio::time::{interval, sleep};
+use tracing::{info, warn};
 use uuid::Uuid;
-use wristkey_core::{Result, WristKeyError};
+use wristkey_core::{SessionManager, PlatformSecurity, Result, WristKeyError, Storage};
+use wristkey_ble::{BleAdapter, PeripheralInfo};
+use conn_mgr::ConnectionManager;
 
-#[derive(Clone, Debug)]
-pub struct PeripheralInfo {
-    pub pin: Option<String>,
-    pub device_id: Option<String>,
-    pub id: String,
-    pub name: Option<String>,
-    pub rssi: Option<i16>,
-    pub service_uuids: Vec<Uuid>,
-    pub raw_manufacturer_data: Option<Vec<u8>>,
+pub struct Daemon {
+    pub session: Arc<SessionManager>,
+    pub ble: Arc<dyn BleAdapter>,
+    pub platform: Arc<dyn PlatformSecurity>,
+    pub conn_mgr: Arc<ConnectionManager>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Connection {
-    pub peripheral_id: String,
-    pub device_name: String,
-}
-
-#[async_trait]
-pub trait BleAdapter: Send + Sync {
-    async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>>;
-    async fn connect(&self, info: &PeripheralInfo) -> Result<Connection>;
-    async fn disconnect(&self, conn: &Connection) -> Result<()>;
-    async fn write(&self, conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()>;
-    async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>>;
-    async fn read_rssi(&self, conn: &Connection) -> Result<i16>;
-    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>>;
-    async fn stop_scan(&self) -> Result<()>;
-
-    fn btleplug_adapter(&self) -> Option<Adapter> { None }
-}
-
-pub struct BtleplugAdapter {
-    _manager: Manager,
-    adapter: Adapter,
-    connected: Arc<RwLock<HashMap<String, Peripheral>>>,
-}
-
-impl BtleplugAdapter {
-    pub async fn new() -> Result<Self> {
-        let manager = Manager::new().await.map_err(|e| WristKeyError::Ble(format!("manager: {}", e)))?;
-        let adapters = manager.adapters().await.map_err(|e| WristKeyError::Ble(format!("adapters: {}", e)))?;
-        let adapter = adapters.into_iter().next().ok_or_else(|| WristKeyError::Ble("no BLE adapter".into()))?;
-        info!("BLE adapter ready");
-        Ok(Self {
-            _manager: manager,
-            adapter,
-            connected: Arc::new(RwLock::new(HashMap::new())),
-        })
+impl Daemon {
+    pub fn new(
+        session: Arc<SessionManager>,
+        ble: Arc<dyn BleAdapter>,
+        platform: Arc<dyn PlatformSecurity>,
+        conn_mgr: Arc<ConnectionManager>,
+    ) -> Self {
+        Self { session, ble, platform, conn_mgr }
     }
 
-    async fn get_connected(&self, peripheral_id: &str) -> Result<Peripheral> {
-        self.connected.read().await
-            .get(peripheral_id)
-            .cloned()
-            .ok_or_else(|| WristKeyError::Ble(format!("not connected: {}", peripheral_id)))
-    }
-}
-
-#[async_trait]
-impl BleAdapter for BtleplugAdapter {
-    async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
-        let (tx, rx) = mpsc::channel(32);
-        let filter = ScanFilter::default();
-
-        self.adapter.start_scan(filter).await
-            .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;
-
-        let adapter = self.adapter.clone();
-        tokio::spawn(async move {
-            let mut events = match adapter.events().await {
-                Ok(e) => e,
-                Err(e) => {
-                    error!("failed to get BLE events: {}", e);
-                    return;
-                }
-            };
-
-            while let Some(event) = events.next().await {
-                if let CentralEvent::DeviceDiscovered(id) = event {
-                    match adapter.peripheral(&id).await {
-                        Ok(peripheral) => {
-                            match peripheral.properties().await {
-                                Ok(Some(props)) => {
-                                    // DEBUG: log EVERY discovered device
-                                    info!(">>> DISCOVERED: addr={} name={:?} rssi={:?} manuf_keys={:?}", 
-                                        peripheral.address(), props.local_name, props.rssi, 
-                                        props.manufacturer_data.keys().collect::<Vec<_>>());
-                                    
-                                    let has_wristkey = props.manufacturer_data.contains_key(&0xFFFF);
-                                    let manufacturer_data = props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default();
-                                    
-                                    let pin = if manufacturer_data.len() >= 4 {
-                                        String::from_utf8(manufacturer_data[..4].to_vec()).ok()
-                                    } else { None };
-                                    
-                                    let device_id = if manufacturer_data.len() > 4 {
-                                        Some(hex::encode(&manufacturer_data[manufacturer_data.len()-4..]))
-                                    } else { None };
-                                    
-                                    let info = PeripheralInfo {
-                                        pin,
-                                        device_id,
-                                        id: peripheral.address().to_string(),
-                                        name: props.local_name.clone(),
-                                        rssi: props.rssi,
-                                        service_uuids: props.services.clone(),
-                                        raw_manufacturer_data: if has_wristkey { Some(manufacturer_data) } else { None },
-                                    };
-                                    
-                                    if has_wristkey {
-                                        info!(">>> WRISTKEY FOUND: addr={} pin={:?} device_id={:?} rssi={:?}", 
-                                            info.id, info.pin, info.device_id, info.rssi);
-                                        // Only forward actual WristKey devices — this used to send
-                                        // EVERY nearby BLE device (speakers, phones, appliances...)
-                                        // to the scan channel, since `service_uuid` was accepted as
-                                        // a parameter but never actually used to filter anything.
-                                        if tx.send(info).await.is_err() {
-                                            break;
-                                        }
-                                    } else {
-                                        debug!(">>> NON-WRISTKEY: addr={} name={:?}", info.id, info.name);
-                                    }
-                                }
-                                Ok(None) => {}
-                                Err(e) => warn!("failed to get properties: {}", e),
-                            }
-                        }
-                        Err(e) => warn!("failed to get peripheral: {}", e),
-                    }
-                }
-            }
-        });
-
-        Ok(rx)
-    }
-
-    async fn connect(&self, info: &PeripheralInfo) -> Result<Connection> {
-        debug!("connecting to {}", info.id);
-
-        let mut peripheral = {
-            let peripherals = self.adapter.peripherals().await
-                .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
-            peripherals.into_iter()
-                .find(|p| p.address().to_string() == info.id)
-        };
-
-        if peripheral.is_none() {
-            info!("peripheral {} not in cache, starting discovery scan", info.id);
-            let filter = ScanFilter::default();
-            self.adapter.start_scan(filter).await
-                .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;
-            for _ in 0..50 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                let peripherals = self.adapter.peripherals().await
-                    .map_err(|e| WristKeyError::Ble(format!("peripherals: {}", e)))?;
-                if let Some(p) = peripherals.into_iter().find(|p| p.address().to_string() == info.id) {
-                    peripheral = Some(p);
-                    break;
-                }
-            }
-            let _ = self.adapter.stop_scan().await;
-        }
-
-        let peripheral = peripheral
-            .ok_or_else(|| WristKeyError::Ble(format!("peripheral {} not found after scan", info.id)))?;
-
-        peripheral.connect().await
-            .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
-
-        let mut services = vec![];
-        for attempt in 1..=5 {
-            peripheral.discover_services().await
-                .map_err(|e| WristKeyError::Ble(format!("discover_services: {}", e)))?;
-            services = peripheral.services().into_iter().collect();
-            if !services.is_empty() {
-                info!("Discovered {} services on attempt {}", services.len(), attempt);
-                break;
-            }
-            info!("discover_services attempt {} returned 0 services, retrying...", attempt);
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        }
-        for svc in services {
-            info!("  Service: {}", svc.uuid);
-            for char in svc.characteristics {
-                info!("  Char: {} props={:?}", char.uuid, char.properties);
-            }
-        }
-        self.connected.write().await.insert(info.id.clone(), peripheral);
-
-        info!("connected to {} ({})", info.name.as_deref().unwrap_or("unknown"), info.id);
-        Ok(Connection {
-            peripheral_id: info.id.clone(),
-            device_name: info.name.clone().unwrap_or_else(|| "Unknown".into()),
-        })
-    }
-
-    async fn disconnect(&self, conn: &Connection) -> Result<()> {
-        debug!("disconnecting {}", conn.peripheral_id);
-
-        if let Some(peripheral) = self.connected.write().await.remove(&conn.peripheral_id) {
-            peripheral.disconnect().await
-                .map_err(|e| WristKeyError::Ble(format!("disconnect: {}", e)))?;
-            info!("disconnected {}", conn.peripheral_id);
-        }
-
-        Ok(())
-    }
-
-    async fn write(&self, conn: &Connection, characteristic: Uuid, data: &[u8]) -> Result<()> {
-        debug!("write {} bytes to {}", data.len(), characteristic);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let mut characteristics = peripheral.characteristics();
-        if characteristics.is_empty() {
-            warn!("characteristics empty, re-discovering services...");
-            peripheral.discover_services().await
-                .map_err(|e| WristKeyError::Ble(format!("discover_services fallback: {}", e)))?;
-            characteristics = peripheral.characteristics();
-        }
-        info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
-        let char = characteristics.iter()
-            .find(|c| c.uuid == characteristic)
-            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
-
-        peripheral.write(char, data, WriteType::WithoutResponse).await
-            .map_err(|e| WristKeyError::Ble(format!("write: {}", e)))?;
-
-        Ok(())
-    }
-
-    async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
-        debug!("subscribe {}", characteristic);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let mut characteristics = peripheral.characteristics();
-        if characteristics.is_empty() {
-            warn!("characteristics empty, re-discovering services...");
-            peripheral.discover_services().await
-                .map_err(|e| WristKeyError::Ble(format!("discover_services fallback: {}", e)))?;
-            characteristics = peripheral.characteristics();
-        }
-        info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
-        let char = characteristics.iter()
-            .find(|c| c.uuid == characteristic)
-            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
-
-        eprintln!("[BLE] notify: char={}, descriptors={}", char.uuid, char.descriptors.len());
-        for (i, desc) in char.descriptors.iter().enumerate() {
-            eprintln!("[BLE]   desc[{}]: {}", i, desc.uuid);
-        }
-        peripheral.subscribe(char).await
-            .map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
-
-
-        // FIX: manually write CCCD for Windows to Android GATT server
-        let cccd_uuid = Uuid::parse_str("00002902-0000-1000-8000-00805f9b34fb").unwrap();
-        for desc in &char.descriptors {
-            if desc.uuid == cccd_uuid {
-                eprintln!("[BLE] Writing CCCD [0x01, 0x00] to enable notify");
-                if let Err(e) = peripheral.write_descriptor(desc, &[0x01, 0x00]).await {
-                    eprintln!("[BLE] CCCD write failed: {}", e);
-                } else {
-                    eprintln!("[BLE] CCCD write OK");
-                }
-                break;
-            }
-        }
-        let peripheral_clone = peripheral.clone();
-        let mut notifications = peripheral_clone.notifications().await
-            .map_err(|e| WristKeyError::Ble(format!("notifications: {}", e)))?;
-
-        let (tx, rx) = mpsc::channel(32);
-        tokio::spawn(async move {
-            while let Some(notification) = notifications.next().await {
-                if notification.uuid == characteristic && tx.send(notification.value).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        Ok(rx)
-    }
-
-    async fn read_rssi(&self, conn: &Connection) -> Result<i16> {
-        debug!("rssi for {}", conn.peripheral_id);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let props = peripheral.properties().await
-            .map_err(|e| WristKeyError::Ble(format!("properties: {}", e)))?
-            .ok_or_else(|| WristKeyError::Ble("no properties".into()))?;
-
-        Ok(props.rssi.unwrap_or(-100))
-    }
-
-    async fn read(&self, conn: &Connection, characteristic: Uuid) -> Result<Vec<u8>> {
-        debug!("read {}", characteristic);
-
-        let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        let mut characteristics = peripheral.characteristics();
-        if characteristics.is_empty() {
-            warn!("characteristics empty, re-discovering services...");
-            peripheral.discover_services().await
-                .map_err(|e| WristKeyError::Ble(format!("discover_services fallback: {}", e)))?;
-            characteristics = peripheral.characteristics();
-        }
-        info!("Available characteristics: {:?}", characteristics.iter().map(|c| c.uuid.to_string()).collect::<Vec<_>>());
-        let char = characteristics.iter()
-            .find(|c| c.uuid == characteristic)
-            .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
-
-        let value = peripheral.read(char).await
-            .map_err(|e| WristKeyError::Ble(format!("read: {}", e)))?;
-
-        Ok(value)
-    }
-
-    async fn stop_scan(&self) -> Result<()> {
-        self.adapter.stop_scan().await
-            .map_err(|e| WristKeyError::Ble(format!("stop_scan: {}", e)))
-    }
-
-    fn btleplug_adapter(&self) -> Option<Adapter> {
-        Some(self.adapter.clone())
-    }
-}
-
-pub struct MockBleAdapter {
-    scripted: std::sync::Mutex<Vec<Vec<u8>>>,
-    scripted_rssi: std::sync::Mutex<Vec<i16>>,
-}
-
-impl Default for MockBleAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockBleAdapter {
-    pub fn new() -> Self {
-        Self {
-            scripted: std::sync::Mutex::new(Vec::new()),
-            scripted_rssi: std::sync::Mutex::new(Vec::new()),
+    pub async fn run(&self) -> Result<()> {
+        info!("Daemon main loop running");
+        loop {
+            sleep(Duration::from_secs(60)).await;
         }
     }
-    pub fn queue_response(&self, data: Vec<u8>) {
-        self.scripted.lock().unwrap().push(data);
-    }
-    pub fn queue_rssi(&self, rssi: i16) {
-        self.scripted_rssi.lock().unwrap().push(rssi);
-    }
-}
 
-#[async_trait]
-impl BleAdapter for MockBleAdapter {
-    async fn scan(&self, _service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
-        let (tx, rx) = mpsc::channel(4);
-        let _ = tx.send(PeripheralInfo {
-            id: "AA:BB:CC:DD:EE:FF".into(),
+    /// Calibrate proximity unlock threshold for a paired device.
+    /// NOTE: PairedDevice must have an `address` field (MAC address).
+    pub async fn calibrate_proximity(&self, device_id: Uuid) -> Result<i16> {
+        let device = self.session.storage.load_device(device_id).await?
+            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        
+        info!("Starting proximity calibration for {}", device_id);
+
+        // Build PeripheralInfo from stored address
+        let info = PeripheralInfo {
+            id: device.address.clone(),  // <-- убедись, что в PairedDevice есть поле address: String
+            name: Some(device.name.clone()),
             pin: None,
             device_id: None,
-            name: Some("Mock Watch".into()),
-            rssi: Some(-45),
-            service_uuids: vec![_service_uuid],
+            rssi: None,
+            service_uuids: vec![],
             raw_manufacturer_data: None,
-        }).await;
-        Ok(rx)
+        };
+
+        let conn = self.ble.connect(&info).await?;
+        
+        // ЗАМЕНИ на реальный UUID характеристики конфига часов
+        let config_char = Uuid::parse_str("00000000-0000-0000-0000-000000000000")
+            .map_err(|e| WristKeyError::Config(format!("invalid config UUID: {}", e)))?;
+        
+        self.ble.write(&conn, config_char, &[0x01]).await?;
+        info!("Sent START_CALIBRATION to watch");
+
+        let mut samples = Vec::new();
+        let mut ticker = interval(Duration::from_millis(500));
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            ticker.tick().await;
+            match self.ble.read_rssi(&conn).await {
+                Ok(rssi) => { info!("RSSI sample: {} dBm", rssi); samples.push(rssi); }
+                Err(e) => warn!("Failed to read RSSI: {}", e),
+            }
+        }
+
+        if samples.is_empty() {
+            let _ = self.ble.write(&conn, config_char, &[0x03]).await;
+            let _ = self.ble.disconnect(&conn).await;
+            return Err(WristKeyError::Ble("No RSSI samples collected".into()));
+        }
+
+        let avg = samples.iter().sum::<i16>() / samples.len() as i16;
+        let threshold = avg.saturating_add(5).min(-20).max(-90);
+        info!("Calibration: avg={} dBm, threshold={} dBm ({} samples)", avg, threshold, samples.len());
+
+        let rssi_byte = threshold as i8;
+        self.ble.write(&conn, config_char, &[0x02, rssi_byte as u8]).await?;
+        info!("Sent CALIBRATION_RESULT: {} dBm", threshold);
+        
+        let _ = self.ble.disconnect(&conn).await;
+        Ok(threshold)
     }
-    async fn connect(&self, info: &PeripheralInfo) -> Result<Connection> {
-        Ok(Connection {
-            peripheral_id: info.id.clone(),
-            device_name: info.name.clone().unwrap_or_default(),
-        })
-    }
-    async fn disconnect(&self, _conn: &Connection) -> Result<()> { Ok(()) }
-    async fn write(&self, _conn: &Connection, _char: Uuid, _data: &[u8]) -> Result<()> { Ok(()) }
-    async fn notify(&self, _conn: &Connection, _char: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
-        let (tx, rx) = mpsc::channel(4);
-        let data = self.scripted.lock().unwrap().pop();
-        if let Some(data) = data { let _ = tx.send(data).await; }
-        Ok(rx)
-    }
-    async fn read_rssi(&self, _conn: &Connection) -> Result<i16> {
-        let rssi = self.scripted_rssi.lock().unwrap().pop();
-        Ok(rssi.unwrap_or(-50))
-    }
-    async fn read(&self, _conn: &Connection, _char: Uuid) -> Result<Vec<u8>> {
-        Ok(vec![])
-    }
-    async fn stop_scan(&self) -> Result<()> { Ok(()) }
 }

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use tokio::process::Command;
 use tracing::{info, warn};
-use wristkey_core::{PlatformSecurity, Result, WristKeyError};
+use wristkey_core::{PlatformSecurity, PasswordVault, Result, WristKeyError};
 
 pub struct LinuxSecurity;
 
@@ -12,6 +12,7 @@ impl Default for LinuxSecurity {
         Self::new()
     }
 }
+
 impl LinuxSecurity {
     pub fn new() -> Self { Self }
 }
@@ -37,36 +38,28 @@ impl PlatformSecurity for LinuxSecurity {
         info!("session unlocked via loginctl");
         Ok(())
     }
-
-    async fn is_locked(&self) -> Result<bool> {
-        warn!("is_locked not implemented");
-        Ok(false)
-    }
-
-    async fn register_as_authenticator(&self) -> Result<()> {
-        info!("PAM module install via packaging");
-        Ok(())
-    }
 }
 
-const PAM_IGNORE: libc::c_int = 25;
+#[async_trait]
+impl PasswordVault for LinuxSecurity {
+    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
+        // Placeholder: replace with secret-service or kernel keyring in production
+        warn!("Linux password encryption uses placeholder XOR — replace with secret-service!");
+        let key = b"wristkey-placeholder-key";
+        let mut out = Vec::with_capacity(password.len());
+        for (i, b) in password.bytes().enumerate() {
+            out.push(b ^ key[i % key.len()]);
+        }
+        Ok(out)
+    }
 
-#[no_mangle]
-pub extern "C" fn pam_sm_authenticate(
-    _pamh: *mut libc::c_void,
-    _flags: libc::c_int,
-    _argc: libc::c_int,
-    _argv: *const *const libc::c_char,
-) -> libc::c_int {
-    PAM_IGNORE
-}
-
-#[no_mangle]
-pub extern "C" fn pam_sm_setcred(
-    _pamh: *mut libc::c_void,
-    _flags: libc::c_int,
-    _argc: libc::c_int,
-    _argv: *const *const libc::c_char,
-) -> libc::c_int {
-    PAM_IGNORE
+    async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String> {
+        let key = b"wristkey-placeholder-key";
+        let mut out = Vec::with_capacity(ciphertext.len());
+        for (i, b) in ciphertext.iter().enumerate() {
+            out.push(b ^ key[i % key.len()]);
+        }
+        String::from_utf8(out)
+            .map_err(|e| WristKeyError::Platform(format!("decrypt UTF-8 error: {}", e)))
+    }
 }
