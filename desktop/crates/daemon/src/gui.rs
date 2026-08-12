@@ -239,7 +239,7 @@ impl WristKeyApp {
     fn do_pairing(&mut self, info: PeripheralInfo) {
         self.scan_state = ScanState::Pairing;
         self.pairing_status = format!(
-            "🖐️ Pairing with {}…\nPress the button on the watch to confirm",
+            "🖐️ Pairing with {}…\nНажмите кнопку Подтвердить ПК на часах",
             info.name.as_deref().unwrap_or("Unknown")
         );
 

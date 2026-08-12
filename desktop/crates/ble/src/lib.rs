@@ -235,7 +235,7 @@ impl BleAdapter for BtleplugAdapter {
             .find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
 
-        peripheral.write(char, data, WriteType::WithResponse).await
+        peripheral.write(char, data, WriteType::WithoutResponse).await
             .map_err(|e| WristKeyError::Ble(format!("write: {}", e)))?;
 
         Ok(())
