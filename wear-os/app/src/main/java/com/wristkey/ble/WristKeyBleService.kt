@@ -224,11 +224,13 @@ class WristKeyBleService : Service() {
     }
 
     private fun handleChallenge(
+        Log.i(TAG, "handleChallenge START")
         device: BluetoothDevice, requestId: Int,
         responseNeeded: Boolean, value: ByteArray?
     ) {
         if (value == null || value.size < 24) {
             Log.w(TAG, "Invalid challenge length: ${value?.size}")
+            Log.i(TAG, "handleChallenge: invalid value, returning")
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, 0, null)
             return
         }
@@ -256,13 +258,18 @@ class WristKeyBleService : Service() {
         updateNotification(promptText)
         Log.i(TAG, "Challenge received, waiting for confirmation...")
 
+        Log.i(TAG, "handleChallenge: about to launch coroutine")
+
         // Wait for motion or button press (up to 6 seconds)
         serviceScope.launch {
+            Log.i(TAG, "handleChallenge: coroutine STARTED")
             val startTime = System.currentTimeMillis()
             var confirmed = false
 
             while (System.currentTimeMillis() - startTime < 6000) {
+                Log.i(TAG, "handleChallenge: checking motion=" + motionDetector.isMoving + " present=" + isUserPresent())
                 if (motionDetector.isMoving || isUserPresent()) {
+                    Log.i(TAG, "handleChallenge: confirmed!")
                     confirmed = true
                     break
                 }
@@ -295,6 +302,8 @@ class WristKeyBleService : Service() {
 
             responseCharacteristic?.value = response
 
+            Log.i(TAG, "handleChallenge: about to notify")
+
             val cccd = responseCharacteristic?.getDescriptor(CLIENT_CONFIG_UUID)
             Log.i(TAG, "CCCD value before notify: " + (cccd?.value?.contentToString() ?: "null"))
 
@@ -306,6 +315,7 @@ class WristKeyBleService : Service() {
                 false
             }
 
+            Log.i(TAG, "handleChallenge: notify returned, notified=" + notified)
             Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
             if (!notified) {
                 Log.w(TAG, "PC may not have received response (CCCD not ready)")
