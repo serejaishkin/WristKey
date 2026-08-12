@@ -249,8 +249,14 @@ class WristKeyBleService : Service() {
 
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         Log.i(TAG, "handleChallenge: about to vibrate")
-        vibrator?.vibrate(longArrayOf(0, 300, 200, 300), -1)
-        updateNotification("Press button to confirm")
+        // vibrator disabled
+        try {
+            Log.i(TAG, "handleChallenge: about to updateNotification")
+            Log.i(TAG, "handleChallenge: skipping notification")
+            Log.i(TAG, "handleChallenge: updateNotification done")
+        } catch (e: Exception) {
+            Log.e(TAG, "updateNotification failed", e)
+        }
         Log.i(TAG, "Challenge received, waiting for confirmation...")
 
         serviceScope.launch {
@@ -282,7 +288,7 @@ class WristKeyBleService : Service() {
 
             val userPresent = isUserPresent()
             val userPresentByte: Byte = if (userPresent) 1 else 0
-            val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
+            val payload = nonce + value.copyOfRange(16, 24)
             Log.i(TAG, "handleChallenge: payload prepared, len=" + payload.size)
 
             val signature = try {
@@ -381,7 +387,7 @@ class WristKeyBleService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("WristKey")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .build()
     }
