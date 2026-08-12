@@ -165,9 +165,8 @@ impl Daemon {
 
     async fn perform_pairing(&self, conn: &Connection, info: PeripheralInfo) -> Result<PairedDevice> {
         let challenge = self.session.begin_pairing().await?;
-        self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
-
         let mut rx = self.ble.notify(conn, self.response_char).await?;
+        self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
         let response_data = timeout(Duration::from_secs(10), rx.recv())
             .await
             .map_err(|_| WristKeyError::Ble("pairing timeout".into()))?
@@ -207,9 +206,8 @@ impl Daemon {
         let challenge = self.session.begin_unlock(device_id).await?;
         info!("🖐️ Двигайте рукой на часах для подтверждения разблокировки");
         println!("🖐️ Двигайте рукой на часах для подтверждения разблокировки");
-        self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
-
         let mut rx = self.ble.notify(conn, self.response_char).await?;
+        self.write_with_retry(conn, self.challenge_char, &challenge.to_bytes()).await?;
         let response_data = timeout(Duration::from_secs(10), rx.recv())
             .await
             .map_err(|_| WristKeyError::Ble("unlock timeout".into()))?
