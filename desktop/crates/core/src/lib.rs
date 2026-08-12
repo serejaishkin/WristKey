@@ -253,6 +253,8 @@ pub struct PairedDevice {
     pub device_id: Option<String>,
     pub paired_at: DateTime<Utc>,
     pub baseline_rssi: i16,
+    /// DPAPI-encrypted Windows password (platform-win only)
+    pub windows_password: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -328,6 +330,14 @@ pub trait PlatformSecurity: Send + Sync {
     async fn unlock_screen(&self) -> Result<()>;
     async fn is_locked(&self) -> Result<bool>;
     async fn register_as_authenticator(&self) -> Result<()>;
+}
+
+/// Platform-specific password encryption (DPAPI on Windows, keyring on Linux, etc.)
+pub trait PasswordVault: Send + Sync {
+    /// Encrypt a plaintext password into opaque bytes
+    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>>;
+    /// Decrypt opaque bytes back into plaintext password
+    async fn decrypt_password(&self, encrypted: &[u8]) -> Result<String>;
 }
 
 pub struct MockPlatformSecurity {
@@ -433,7 +443,7 @@ impl SessionManager {
         if !response.user_present {
             return Err(WristKeyError::Protocol("user presence required".into()));
         }
-        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi };
+        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, windows_password: None };
         self.storage.save_device(&device).await?;
         *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
         info!("pairing completed for {}", device.id);
@@ -463,6 +473,23 @@ impl SessionManager {
         *self.state.write().await = SessionState::Authenticated { device_id, last_rssi: device.baseline_rssi, last_seen: Utc::now() };
         info!("unlock verified for {}", device_id);
         Ok(())
+    }
+
+    /// Store encrypted Windows password for a paired device
+    pub async fn set_device_password(&self, device_id: Uuid, encrypted: Vec<u8>) -> Result<()> {
+        let mut device = self.storage.load_device(device_id).await?
+            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        device.windows_password = Some(encrypted);
+        self.storage.save_device(&device).await?;
+        info!("stored encrypted password for device {}", device_id);
+        Ok(())
+    }
+
+    /// Retrieve encrypted Windows password for a paired device
+    pub async fn get_device_password(&self, device_id: Uuid) -> Result<Option<Vec<u8>>> {
+        let device = self.storage.load_device(device_id).await?
+            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        Ok(device.windows_password.clone())
     }
     pub async fn update_rssi(&self, rssi: i16) -> Result<bool> {
         let mut state = self.state.write().await;
@@ -574,6 +601,7 @@ mod tests {
             device_id: None,
             paired_at: Utc::now(),
             baseline_rssi: -55,
+            windows_password: None,
         };
         storage.save_device(&device).await.unwrap();
         let loaded = storage.load_device(device.id).await.unwrap().unwrap();
