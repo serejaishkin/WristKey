@@ -11,6 +11,7 @@
 //! this file replaces.
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use eframe::egui;
 use tokio::time::timeout;
@@ -39,8 +40,6 @@ enum Tab {
     Settings,
 }
 
-/// Snapshot of session state, refreshed periodically from a background thread
-/// so `update()` never has to block on async work.
 #[derive(Clone)]
 struct StatusSnapshot {
     state_label: String,
@@ -51,20 +50,15 @@ pub struct WristKeyApp {
     session: Arc<SessionManager>,
     storage: Arc<dyn Storage>,
     tab: Tab,
-
-    // --- Status tab ---
     status: Arc<Mutex<StatusSnapshot>>,
-
-    // --- Devices tab ---
     paired_devices: Vec<PairedDevice>,
-    devices_dirty: bool, // set true to trigger a reload from storage
+    devices_dirty: bool,
     pending_forget: Option<Uuid>,
     scan_state: ScanState,
     discovered: Vec<PeripheralInfo>,
     scan_rx: Option<std::sync::mpsc::Receiver<Vec<PeripheralInfo>>>,
+    scan_abort: Arc<AtomicBool>,
     pairing_status: String,
-
-    // --- Settings tab ---
     settings_form: SettingsForm,
     settings_loaded: bool,
     settings_status: String,
@@ -103,9 +97,6 @@ impl WristKeyApp {
             detail: String::new(),
         }));
 
-        // Background poller: refreshes the status snapshot roughly once a
-        // second for as long as the GUI process lives. Cheap (just reads
-        // in-memory session state), so a plain sleep loop is fine here.
         {
             let session = session.clone();
             let status = status.clone();
@@ -139,6 +130,7 @@ impl WristKeyApp {
             scan_state: ScanState::Idle,
             discovered: Vec::new(),
             scan_rx: None,
+            scan_abort: Arc::new(AtomicBool::new(false)),
             pairing_status: String::new(),
             settings_form: SettingsForm::default(),
             settings_loaded: false,
@@ -201,9 +193,11 @@ impl WristKeyApp {
         self.discovered.clear();
         self.scan_state = ScanState::Scanning;
         self.pairing_status.clear();
+        self.scan_abort = Arc::new(AtomicBool::new(false));
 
         let (tx, rx) = std::sync::mpsc::channel::<Vec<PeripheralInfo>>();
         self.scan_rx = Some(rx);
+        let abort = self.scan_abort.clone();
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
@@ -219,7 +213,7 @@ impl WristKeyApp {
                 };
                 let mut devices = Vec::new();
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-                while tokio::time::Instant::now() < deadline {
+                while tokio::time::Instant::now() < deadline && !abort.load(Ordering::Relaxed) {
                     match timeout(Duration::from_secs(1), rx_scan.recv()).await {
                         Ok(Some(info)) => {
                             if !devices.iter().any(|d: &PeripheralInfo| d.id == info.id) {
@@ -230,8 +224,19 @@ impl WristKeyApp {
                         _ => {}
                     }
                 }
+                let _ = adapter.stop_scan().await;
             });
         });
+    }
+
+    fn stop_scan(&mut self) {
+        self.scan_abort.store(true, Ordering::Relaxed);
+        self.scan_state = ScanState::Idle;
+        self.scan_rx = None;
+    }
+
+    fn clear_list(&mut self) {
+        self.discovered.clear();
     }
 
     fn do_pairing(&mut self, info: PeripheralInfo) {
@@ -343,7 +348,6 @@ impl eframe::App for WristKeyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(500));
 
-        // Drain scan updates
         if let Some(rx) = &self.scan_rx {
             while let Ok(devices) = rx.try_recv() {
                 self.discovered = devices;
@@ -426,8 +430,27 @@ impl WristKeyApp {
 
         match &self.scan_state {
             ScanState::Idle => {
-                if ui.button("🔍 Scan for 30 seconds").clicked() {
-                    self.start_scan();
+                ui.horizontal(|ui| {
+                    if ui.button("🔍 Scan for 30 seconds").clicked() {
+                        self.start_scan();
+                    }
+                    if !self.discovered.is_empty() {
+                        if ui.button("🗑️ Clear List").clicked() {
+                            self.clear_list();
+                        }
+                        if ui.button("🔄 Rescan").clicked() {
+                            self.discovered.clear();
+                            self.start_scan();
+                        }
+                    }
+                });
+                if !self.discovered.is_empty() {
+                    ui.label("Previously found devices (click Rescan to refresh):");
+                    for info in &self.discovered {
+                        let name = info.name.as_deref().unwrap_or("Unknown Watch");
+                        let pin = info.pin.as_deref().unwrap_or("----");
+                        ui.label(format!("• {} — PIN {}", name, pin));
+                    }
                 }
             }
             ScanState::Scanning => {
@@ -450,10 +473,14 @@ impl WristKeyApp {
                         self.do_pairing(info);
                     }
                 }
-                if ui.button("Cancel scan").clicked() {
-                    self.scan_state = ScanState::Idle;
-                    self.scan_rx = None;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("⏹️ Stop Scan").clicked() {
+                        self.stop_scan();
+                    }
+                    if !self.discovered.is_empty() && ui.button("🗑️ Clear List").clicked() {
+                        self.clear_list();
+                    }
+                });
             }
             ScanState::Pairing => {
                 ui.spinner();
