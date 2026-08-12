@@ -11,6 +11,8 @@
 //! this file replaces.
 
 use std::sync::{Arc, Mutex, mpsc};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::time::Duration;
 use eframe::egui;
 use tokio::time::timeout;
@@ -22,6 +24,13 @@ use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
+
+fn gui_log(msg: &str) {
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let line = format!("[{}] {}\n", ts, msg);
+    let _ = OpenOptions::new().create(true).append(true).open("wristkey_gui.log")
+        .and_then(|mut f| f.write_all(line.as_bytes()));
+}
 
 pub fn run_app(session: Arc<SessionManager>, storage: Arc<dyn Storage>) {
     let options = eframe::NativeOptions {
@@ -189,6 +198,7 @@ impl WristKeyApp {
     }
 
     fn start_scan(&mut self) {
+        gui_log("=== start_scan ===");
         self.discovered.clear();
         self.scan_state = ScanState::Scanning;
         self.pairing_status.clear();
@@ -202,12 +212,12 @@ impl WristKeyApp {
             rt.block_on(async {
                 let adapter = match BtleplugAdapter::new().await {
                     Ok(a) => a,
-                    Err(e) => { eprintln!("BLE adapter error: {}", e); return; }
+                    Err(e) => { gui_log(&format!("BLE adapter error: {}", e)); return; }
                 };
                 let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
                 let mut rx_scan = match adapter.scan(service_uuid).await {
                     Ok(r) => r,
-                    Err(e) => { eprintln!("Scan error: {}", e); return; }
+                    Err(e) => { gui_log(&format!("Scan error: {}", e)); return; }
                 };
                 let mut devices = Vec::new();
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -245,7 +255,7 @@ impl WristKeyApp {
                     Err(e) => return Err(format!("BLE adapter: {}", e)),
                 };
                 let conn = match adapter.connect(&info).await {
-                    Ok(c) => c,
+                    Ok(c) => { gui_log("Connected to device"); c }
                     Err(e) => return Err(format!("Connect failed: {}", e)),
                 };
                 let challenge = match session.begin_pairing().await {
@@ -260,7 +270,7 @@ impl WristKeyApp {
 
                 // FIX: subscribe BEFORE writing challenge (race condition)
                 let mut rx = match adapter.notify(&conn, response_char).await {
-                    Ok(r) => r,
+                    Ok(r) => { gui_log("Subscribed to notify (response char)"); r }
                     Err(e) => {
                         let _ = adapter.disconnect(&conn).await;
                         return Err(format!("Notify subscribe failed: {}", e));
@@ -270,8 +280,8 @@ impl WristKeyApp {
                 let mut write_ok = false;
                 for attempt in 1..=3 {
                     match adapter.write(&conn, challenge_char, &challenge.to_bytes()).await {
-                        Ok(_) => { write_ok = true; break; }
-                        Err(e) => eprintln!("Write attempt {} failed: {}", attempt, e),
+                        Ok(_) => { gui_log(&format!("Challenge written ({} bytes)", challenge.to_bytes().len())); write_ok = true; break; }
+                        Err(e) => gui_log(&format!("Write attempt {} failed: {}", attempt, e)),
                     }
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 }
@@ -280,13 +290,15 @@ impl WristKeyApp {
                     return Err("Failed to write challenge after 3 attempts".into());
                 }
 
+                gui_log("Waiting for response (10s)...");
                 let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
-                    Ok(Some(d)) => d,
+                    Ok(Some(d)) => { gui_log(&format!("Response received: {} bytes", d.len())); d }
                     Ok(None) => {
                         let _ = adapter.disconnect(&conn).await;
                         return Err("Watch disconnected before responding".into());
                     }
                     Err(_) => {
+                        gui_log("TIMEOUT: no response from watch in 10s");
                         let _ = adapter.disconnect(&conn).await;
                         return Err("Timeout waiting for watch response (10s). Make sure you shook your wrist or pressed the button on the watch.".into());
                     }
@@ -302,6 +314,7 @@ impl WristKeyApp {
                 let public_key = response_data[sig_len + 1..].to_vec();
                 let response = Response { signature, user_present, timestamp: Utc::now() };
 
+                gui_log("Calling complete_pairing...");
                 match session.complete_pairing(
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
                     public_key.clone(),
@@ -310,10 +323,12 @@ impl WristKeyApp {
                     info.rssi.unwrap_or(-50),
                 ).await {
                     Ok(_device) => {
+                        gui_log("complete_pairing OK");
                         let _ = adapter.disconnect(&conn).await;
                         Ok(())
                     }
                     Err(e) => {
+                        gui_log(&format!("complete_pairing FAILED: {}", e));
                         let _ = adapter.disconnect(&conn).await;
                         Err(format!("Pairing verification failed: {}", e))
                     }

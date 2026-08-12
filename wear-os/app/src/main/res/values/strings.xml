@@ -3,7 +3,7 @@
     <string name="status_disconnected">Disconnected</string>
     <string name="status_pairing">Pairing…</string>
     <string name="status_connected">Connected</string>
-    <string name="action_pair">Pair with PC</string>
+    <string name="action_pair">Подтвердить ПК</string>
     <string name="action_unlock">Unlock PC</string>
     <string name="action_reset">Reset Pairing</string>
     <string name="reset_done">Pairing reset</string>
