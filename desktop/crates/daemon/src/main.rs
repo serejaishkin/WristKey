@@ -159,7 +159,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
         let mgr = Arc::new(ConnectionManager::new());
         let adapter_clone = ble.btleplug_adapter().expect("BtleplugAdapter required");
         let mgr_clone = mgr.clone();
-        let presence_handle = tokio::spawn(async move {
+        let _presence_handle = tokio::spawn(async move {
             if let Err(e) = run_presence_loop(adapter_clone, mgr_clone).await {
                 error!("presence loop crashed: {}", e);
             }
