@@ -260,6 +260,20 @@ impl BleAdapter for BtleplugAdapter {
         peripheral.subscribe(char).await
             .map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
 
+
+        // FIX: manually write CCCD for Windows to Android GATT server
+        let cccd_uuid = Uuid::parse_str("00002902-0000-1000-8000-00805f9b34fb").unwrap();
+        for desc in &char.descriptors {
+            if desc.uuid == cccd_uuid {
+                info!("Writing CCCD [0x01, 0x00] to enable notify");
+                if let Err(e) = peripheral.write_descriptor(desc, &[0x01, 0x00]).await {
+                    warn!("CCCD write failed: {}", e);
+                } else {
+                    info!("CCCD write OK");
+                }
+                break;
+            }
+        }
         let peripheral_clone = peripheral.clone();
         let mut notifications = peripheral_clone.notifications().await
             .map_err(|e| WristKeyError::Ble(format!("notifications: {}", e)))?;
