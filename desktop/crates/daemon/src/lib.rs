@@ -39,16 +39,14 @@ impl Daemon {
     }
 
     /// Calibrate proximity unlock threshold for a paired device.
-    /// NOTE: PairedDevice must have an `address` field (MAC address).
     pub async fn calibrate_proximity(&self, device_id: Uuid) -> Result<i16> {
         let device = self.session.storage.load_device(device_id).await?
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         
         info!("Starting proximity calibration for {}", device_id);
 
-        // Build PeripheralInfo from stored address
         let info = PeripheralInfo {
-            id: device.address.clone(),  // <-- убедись, что в PairedDevice есть поле address: String
+            id: device.address.clone(),
             name: Some(device.name.clone()),
             pin: None,
             device_id: None,
@@ -59,8 +57,8 @@ impl Daemon {
 
         let conn = self.ble.connect(&info).await?;
         
-        // ЗАМЕНИ на реальный UUID характеристики конфига часов
-        let config_char = Uuid::parse_str("00000000-0000-0000-0000-000000000000")
+        // ⚠️ ЗАМЕНИ на реальный UUID характеристики конфига часов
+        let config_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
             .map_err(|e| WristKeyError::Config(format!("invalid config UUID: {}", e)))?;
         
         self.ble.write(&conn, config_char, &[0x01]).await?;

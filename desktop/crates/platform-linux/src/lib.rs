@@ -12,7 +12,6 @@ impl Default for LinuxSecurity {
         Self::new()
     }
 }
-
 impl LinuxSecurity {
     pub fn new() -> Self { Self }
 }
@@ -43,7 +42,6 @@ impl PlatformSecurity for LinuxSecurity {
 #[async_trait]
 impl PasswordVault for LinuxSecurity {
     async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
-        // Placeholder: replace with secret-service or kernel keyring in production
         warn!("Linux password encryption uses placeholder XOR — replace with secret-service!");
         let key = b"wristkey-placeholder-key";
         let mut out = Vec::with_capacity(password.len());
