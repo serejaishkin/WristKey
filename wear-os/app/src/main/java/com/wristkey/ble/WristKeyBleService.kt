@@ -85,6 +85,12 @@ class WristKeyBleService : Service() {
             return START_NOT_STICKY
         }
 
+        if (bluetoothAdapter?.isEnabled != true) {
+            Log.e(TAG, "Bluetooth is disabled, cannot start GATT/advertising")
+            updateNotification("Bluetooth disabled")
+            return START_STICKY
+        }
+
         deviceIdHex = securityManager.getDeviceId().joinToString("") { "%02x".format(it) }
         Log.i(TAG, "Device ID: $deviceIdHex")
 
@@ -122,11 +128,7 @@ class WristKeyBleService : Service() {
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         Log.i(TAG, "Device connected: ${device.address}")
-                        if (device.bondState != BluetoothDevice.BOND_BONDED) {
-                            Log.i(TAG, "Requesting BLE bond...")
-                            val result = device.createBond()
-                            Log.i(TAG, "createBond() result: $result")
-                        }
+                        // FIX: removed createBond() — Windows btleplug handles connection without bonding
                         currentDevice = device
                         updateStatus(STATUS_AUTHENTICATED)
                         updateNotification("Connected to ${device.name ?: "PC"}")
@@ -242,32 +244,35 @@ class WristKeyBleService : Service() {
             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
         }
 
-        // Prompt user to move wrist
+        // Prompt user — use button if no accelerometer, otherwise wrist motion
+        val hasAccel = motionDetector.hasAccelerometer()
+        val promptText = if (hasAccel) "Подвигайте рукой или нажмите кнопку" else "Нажмите кнопку для подтверждения"
+
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         vibrator?.vibrate(longArrayOf(0, 300, 200, 300), -1)
-        updateNotification("Подвигайте рукой для подтверждения")
-        Log.i(TAG, "Challenge received, waiting for wrist motion...")
+        updateNotification(promptText)
+        Log.i(TAG, "Challenge received, waiting for confirmation...")
 
-        // Wait for motion in background (up to 6 seconds)
+        // Wait for motion or button press (up to 6 seconds)
         serviceScope.launch {
             val startTime = System.currentTimeMillis()
-            var motionConfirmed = false
+            var confirmed = false
 
             while (System.currentTimeMillis() - startTime < 6000) {
                 if (motionDetector.isMoving || isUserPresent()) {
-                    motionConfirmed = true
+                    confirmed = true
                     break
                 }
                 delay(300)
             }
 
-            if (!motionConfirmed) {
-                Log.w(TAG, "Challenge rejected: no wrist motion detected")
+            if (!confirmed) {
+                Log.w(TAG, "Challenge rejected: no confirmation received")
                 updateNotification("Подтверждение не получено")
                 return@launch
             }
 
-            Log.i(TAG, "Wrist motion confirmed, signing challenge")
+            Log.i(TAG, "User confirmed, signing challenge")
             updateNotification("Подтверждено, отправка ответа...")
 
             val userPresent = isUserPresent()
@@ -286,15 +291,36 @@ class WristKeyBleService : Service() {
             val response = signature + byteArrayOf(userPresentByte) + publicKey
 
             responseCharacteristic?.value = response
-            val notified = gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
+
+            // FIX: wrap notify in try-catch (CCCD may not be subscribed yet on Windows)
+            val notified = try {
+                gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
+            } catch (e: Exception) {
+                Log.e(TAG, "notifyCharacteristicChanged failed", e)
+                false
+            }
+
             Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
+            if (!notified) {
+                Log.w(TAG, "PC may not have received response (CCCD not ready)")
+            }
             updateNotification("Подключено к ${device.name ?: "PC"}")
         }
     }
 
     private fun startAdvertising() {
-        val adapter = bluetoothAdapter ?: return
-        advertiser = adapter.bluetoothLeAdvertiser ?: return
+        val adapter = bluetoothAdapter ?: run {
+            Log.e(TAG, "Bluetooth adapter not available")
+            return
+        }
+        if (!adapter.isEnabled) {
+            Log.e(TAG, "Bluetooth is disabled, cannot advertise")
+            return
+        }
+        advertiser = adapter.bluetoothLeAdvertiser ?: run {
+            Log.e(TAG, "BluetoothLeAdvertiser not available")
+            return
+        }
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -335,7 +361,11 @@ class WristKeyBleService : Service() {
     private fun updateStatus(status: Byte) {
         statusCharacteristic?.value = byteArrayOf(status)
         currentDevice?.let { device ->
-            gattServer?.notifyCharacteristicChanged(device, statusCharacteristic, false)
+            try {
+                gattServer?.notifyCharacteristicChanged(device, statusCharacteristic, false)
+            } catch (e: Exception) {
+                Log.e(TAG, "updateStatus notify failed", e)
+            }
         }
     }
 
@@ -361,7 +391,7 @@ class WristKeyBleService : Service() {
 
     fun confirmUserPresent() {
         lastUserPresentTime = System.currentTimeMillis()
-        Log.i(TAG, "User presence confirmed")
+        Log.i(TAG, "User presence confirmed via button")
     }
 
     private fun isUserPresent(): Boolean {

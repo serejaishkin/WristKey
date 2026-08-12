@@ -12,6 +12,7 @@ import android.util.Log
  *
  * Uses accelerometer to verify presence before signing unlock.
  * Anti-relay: if watch is stationary on table, reject.
+ * Fallback: if no accelerometer, user must press the button instead.
  */
 class MotionDetector(context: Context) : SensorEventListener {
 
@@ -24,10 +25,14 @@ class MotionDetector(context: Context) : SensorEventListener {
     var isMoving = false
         private set
 
+    fun hasAccelerometer(): Boolean = accelerometer != null
+
     fun start() {
         accelerometer?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
             Log.i("WristKeyMotion", "Accelerometer registered")
+        } ?: run {
+            Log.w("WristKeyMotion", "No accelerometer available — fallback to button confirmation")
         }
     }
 

@@ -1,55 +1,61 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
-    android:gravity="center">
-
-    <TextView
-        android:id="@+id/pin_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="PIN: ----"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="8dp" />
-
-    <TextView
-        android:id="@+id/status_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/status_disconnected"
-        android:textSize="14sp"
-        android:layout_marginBottom="16dp" />
-
-    <Button
-        android:id="@+id/action_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/action_pair"
-        android:layout_marginBottom="8dp" />
+    android:fillViewport="true">
 
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:orientation="vertical"
+        android:padding="16dp"
         android:gravity="center">
 
-        <Button
-            android:id="@+id/reset_button"
+        <TextView
+            android:id="@+id/pin_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/reset_pairing"
-            android:textSize="12sp"
-            android:layout_marginEnd="8dp" />
+            android:text="PIN: ----"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/status_disconnected"
+            android:textSize="14sp"
+            android:layout_marginBottom="16dp" />
 
         <Button
-            android:id="@+id/help_button"
+            android:id="@+id/action_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="?"
-            android:textSize="12sp" />
+            android:text="@string/action_pair"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/reset_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/reset_pairing"
+                android:textSize="12sp"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/help_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="?"
+                android:textSize="12sp" />
+        </LinearLayout>
+
     </LinearLayout>
-
-</LinearLayout>
+</ScrollView>

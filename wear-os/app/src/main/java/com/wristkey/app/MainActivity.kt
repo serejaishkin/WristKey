@@ -63,7 +63,7 @@ class MainActivity : Activity() {
         actionButton.setOnClickListener {
             bleService?.confirmUserPresent()
             statusText.text = getString(R.string.status_pairing)
-            actionButton.text = getString(R.string.action_unlock)
+            Toast.makeText(this, "✅ Подтверждено", Toast.LENGTH_SHORT).show()
         }
 
         resetButton.setOnClickListener {
@@ -95,12 +95,12 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("📖 Как подключить часы к ПК")
             .setMessage(
-                "1️⃣ На ПК запустите wristkey-pair.exe\n" +
-                "2️⃣ Нажмите 🔍 Scan на ПК\n" +
-                "3️⃣ Выберите часы из списка (PIN: ${WristKeyBleService.pairingPin})\n" +
+                "1️⃣ На ПК запустите wristkeyd.exe --gui\n" +
+                "2️⃣ Вкладка ⌚ Devices → 🔍 Scan\n" +
+                "3️⃣ Выберите часы (PIN: ${WristKeyBleService.pairingPin})\n" +
                 "4️⃣ Нажмите 🔗 Pair на ПК\n" +
-                "5️⃣ Часы вибрируют → потрясите рукой или нажмите кнопку ниже\n" +
-                "6️⃣ ✅ Paired! Теперь запустите wristkeyd.exe\n\n" +
+                "5️⃣ Часы вибрируют → нажмите кнопку ниже\n" +
+                "6️⃣ ✅ Paired! Закройте GUI, запустите daemon\n\n" +
                 "💡 Если не видит часы: нажмите Reset pairing и повторите"
             )
             .setPositiveButton("Понятно") { dialog, _ -> dialog.dismiss() }
@@ -168,15 +168,6 @@ class MainActivity : Activity() {
         requestBatteryOptimizationExemption()
     }
 
-    /**
-     * Samsung's One UI Watch has its own aggressive "put unused apps to sleep" /
-     * adaptive battery management layered on top of stock Android Doze, on top of
-     * that Wear OS's own App Standby Buckets. In practice this is the single
-     * biggest cause of WristKey silently stopping to work a few hours after
-     * pairing on Galaxy Watch — the foreground service keeps running but BLE
-     * advertising/GATT gets throttled or the process is stopped outright.
-     * Asking to be exempted from battery optimization is the standard mitigation.
-     */
     private fun requestBatteryOptimizationExemption() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
         if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
@@ -186,13 +177,9 @@ class MainActivity : Activity() {
             }
             startActivity(intent)
         } catch (e: Exception) {
-            // Some OEM builds (including some Samsung firmware) restrict this
-            // intent; fall back to the general battery settings screen so the
-            // person can still find the toggle manually.
             try {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             } catch (_: Exception) {
-                // Best-effort nudge, not a hard requirement — give up quietly.
             }
         }
     }
