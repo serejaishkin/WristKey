@@ -85,12 +85,6 @@ class WristKeyBleService : Service() {
             return START_NOT_STICKY
         }
 
-        if (bluetoothAdapter?.isEnabled != true) {
-            Log.e(TAG, "Bluetooth is disabled, cannot start GATT/advertising")
-            updateNotification("Bluetooth disabled")
-            return START_STICKY
-        }
-
         deviceIdHex = securityManager.getDeviceId().joinToString("") { "%02x".format(it) }
         Log.i(TAG, "Device ID: $deviceIdHex")
 
@@ -128,7 +122,6 @@ class WristKeyBleService : Service() {
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         Log.i(TAG, "Device connected: ${device.address}")
-                        // FIX: removed createBond() — Windows btleplug handles connection without bonding
                         currentDevice = device
                         updateStatus(STATUS_AUTHENTICATED)
                         updateNotification("Connected to ${device.name ?: "PC"}")
@@ -152,6 +145,7 @@ class WristKeyBleService : Service() {
             ) {
                 Log.i(TAG, "onCharacteristicWriteRequest: uuid=" + characteristic.uuid + " len=" + (value?.size ?: 0))
                 if (characteristic.uuid == CHALLENGE_CHAR_UUID) {
+                    Log.i(TAG, "About to call handleChallenge")
                     handleChallenge(device, requestId, responseNeeded, value)
                 } else {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
@@ -224,91 +218,94 @@ class WristKeyBleService : Service() {
     }
 
     private fun handleChallenge(
-        Log.i(TAG, "handleChallenge START")
         device: BluetoothDevice, requestId: Int,
         responseNeeded: Boolean, value: ByteArray?
     ) {
+        Log.i(TAG, "handleChallenge START")
         if (value == null || value.size < 24) {
             Log.w(TAG, "Invalid challenge length: ${value?.size}")
-            Log.i(TAG, "handleChallenge: invalid value, returning")
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, 0, null)
+            Log.i(TAG, "handleChallenge: invalid value, returning")
             return
         }
+        Log.i(TAG, "handleChallenge: value ok, len=" + value.size)
 
         val nonce = value.copyOfRange(0, 16)
         val timestamp = ByteBuffer.wrap(value.copyOfRange(16, 24)).order(ByteOrder.LITTLE_ENDIAN).long
         val now = System.currentTimeMillis() / 1000
+        Log.i(TAG, "handleChallenge: timestamp=" + timestamp + " now=" + now)
         if (kotlin.math.abs(now - timestamp) > 30) {
             Log.w(TAG, "Challenge timestamp expired: $timestamp vs $now")
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            Log.i(TAG, "handleChallenge: timestamp expired, returning")
             return
         }
+        Log.i(TAG, "handleChallenge: timestamp ok")
 
-        // Acknowledge write immediately to avoid blocking PC
         if (responseNeeded) {
             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            Log.i(TAG, "handleChallenge: sendResponse sent")
         }
 
-        // Prompt user — use button if no accelerometer, otherwise wrist motion
-        val hasAccel = motionDetector.hasAccelerometer()
-        val promptText = if (hasAccel) "Подвигайте рукой или нажмите кнопку" else "Нажмите кнопку для подтверждения"
-
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        Log.i(TAG, "handleChallenge: about to vibrate")
         vibrator?.vibrate(longArrayOf(0, 300, 200, 300), -1)
-        updateNotification(promptText)
+        updateNotification("Press button to confirm")
         Log.i(TAG, "Challenge received, waiting for confirmation...")
 
-        Log.i(TAG, "handleChallenge: about to launch coroutine")
-
-        // Wait for motion or button press (up to 6 seconds)
         serviceScope.launch {
             Log.i(TAG, "handleChallenge: coroutine STARTED")
             val startTime = System.currentTimeMillis()
-            var confirmed = false
+            var motionConfirmed = false
 
             while (System.currentTimeMillis() - startTime < 6000) {
-                Log.i(TAG, "handleChallenge: checking motion=" + motionDetector.isMoving + " present=" + isUserPresent())
-                if (motionDetector.isMoving || isUserPresent()) {
+                val moving = motionDetector.isMoving
+                val present = isUserPresent()
+                Log.i(TAG, "handleChallenge: loop moving=" + moving + " present=" + present)
+                if (moving || present) {
+                    motionConfirmed = true
                     Log.i(TAG, "handleChallenge: confirmed!")
-                    confirmed = true
                     break
                 }
                 delay(300)
             }
 
-            if (!confirmed) {
+            if (!motionConfirmed) {
                 Log.w(TAG, "Challenge rejected: no confirmation received")
-                updateNotification("Подтверждение не получено")
+                updateNotification("Confirmation not received")
+                Log.i(TAG, "handleChallenge: coroutine END (not confirmed)")
                 return@launch
             }
 
             Log.i(TAG, "User confirmed, signing challenge")
-            updateNotification("Подтверждено, отправка ответа...")
+            updateNotification("Confirmed, sending response...")
 
             val userPresent = isUserPresent()
             val userPresentByte: Byte = if (userPresent) 1 else 0
             val payload = nonce + value.copyOfRange(16, 24) + byteArrayOf(userPresentByte)
+            Log.i(TAG, "handleChallenge: payload prepared, len=" + payload.size)
 
             val signature = try {
+                Log.i(TAG, "handleChallenge: calling sign...")
                 securityManager.sign(payload)
             } catch (e: Exception) {
                 Log.e(TAG, "Signing failed", e)
-                updateNotification("Ошибка подписи")
+                updateNotification("Signing error")
+                Log.i(TAG, "handleChallenge: coroutine END (sign failed)")
                 return@launch
             }
+            Log.i(TAG, "handleChallenge: signature done, len=" + signature.size)
 
             val publicKey = securityManager.getPublicKey()
+            Log.i(TAG, "handleChallenge: publicKey len=" + publicKey.size)
             val response = signature + byteArrayOf(userPresentByte) + publicKey
+            Log.i(TAG, "handleChallenge: response prepared, len=" + response.size)
 
             responseCharacteristic?.value = response
+            Log.i(TAG, "handleChallenge: response set, about to notify")
 
-            Log.i(TAG, "handleChallenge: about to notify")
-
-            val cccd = responseCharacteristic?.getDescriptor(CLIENT_CONFIG_UUID)
-            Log.i(TAG, "CCCD value before notify: " + (cccd?.value?.contentToString() ?: "null"))
-
-            // FIX: wrap notify in try-catch (CCCD may not be subscribed yet on Windows)
             val notified = try {
+                Log.i(TAG, "handleChallenge: calling notifyCharacteristicChanged...")
                 gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
             } catch (e: Exception) {
                 Log.e(TAG, "notifyCharacteristicChanged failed", e)
@@ -317,26 +314,14 @@ class WristKeyBleService : Service() {
 
             Log.i(TAG, "handleChallenge: notify returned, notified=" + notified)
             Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
-            if (!notified) {
-                Log.w(TAG, "PC may not have received response (CCCD not ready)")
-            }
-            updateNotification("Подключено к ${device.name ?: "PC"}")
+            updateNotification("Connected to " + (device.name ?: "PC"))
+            Log.i(TAG, "handleChallenge: coroutine END (success)")
         }
     }
 
     private fun startAdvertising() {
-        val adapter = bluetoothAdapter ?: run {
-            Log.e(TAG, "Bluetooth adapter not available")
-            return
-        }
-        if (!adapter.isEnabled) {
-            Log.e(TAG, "Bluetooth is disabled, cannot advertise")
-            return
-        }
-        advertiser = adapter.bluetoothLeAdvertiser ?: run {
-            Log.e(TAG, "BluetoothLeAdvertiser not available")
-            return
-        }
+        val adapter = bluetoothAdapter ?: return
+        advertiser = adapter.bluetoothLeAdvertiser ?: return
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -377,11 +362,7 @@ class WristKeyBleService : Service() {
     private fun updateStatus(status: Byte) {
         statusCharacteristic?.value = byteArrayOf(status)
         currentDevice?.let { device ->
-            try {
-                gattServer?.notifyCharacteristicChanged(device, statusCharacteristic, false)
-            } catch (e: Exception) {
-                Log.e(TAG, "updateStatus notify failed", e)
-            }
+            gattServer?.notifyCharacteristicChanged(device, statusCharacteristic, false)
         }
     }
 
