@@ -1,7 +1,28 @@
-    // Add this composable inside SettingsActivity.kt, in the SwipeDismissableNavHost
-    // Add route "calibration" to composables
+package com.wristkey
 
-    composable("calibration") { CalibrationScreen(navController, settings, bleService) }
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.wear.compose.material.*
+import androidx.navigation.NavHostController
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+// Add this composable inside SettingsActivity.kt, in the SwipeDismissableNavHost
+// Add route "calibration" to composables
+
+@Composable
+fun CalibrationScreenRoute(
+    navController: NavHostController,
+    settings: WristKeySettings,
+    bleService: WristKeyBleService?
+) {
+    CalibrationScreen(navController, settings, bleService)
+}
 
 @Composable
 fun CalibrationScreen(

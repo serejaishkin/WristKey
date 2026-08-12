@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.wristkey.ble.WristKeyBleService
 
 /**
  * Wear OS Settings screen for WristKey.
@@ -51,6 +52,7 @@ fun SettingsNavHost() {
         composable("rssi_threshold") { RssiThresholdScreen(navController, settings) }
         composable("paired_devices") { PairedDevicesScreen(navController, settings) }
         composable("proximity_unlock") { ProximityUnlockScreen(navController, settings) }
+        composable("calibration") { CalibrationScreen(navController, settings, null) }
     }
 }
 
