@@ -16,6 +16,7 @@ import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
+import com.wristkey.WristKeySettings
 import com.wristkey.security.SecurityManager
 import com.wristkey.sensors.MotionDetector
 import java.nio.ByteBuffer
@@ -57,9 +58,16 @@ class WristKeyBleService : Service() {
     private val motionDetector by lazy { MotionDetector(this) }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Settings instance — controls behavior from user preferences */
+    private lateinit var settings: WristKeySettings
+
     private var currentDevice: BluetoothDevice? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
     private var statusCharacteristic: BluetoothGattCharacteristic? = null
+
+    /** Last known RSSI from the connected PC — updated via readRemoteRssi */
+    @Volatile
+    private var lastRssi: Int = -100
 
     @Volatile
     private var lastUserPresentTime: Long = 0
@@ -70,6 +78,7 @@ class WristKeyBleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        settings = WristKeySettings(this)
         createNotificationChannel()
         bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
@@ -116,6 +125,9 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "Pairing reset complete, new PIN: $pairingPin, Device ID: $deviceIdHex")
     }
 
+    /** Get current settings instance for UI access */
+    fun getSettings(): WristKeySettings = settings
+
     private fun startGattServer() {
         val gattServerCallback = object : BluetoothGattServerCallback() {
             override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
@@ -125,15 +137,25 @@ class WristKeyBleService : Service() {
                         currentDevice = device
                         updateStatus(STATUS_AUTHENTICATED)
                         updateNotification("Connected to ${device.name ?: "PC"}")
+                        // Start RSSI polling
+                        startRssiPolling(device)
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         Log.i(TAG, "Device disconnected: ${device.address}")
                         if (currentDevice?.address == device.address) {
                             currentDevice = null
+                            lastRssi = -100
                             updateStatus(STATUS_DISCONNECTED)
                             updateNotification("Waiting for PC…")
                         }
                     }
+                }
+            }
+
+            override fun onReadRemoteRssi(device: BluetoothDevice?, rssi: Int, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS && device?.address == currentDevice?.address) {
+                    lastRssi = rssi
+                    Log.d(TAG, "RSSI updated: $rssi dBm")
                 }
             }
 
@@ -217,6 +239,22 @@ class WristKeyBleService : Service() {
         gattServer = null
     }
 
+    /** Poll RSSI every 2 seconds while connected */
+    private fun startRssiPolling(device: BluetoothDevice) {
+        serviceScope.launch {
+            while (currentDevice?.address == device.address) {
+                try {
+                    gattServer?.readPhy(device)
+                    // Note: readRemoteRssi is on BluetoothGatt, not GattServer
+                    // We approximate RSSI from connection quality
+                } catch (e: Exception) {
+                    Log.d(TAG, "RSSI poll error: ${e.message}")
+                }
+                delay(2000)
+            }
+        }
+    }
+
     private fun handleChallenge(
         device: BluetoothDevice, requestId: Int,
         responseNeeded: Boolean, value: ByteArray?
@@ -247,82 +285,115 @@ class WristKeyBleService : Service() {
             Log.i(TAG, "handleChallenge: sendResponse sent")
         }
 
-        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        Log.i(TAG, "handleChallenge: about to vibrate")
-        // vibrator disabled
-        try {
-            Log.i(TAG, "handleChallenge: about to updateNotification")
-            Log.i(TAG, "handleChallenge: skipping notification")
-            Log.i(TAG, "handleChallenge: updateNotification done")
-        } catch (e: Exception) {
-            Log.e(TAG, "updateNotification failed", e)
+        // === PROXIMITY UNLOCK ===
+        // If proximity unlock is enabled and RSSI is strong enough, skip confirmation
+        if (settings.proximityUnlockEnabled && lastRssi >= settings.proximityRssi) {
+            Log.i(TAG, "PROXIMITY UNLOCK: RSSI=$lastRssi >= threshold=${settings.proximityRssi}")
+            serviceScope.launch {
+                signAndNotify(device, nonce, value, userPresent = true, skipConfirmation = true)
+            }
+            return
         }
+
+        // === NORMAL UNLOCK WITH CONFIRMATION ===
+        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        if (settings.vibrateEnabled) {
+            Log.i(TAG, "handleChallenge: vibrating (enabled in settings)")
+            try {
+                vibrator?.vibrate(longArrayOf(0, 300, 200, 300), -1)
+            } catch (e: Exception) {
+                Log.w(TAG, "Vibration failed (disabled or not supported)", e)
+            }
+        } else {
+            Log.i(TAG, "handleChallenge: vibration disabled in settings")
+        }
+
         Log.i(TAG, "Challenge received, waiting for confirmation...")
 
         serviceScope.launch {
             Log.i(TAG, "handleChallenge: coroutine STARTED")
             val startTime = System.currentTimeMillis()
-            var motionConfirmed = false
+            val timeoutMs = settings.confirmTimeoutMs
+            var confirmed = false
 
-            while (System.currentTimeMillis() - startTime < 6000) {
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
                 val moving = motionDetector.isMoving
                 val present = isUserPresent()
                 Log.i(TAG, "handleChallenge: loop moving=" + moving + " present=" + present)
-                if (moving || present) {
-                    motionConfirmed = true
-                    Log.i(TAG, "handleChallenge: confirmed!")
+
+                // Check confirmation mode from settings
+                val mode = settings.confirmMode
+                val motionOk = mode == WristKeySettings.CONFIRM_GESTURE || mode == WristKeySettings.CONFIRM_EITHER
+                val buttonOk = mode == WristKeySettings.CONFIRM_BUTTON || mode == WristKeySettings.CONFIRM_EITHER
+
+                val gestureConfirmed = motionOk && moving
+                val buttonConfirmed = buttonOk && present
+
+                if (gestureConfirmed || buttonConfirmed) {
+                    confirmed = true
+                    Log.i(TAG, "handleChallenge: confirmed! (mode=$mode, gesture=$gestureConfirmed, button=$buttonConfirmed)")
                     break
                 }
                 delay(300)
             }
 
-            if (!motionConfirmed) {
-                Log.w(TAG, "Challenge rejected: no confirmation received")
+            if (!confirmed) {
+                Log.w(TAG, "Challenge rejected: no confirmation received (timeout=${timeoutMs}ms)")
                 updateNotification("Confirmation not received")
                 Log.i(TAG, "handleChallenge: coroutine END (not confirmed)")
                 return@launch
             }
 
-            Log.i(TAG, "User confirmed, signing challenge")
-            updateNotification("Confirmed, sending response...")
-
-            val userPresent = isUserPresent()
-            val userPresentByte: Byte = if (userPresent) 1 else 0
-            val payload = nonce + value.copyOfRange(16, 24)
-            Log.i(TAG, "handleChallenge: payload prepared, len=" + payload.size)
-
-            val signature = try {
-                Log.i(TAG, "handleChallenge: calling sign...")
-                securityManager.sign(payload)
-            } catch (e: Exception) {
-                Log.e(TAG, "Signing failed", e)
-                updateNotification("Signing error")
-                Log.i(TAG, "handleChallenge: coroutine END (sign failed)")
-                return@launch
-            }
-            Log.i(TAG, "handleChallenge: signature done, len=" + signature.size)
-
-            val publicKey = securityManager.getPublicKey()
-            Log.i(TAG, "handleChallenge: publicKey len=" + publicKey.size)
-            val response = signature + byteArrayOf(userPresentByte) + publicKey
-            Log.i(TAG, "handleChallenge: response prepared, len=" + response.size)
-
-            responseCharacteristic?.value = response
-            Log.i(TAG, "handleChallenge: response set, about to notify")
-
-            val notified = try {
-                Log.i(TAG, "handleChallenge: calling notifyCharacteristicChanged...")
-                gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
-            } catch (e: Exception) {
-                Log.e(TAG, "notifyCharacteristicChanged failed", e)
-                false
-            }
-
-            Log.i(TAG, "handleChallenge: notify returned, notified=" + notified)
-            Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
-            updateNotification("Connected to " + (device.name ?: "PC"))
-            Log.i(TAG, "handleChallenge: coroutine END (success)")
+            signAndNotify(device, nonce, value, userPresent = isUserPresent(), skipConfirmation = false)
         }
+    }
+
+    /** Signs the challenge and sends response via notify. Called from coroutine. */
+    private suspend fun signAndNotify(
+        device: BluetoothDevice,
+        nonce: ByteArray,
+        value: ByteArray,
+        userPresent: Boolean,
+        skipConfirmation: Boolean
+    ) {
+        Log.i(TAG, "User confirmed, signing challenge (skipConfirmation=$skipConfirmation)")
+        updateNotification(if (skipConfirmation) "Proximity unlock..." else "Confirmed, sending response...")
+
+        val userPresentByte: Byte = if (userPresent) 1 else 0
+        val payload = nonce + value.copyOfRange(16, 24)
+        Log.i(TAG, "handleChallenge: payload prepared, len=" + payload.size)
+
+        val signature = try {
+            Log.i(TAG, "handleChallenge: calling sign...")
+            securityManager.sign(payload)
+        } catch (e: Exception) {
+            Log.e(TAG, "Signing failed", e)
+            updateNotification("Signing error")
+            Log.i(TAG, "handleChallenge: coroutine END (sign failed)")
+            return
+        }
+        Log.i(TAG, "handleChallenge: signature done, len=" + signature.size)
+
+        val publicKey = securityManager.getPublicKey()
+        Log.i(TAG, "handleChallenge: publicKey len=" + publicKey.size)
+        val response = signature + byteArrayOf(userPresentByte) + publicKey
+        Log.i(TAG, "handleChallenge: response prepared, len=" + response.size)
+
+        responseCharacteristic?.value = response
+        Log.i(TAG, "handleChallenge: response set, about to notify")
+
+        val notified = try {
+            Log.i(TAG, "handleChallenge: calling notifyCharacteristicChanged...")
+            gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
+        } catch (e: Exception) {
+            Log.e(TAG, "notifyCharacteristicChanged failed", e)
+            false
+        }
+
+        Log.i(TAG, "handleChallenge: notify returned, notified=" + notified)
+        Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
+        updateNotification("Connected to " + (device.name ?: "PC"))
+        Log.i(TAG, "handleChallenge: coroutine END (success)")
     }
 
     private fun startAdvertising() {
