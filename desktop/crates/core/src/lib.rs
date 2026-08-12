@@ -253,13 +253,13 @@ impl Storage for SledStorage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairedDevice {
-	
     pub id: Uuid,
     pub name: String,
     pub public_key: Vec<u8>,
     pub device_id: Option<String>,
     pub paired_at: DateTime<Utc>,
     pub baseline_rssi: i16,
+    pub address: String,
     /// DPAPI-encrypted Windows password (platform-win only)
     pub windows_password: Option<Vec<u8>>,
 }
@@ -440,7 +440,7 @@ impl SessionManager {
         info!("pairing started");
         Ok(challenge)
     }
-    pub async fn complete_pairing(&self, device_name: String, public_key: Vec<u8>, device_id: Option<String>, response: &Response, baseline_rssi: i16) -> Result<PairedDevice> {
+    pub async fn complete_pairing(&self, device_name: String, public_key: Vec<u8>, device_id: Option<String>, response: &Response, baseline_rssi: i16, address: String) -> Result<PairedDevice> {
         let state = self.state.read().await.clone();
         let challenge = match state {
             SessionState::Pairing { challenge, .. } => challenge,
@@ -450,7 +450,7 @@ impl SessionManager {
         if !response.user_present {
             return Err(WristKeyError::Protocol("user presence required".into()));
         }
-        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, windows_password: None };
+        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address, windows_password: None };
         self.storage.save_device(&device).await?;
         *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
         info!("pairing completed for {}", device.id);

@@ -24,6 +24,7 @@ use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
+const CONFIG_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567893";
 
 fn gui_log(msg: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
@@ -338,6 +339,7 @@ impl WristKeyApp {
                     info.device_id.clone(),
                     &response,
                     info.rssi.unwrap_or(-50),
+                    info.id.clone(),
                 ).await {
                     Ok(_device) => {
                         gui_log("complete_pairing OK — device saved");
@@ -456,26 +458,70 @@ impl WristKeyApp {
                         to_forget = Some(d.id);
                     }
                 });
-				ui.horizontal(|ui| {
-    if ui.button("📏 Calibrate touch").clicked() {
-        let device_id = device.id;
-        let daemon = self.daemon.clone();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all().build().unwrap();
-            rt.block_on(async {
-                match daemon.calibrate_proximity(device_id).await {
-                    Ok(threshold) => {
-                        gui_log(&format!("✅ Calibrated: {} dBm", threshold));
+                ui.horizontal(|ui| {
+                    if ui.button("📏 Calibrate touch").clicked() {
+                        let address = d.address.clone();
+                        let name = d.name.clone();
+                        std::thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all().build().unwrap();
+                            rt.block_on(async {
+                                let adapter = match BtleplugAdapter::new().await {
+                                    Ok(a) => a,
+                                    Err(e) => { gui_log(&format!("BLE adapter: {}", e)); return; }
+                                };
+                                let info = PeripheralInfo {
+                                    id: address,
+                                    name: Some(name),
+                                    pin: None,
+                                    device_id: None,
+                                    rssi: None,
+                                    service_uuids: vec![],
+                                    raw_manufacturer_data: None,
+                                };
+                                let conn = match adapter.connect(&info).await {
+                                    Ok(c) => c,
+                                    Err(e) => { gui_log(&format!("Connect: {}", e)); return; }
+                                };
+                                let config_char = Uuid::parse_str(CONFIG_CHAR).unwrap();
+                                if let Err(e) = adapter.write(&conn, config_char, &[0x01]).await {
+                                    gui_log(&format!("Start calibration failed: {}", e));
+                                    let _ = adapter.disconnect(&conn).await;
+                                    return;
+                                }
+                                gui_log("Calibration started — hold watch near PC for 10s");
+                                let mut samples = Vec::new();
+                                let mut ticker = tokio::time::interval(Duration::from_millis(500));
+                                let start = std::time::Instant::now();
+                                while start.elapsed() < Duration::from_secs(10) {
+                                    ticker.tick().await;
+                                    match adapter.read_rssi(&conn).await {
+                                        Ok(rssi) => {
+                                            samples.push(rssi);
+                                            gui_log(&format!("RSSI sample: {} dBm", rssi));
+                                        }
+                                        Err(e) => gui_log(&format!("RSSI error: {}", e)),
+                                    }
+                                }
+                                if samples.is_empty() {
+                                    gui_log("No RSSI samples collected");
+                                    let _ = adapter.write(&conn, config_char, &[0x03]).await;
+                                    let _ = adapter.disconnect(&conn).await;
+                                    return;
+                                }
+                                let avg = samples.iter().sum::<i16>() / samples.len() as i16;
+                                let threshold = avg.saturating_add(5).min(-20).max(-90);
+                                let rssi_byte = threshold as i8;
+                                if let Err(e) = adapter.write(&conn, config_char, &[0x02, rssi_byte as u8]).await {
+                                    gui_log(&format!("Send result failed: {}", e));
+                                } else {
+                                    gui_log(&format!("✅ Calibrated: avg={} dBm, threshold={} dBm", avg, threshold));
+                                }
+                                let _ = adapter.disconnect(&conn).await;
+                            });
+                        });
                     }
-                    Err(e) => {
-                        gui_log(&format!("❌ Calibration failed: {}", e));
-                    }
-                }
-            });
-        });
-    }
-});
+                });
             }
             if let Some(id) = to_forget {
                 self.pending_forget = Some(id);
