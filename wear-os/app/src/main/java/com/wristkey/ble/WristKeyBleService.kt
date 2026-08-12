@@ -164,9 +164,11 @@ class WristKeyBleService : Service() {
                 preparedWrite: Boolean, responseNeeded: Boolean,
                 offset: Int, value: ByteArray?
             ) {
+                Log.i(TAG, "onDescriptorWriteRequest: uuid=" + descriptor.uuid + " value=" + (value?.contentToString() ?: "null"))
                 if (descriptor.uuid == CLIENT_CONFIG_UUID) {
                     descriptor.value = value
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
+                    Log.i(TAG, "CCCD updated: " + (value?.contentToString() ?: "null"))
                 }
             }
         }
@@ -292,6 +294,9 @@ class WristKeyBleService : Service() {
             val response = signature + byteArrayOf(userPresentByte) + publicKey
 
             responseCharacteristic?.value = response
+
+            val cccd = responseCharacteristic?.getDescriptor(CLIENT_CONFIG_UUID)
+            Log.i(TAG, "CCCD value before notify: " + (cccd?.value?.contentToString() ?: "null"))
 
             // FIX: wrap notify in try-catch (CCCD may not be subscribed yet on Windows)
             val notified = try {

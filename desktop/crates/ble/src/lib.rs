@@ -257,6 +257,10 @@ impl BleAdapter for BtleplugAdapter {
             .find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
 
+        eprintln!("[BLE] notify: char={}, descriptors={}", char.uuid, char.descriptors.len());
+        for (i, desc) in char.descriptors.iter().enumerate() {
+            eprintln!("[BLE]   desc[{}]: {}", i, desc.uuid);
+        }
         peripheral.subscribe(char).await
             .map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
 
@@ -265,11 +269,11 @@ impl BleAdapter for BtleplugAdapter {
         let cccd_uuid = Uuid::parse_str("00002902-0000-1000-8000-00805f9b34fb").unwrap();
         for desc in &char.descriptors {
             if desc.uuid == cccd_uuid {
-                info!("Writing CCCD [0x01, 0x00] to enable notify");
+                eprintln!("[BLE] Writing CCCD [0x01, 0x00] to enable notify");
                 if let Err(e) = peripheral.write_descriptor(desc, &[0x01, 0x00]).await {
-                    warn!("CCCD write failed: {}", e);
+                    eprintln!("[BLE] CCCD write failed: {}", e);
                 } else {
-                    info!("CCCD write OK");
+                    eprintln!("[BLE] CCCD write OK");
                 }
                 break;
             }
