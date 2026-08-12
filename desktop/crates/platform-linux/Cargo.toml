@@ -1,0 +1,13 @@
+[package]
+name = "wristkey-platform-linux"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+wristkey-core = { path = "../core" }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+libc = "0.2"

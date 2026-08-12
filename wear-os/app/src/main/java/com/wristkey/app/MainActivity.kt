@@ -7,9 +7,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -162,6 +165,36 @@ class MainActivity : Activity() {
             startService(serviceIntent)
         }
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        requestBatteryOptimizationExemption()
+    }
+
+    /**
+     * Samsung's One UI Watch has its own aggressive "put unused apps to sleep" /
+     * adaptive battery management layered on top of stock Android Doze, on top of
+     * that Wear OS's own App Standby Buckets. In practice this is the single
+     * biggest cause of WristKey silently stopping to work a few hours after
+     * pairing on Galaxy Watch — the foreground service keeps running but BLE
+     * advertising/GATT gets throttled or the process is stopped outright.
+     * Asking to be exempted from battery optimization is the standard mitigation.
+     */
+    private fun requestBatteryOptimizationExemption() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            // Some OEM builds (including some Samsung firmware) restrict this
+            // intent; fall back to the general battery settings screen so the
+            // person can still find the toggle manually.
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+                // Best-effort nudge, not a hard requirement — give up quietly.
+            }
+        }
     }
 
     override fun onDestroy() {

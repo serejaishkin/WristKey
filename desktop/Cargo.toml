@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/crypto",
     "crates/core",
     "crates/ble",
     "crates/platform-win",
