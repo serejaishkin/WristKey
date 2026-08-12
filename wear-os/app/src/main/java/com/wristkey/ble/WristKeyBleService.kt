@@ -150,6 +150,7 @@ class WristKeyBleService : Service() {
                 preparedWrite: Boolean, responseNeeded: Boolean,
                 offset: Int, value: ByteArray?
             ) {
+                Log.i(TAG, "onCharacteristicWriteRequest: uuid=" + characteristic.uuid + " len=" + (value?.size ?: 0))
                 if (characteristic.uuid == CHALLENGE_CHAR_UUID) {
                     handleChallenge(device, requestId, responseNeeded, value)
                 } else {
@@ -180,7 +181,7 @@ class WristKeyBleService : Service() {
 
         val challengeChar = BluetoothGattCharacteristic(
             CHALLENGE_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_WRITE,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
             BluetoothGattCharacteristic.PERMISSION_WRITE
         )
 
