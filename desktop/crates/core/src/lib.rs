@@ -75,7 +75,6 @@ impl CryptoEngine for EcdsaP256Crypto {
             .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
         let verifying_key = VerifyingKey::from(pubkey);
 
-        // FIX: support both raw (64 bytes) and DER-encoded (70-72 bytes) signatures
         let sig = if signature.len() == 64 {
             Signature::from_slice(signature)
         } else {
@@ -260,7 +259,6 @@ pub struct PairedDevice {
     pub paired_at: DateTime<Utc>,
     pub baseline_rssi: i16,
     pub address: String,
-    /// DPAPI-encrypted Windows password (platform-win only)
     pub windows_password: Option<Vec<u8>>,
 }
 
@@ -426,6 +424,9 @@ impl SessionManager {
     pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> {
         self.storage.load_device(device_id).await
     }
+    pub async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
+        self.storage.list_devices().await
+    }
     pub async fn begin_pairing(&self) -> Result<Challenge> {
         let challenge = Challenge::generate();
         *self.state.write().await = SessionState::Pairing { challenge: challenge.clone(), started_at: Utc::now() };
@@ -474,7 +475,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Store encrypted Windows password for a paired device
     pub async fn set_device_password(&self, device_id: Uuid, encrypted: Vec<u8>) -> Result<()> {
         let mut device = self.storage.load_device(device_id).await?
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
@@ -484,7 +484,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Retrieve encrypted Windows password for a paired device
     pub async fn get_device_password(&self, device_id: Uuid) -> Result<Option<Vec<u8>>> {
         let device = self.storage.load_device(device_id).await?
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
