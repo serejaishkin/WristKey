@@ -1,14 +1,18 @@
 package com.wristkey
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
 import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
@@ -30,10 +35,23 @@ class MainActivity : ComponentActivity() {
             val binder = service as WristKeyBleService.LocalBinder
             bleService = binder.getService()
             serviceBound = true
+            // Start advertising once service is connected
+            startAdvertisingIfPermitted()
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             bleService = null
             serviceBound = false
+        }
+    }
+
+    private val blePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            bleService?.startAdvertising()
+        } else {
+            Toast.makeText(this, "Bluetooth advertise permission required", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -55,6 +73,24 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         if (serviceBound) unbindService(serviceConnection)
     }
+
+    private fun startAdvertisingIfPermitted() {
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN)
+        }
+
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isEmpty()) {
+            bleService?.startAdvertising()
+        } else {
+            blePermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
 }
 
 @Composable
@@ -67,12 +103,16 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var isPaired by remember { mutableStateOf(false) }
     var deviceName by remember { mutableStateOf("Not connected") }
     var showForgetDialog by remember { mutableStateOf(false) }
+    var isAdvertising by remember { mutableStateOf(false) }
+    var advertisePin by remember { mutableStateOf("----") }
 
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
             isPaired = bleService?.isPaired() ?: false
             deviceName = bleService?.getDeviceName() ?: "Not connected"
+            isAdvertising = bleService?.isAdvertising() ?: false
+            advertisePin = bleService?.getAdvertisePin() ?: "----"
         }
     }
 
@@ -100,6 +140,16 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 Text(
                     if (isPaired) "🔗 $deviceName" else "⚪ Not paired",
                     style = MaterialTheme.typography.body2,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    if (isAdvertising) "📡 Ad: PIN $advertisePin" else "❌ Not advertising",
+                    style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -139,6 +189,18 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 ) {
                     Text("🔓 Unlock PC")
                 }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Chip(
+                    onClick = {
+                        bleService?.startAdvertising()
+                        Toast.makeText(context, "Advertising restarted", Toast.LENGTH_SHORT).show()
+                    },
+                    label = { Text("🔄 Restart Ad") },
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
             }
 
             item {

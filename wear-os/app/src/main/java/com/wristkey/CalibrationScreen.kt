@@ -1,190 +1,94 @@
 package com.wristkey
 
-import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
-import androidx.wear.compose.material.*
 import androidx.navigation.NavHostController
+import androidx.wear.compose.material.*
 import com.wristkey.ble.WristKeyBleService
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
-fun CalibrationScreenRoute(
+fun CalibrationScreen(
     navController: NavHostController,
     settings: WristKeySettings,
     bleService: WristKeyBleService?
 ) {
-    CalibrationScreen(navController, settings, bleService)
-}
-
-@Composable
-fun CalibrationScreen(
-    navController: androidx.navigation.NavHostController,
-    settings: WristKeySettings,
-    bleService: WristKeyBleService?
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
+    val listState = rememberScalingLazyListState()
     var isCalibrating by remember { mutableStateOf(false) }
-    var progress by remember { mutableFloatStateOf(0f) }
-    var countdown by remember { mutableIntStateOf(10) }
-    var resultText by remember { mutableStateOf("") }
-    var showResult by remember { mutableStateOf(false) }
-
-    val isCalibrated = settings.isProximityCalibrated
-    val currentThreshold = settings.proximityRssi
+    var progress by remember { mutableStateOf(0) }
 
     Scaffold(
         timeText = { TimeText() },
-        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) }
+        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (!isCalibrating && !showResult) {
+            item {
                 Text(
-                    text = "📏 Distance",
-                    style = MaterialTheme.typography.title2,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    text = "📏 Calibrate",
+                    style = MaterialTheme.typography.title3,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
+            }
 
-                if (isCalibrated) {
-                    Text(
-                        text = "✅ Calibrated",
-                        style = MaterialTheme.typography.body1,
-                        color = MaterialTheme.colors.primary
-                    )
-                    Text(
-                        text = "Touch threshold: ${currentThreshold} dBm",
-                        style = MaterialTheme.typography.caption2,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                } else {
-                    Text(
-                        text = "Not calibrated yet",
-                        style = MaterialTheme.typography.body1,
-                        color = MaterialTheme.colors.error
-                    )
-                    Text(
-                        text = "Calibrate to enable touch-to-unlock",
-                        style = MaterialTheme.typography.caption2,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        bleService?.requestCalibration()
-                        isCalibrating = true
-                        progress = 0f
-                        countdown = 10
-
-                        scope.launch {
-                            while (countdown > 0) {
-                                delay(1000)
-                                countdown--
-                                progress = (10 - countdown) / 10f
-                            }
-                            isCalibrating = false
-                            showResult = true
-                            resultText = if (settings.isProximityCalibrated)
-                                "Saved: ${settings.proximityRssi} dBm"
-                            else "Waiting for PC..."
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(0.8f)
-                ) {
-                    Text(if (isCalibrated) "Recalibrate" else "Calibrate")
-                }
-
-                if (isCalibrated) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Chip(
-                        label = { Text("Reset calibration") },
-                        onClick = {
-                            settings.clearCalibration()
-                            Toast.makeText(context, "Calibration reset", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.fillMaxWidth(0.8f)
-                    )
-                }
-            } else if (isCalibrating) {
+            item {
                 Text(
-                    text = "📡 Calibrating...",
-                    style = MaterialTheme.typography.title2,
-                    modifier = Modifier.padding(vertical = 16.dp)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .padding(vertical = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("⌚", fontSize = 48.sp)
-                }
-
-                Text(
-                    text = "Bring your watch close to the monitor",
-                    style = MaterialTheme.typography.body1,
+                    text = if (isCalibrating) "Hold watch near PC..." else "Calibrate proximity",
+                    style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
+            }
 
-                Text(
-                    text = "Hold for $countdown seconds...",
-                    style = MaterialTheme.typography.title3,
-                    color = MaterialTheme.colors.primary,
-                    modifier = Modifier.padding(vertical = 16.dp)
-                )
-
-                CircularProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.size(60.dp),
-                    strokeWidth = 6.dp
-                )
-
+            item {
                 Spacer(modifier = Modifier.height(16.dp))
-                Chip(
-                    label = { Text("Cancel") },
-                    onClick = {
-                        isCalibrating = false
-                        bleService?.cancelCalibration()
+                if (isCalibrating) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("$progress/20", style = MaterialTheme.typography.display3)
+                } else {
+                    Button(
+                        onClick = {
+                            isCalibrating = true
+                            progress = 0
+                            bleService?.requestCalibration()
+                        },
+                        modifier = Modifier.fillMaxWidth(0.7f)
+                    ) {
+                        Text("Start")
                     }
-                )
-            } else if (showResult) {
-                Text(
-                    text = if (settings.isProximityCalibrated) "✅ Done!" else "⏳ Waiting...",
-                    style = MaterialTheme.typography.title2,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-                Text(
-                    text = resultText,
-                    style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        showResult = false
-                        navController.popBackStack()
-                    }
-                ) {
-                    Text("OK")
                 }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                if (settings.isProximityCalibrated) {
+                    Text(
+                        "✅ Calibrated: ${settings.proximityRssi} dBm",
+                        style = MaterialTheme.typography.caption2
+                    )
+                } else {
+                    Text(
+                        "❌ Not calibrated",
+                        style = MaterialTheme.typography.caption2
+                    )
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Chip(
+                    onClick = { navController.popBackStack() },
+                    label = { Text("Back") },
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
             }
         }
     }

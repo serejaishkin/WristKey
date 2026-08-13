@@ -74,7 +74,7 @@ fun MainSettingsScreen(
                 Text(
                     text = "⚙ WristKey",
                     style = MaterialTheme.typography.title3,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
             }
 
@@ -90,7 +90,7 @@ fun MainSettingsScreen(
             item {
                 Chip(
                     label = { Text("Unlock distance") },
-                    secondaryLabel = { Text("${settings.proximityRssi} dBm") },
+                    secondaryLabel = { Text("${settings.rssiThreshold} dBm") },
                     onClick = { navController.navigate("rssi_threshold") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -162,7 +162,7 @@ fun ConfirmModeScreen(
                 Text(
                     text = "How to confirm",
                     style = MaterialTheme.typography.title3,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
             }
 
@@ -171,7 +171,7 @@ fun ConfirmModeScreen(
                     text = "Choose how you confirm unlock requests",
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
                 )
             }
 
@@ -205,7 +205,7 @@ fun RssiThresholdScreen(
     settings: WristKeySettings
 ) {
     val listState = rememberScalingLazyListState()
-    var sliderValue by remember { mutableFloatStateOf(settings.proximityRssi.toFloat()) }
+    var sliderValue by remember { mutableFloatStateOf(settings.rssiThreshold.toFloat()) }
 
     Scaffold(
         timeText = { TimeText() },
@@ -221,7 +221,7 @@ fun RssiThresholdScreen(
                 Text(
                     text = "📡 Distance",
                     style = MaterialTheme.typography.title3,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
             }
 
@@ -263,10 +263,10 @@ fun RssiThresholdScreen(
             item {
                 Button(
                     onClick = {
-                        settings.proximityRssi = sliderValue.toInt()
+                        settings.rssiThreshold = sliderValue.toInt()
                         navController.popBackStack()
                     },
-                    modifier = Modifier.padding(vertical = 16.dp)
+                    modifier = Modifier.padding(top = 16.dp)
                 ) {
                     Text("Save")
                 }
@@ -298,7 +298,7 @@ fun ProximityUnlockScreen(
                 Text(
                     text = "⚡ Proximity",
                     style = MaterialTheme.typography.title3,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
             }
 
@@ -323,7 +323,7 @@ fun ProximityUnlockScreen(
                     Text(
                         text = label,
                         style = MaterialTheme.typography.title2,
-                        modifier = Modifier.padding(vertical = 8.dp)
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
 
@@ -363,7 +363,7 @@ fun ProximityUnlockScreen(
                         settings.proximityRssi = sliderValue.toInt()
                         navController.popBackStack()
                     },
-                    modifier = Modifier.padding(vertical = 16.dp)
+                    modifier = Modifier.padding(top = 16.dp)
                 ) {
                     Text("Save")
                 }
@@ -395,7 +395,7 @@ fun PairedDevicesScreen(
                 Text(
                     text = "💻 Paired PCs",
                     style = MaterialTheme.typography.title3,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
             }
 
