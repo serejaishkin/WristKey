@@ -58,7 +58,7 @@ async function loadDevices() {
           </div>
         </div>
         <div>
-          <button class="btn btn-primary" style="margin-right:8px">📏 Calibrate</button>
+          <button class="btn btn-primary" style="margin-right:8px" onclick="calibrateDevice('${d.id}')">📏 Calibrate</button>
           <button class="btn btn-danger" onclick="forgetDevice('${d.id}')">Forget</button>
         </div>
       </div>
@@ -86,10 +86,10 @@ document.getElementById('scanBtn').addEventListener('click', async () => {
             <span class="device-icon">⌚</span>
             <div>
               <div class="device-name">${escapeHtml(d.name)}</div>
-              <div class="device-meta">RSSI: ${d.baseline_rssi} dBm</div>
+              <div class="device-meta">RSSI: ${d.rssi} dBm</div>
             </div>
           </div>
-          <button class="btn btn-primary">🔗 Pair</button>
+          <button class="btn btn-primary" onclick="pairDevice('${escapeHtml(d.id)}', '${escapeHtml(d.name)}', ${d.rssi})">🔗 Pair</button>
         </div>
       `).join('');
     }
@@ -133,6 +133,37 @@ function escapeHtml(text) {
 
 async function forgetDevice(id) {
   if (!confirm('Remove this device?')) return;
-  // await invoke('forget_device', { id });
-  loadDevices();
+  try {
+    await invoke('forget_device', { id });
+    loadDevices();
+  } catch (e) {
+    alert('Forget failed: ' + e);
+  }
+}
+
+async function pairDevice(id, name, rssi) {
+  if (!confirm(`Pair with ${name}?`)) return;
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Pairing…';
+  try {
+    await invoke('pair_device', { req: { id, name, rssi } });
+    alert('✅ Paired successfully!');
+    loadDevices();
+  } catch (e) {
+    alert('❌ Pair failed: ' + e);
+  }
+  btn.disabled = false;
+  btn.textContent = '🔗 Pair';
+}
+
+async function calibrateDevice(id) {
+  if (!confirm('Calibrate proximity? Hold watch near PC for 10s.')) return;
+  try {
+    const threshold = await invoke('calibrate_proximity', { id });
+    alert(`✅ Calibrated! New threshold: ${threshold} dBm`);
+    loadDevices();
+  } catch (e) {
+    alert('❌ Calibration failed: ' + e);
+  }
 }
