@@ -1,21 +1,33 @@
 [package]
 name = "wristkey-tauri"
 version = "0.1.0"
-description = "WristKey GUI — Tauri edition"
+description = "WristKey — Daemon + GUI in one app (Tauri)"
 edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-tauri = { version = "1.5", features = ["shell-open"] }
+tauri = { version = "1.5", features = ["shell-open", "system-tray"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.35", features = ["rt-multi-thread", "time", "sync"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+directories = "5"
 wristkey-core = { path = "../../crates/core" }
 wristkey-ble = { path = "../../crates/ble" }
 wristkey-daemon = { path = "../../crates/daemon" }
+
+[target.'cfg(windows)'.dependencies]
+wristkey-platform-win = { path = "../../crates/platform-win" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wristkey-platform-linux = { path = "../../crates/platform-linux" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wristkey-platform-macos = { path = "../../crates/platform-macos" }
 
 [features]
 default = ["custom-protocol"]

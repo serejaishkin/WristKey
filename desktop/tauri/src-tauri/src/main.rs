@@ -1,17 +1,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::Arc;
-use tauri::State;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{State, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, Manager, CustomMenuItem, RunEvent};
 use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::Utc;
-use wristkey_core::{SessionManager, Config, PairedDevice, Response, Storage};
+use tracing::{info, warn};
+use wristkey_core::{SessionManager, Config, PairedDevice, Response, Storage, SessionState, PlatformSecurity};
 use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
+
+#[cfg(windows)]
+use wristkey_platform_win::WindowsSecurity;
+#[cfg(target_os = "linux")]
+use wristkey_platform_linux::LinuxSecurity;
+#[cfg(target_os = "macos")]
+use wristkey_platform_macos::MacOSSecurity;
 
 struct AppState {
     session: Arc<SessionManager>,
     storage: Arc<dyn Storage>,
+    platform: Arc<dyn PlatformSecurity>,
+    daemon_enabled: AtomicBool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -35,6 +46,7 @@ struct StatusDto {
     state: String,
     detail: String,
     device_count: usize,
+    daemon_enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -51,21 +63,31 @@ struct PairRequest {
     rssi: i16,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct CalibrateResult {
+    avg: i16,
+    threshold: i16,
+    samples: u32,
+}
+
+// --- Commands ---
+
 #[tauri::command]
 async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto, String> {
     let s = state.lock().await;
     let devices = s.session.list_devices().await.map_err(|e| e.to_string())?;
     let session_state = s.session.state().await;
+    let daemon_enabled = s.daemon_enabled.load(Ordering::Relaxed);
     let (state_str, detail) = match session_state {
-        wristkey_core::SessionState::Disconnected => ("disconnected".into(), "No watch connected".into()),
-        wristkey_core::SessionState::Pairing { .. } => ("pairing".into(), "Waiting for watch confirmation…".into()),
-        wristkey_core::SessionState::Verifying { .. } => ("verifying".into(), "Checking signature…".into()),
-        wristkey_core::SessionState::Authenticated { device_id, last_rssi, .. } => {
+        SessionState::Disconnected => ("disconnected".into(), "No watch connected".into()),
+        SessionState::Pairing { .. } => ("pairing".into(), "Waiting for watch confirmation…".into()),
+        SessionState::Verifying { .. } => ("verifying".into(), "Checking signature…".into()),
+        SessionState::Authenticated { device_id, last_rssi, .. } => {
             ("authenticated".into(), format!("Device: {} • RSSI: {} dBm", device_id, last_rssi))
         }
-        wristkey_core::SessionState::Locked => ("locked".into(), "Screen locked".into()),
+        SessionState::Locked => ("locked".into(), "Screen locked".into()),
     };
-    Ok(StatusDto { state: state_str, detail, device_count: devices.len() })
+    Ok(StatusDto { state: state_str, detail, device_count: devices.len(), daemon_enabled })
 }
 
 #[tauri::command]
@@ -171,7 +193,7 @@ async fn forget_device(id: String, state: State<'_, Arc<Mutex<AppState>>>) -> Re
 }
 
 #[tauri::command]
-async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<i16, String> {
+async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<CalibrateResult, String> {
     let device_uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let s = state.lock().await;
     let device = s.session.load_device(device_uuid).await.map_err(|e| e.to_string())?
@@ -191,6 +213,7 @@ async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>)
     let config_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567894").unwrap();
 
     adapter.write(&conn, config_char, &[0x01]).await.map_err(|e| e.to_string())?;
+    info!("Calibration started — hold watch near PC for 10s");
 
     let mut samples = Vec::new();
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
@@ -198,8 +221,8 @@ async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>)
     while start.elapsed() < std::time::Duration::from_secs(10) {
         ticker.tick().await;
         match adapter.read_rssi(&conn).await {
-            Ok(rssi) => samples.push(rssi),
-            Err(e) => eprintln!("RSSI error: {}", e),
+            Ok(rssi) => { samples.push(rssi); info!("RSSI sample: {} dBm", rssi); }
+            Err(e) => warn!("RSSI error: {}", e),
         }
     }
 
@@ -213,13 +236,14 @@ async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>)
     let threshold = avg.saturating_add(5).min(-20).max(-90);
     let rssi_byte = threshold as i8;
     adapter.write(&conn, config_char, &[0x02, rssi_byte as u8]).await.map_err(|e| e.to_string())?;
+    info!("Calibration complete: avg={} dBm, threshold={} dBm", avg, threshold);
 
     let mut updated = device;
     updated.baseline_rssi = threshold;
     s.storage.save_device(&updated).await.map_err(|e| e.to_string())?;
 
     let _ = adapter.disconnect(&conn).await;
-    Ok(threshold)
+    Ok(CalibrateResult { avg, threshold, samples: samples.len() as u32 })
 }
 
 #[tauri::command]
@@ -246,54 +270,206 @@ async fn set_config(state: State<'_, Arc<Mutex<AppState>>>, config: ConfigDto) -
 }
 
 #[tauri::command]
-async fn lock_screen() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        Command::new("rundll32.exe")
-            .args(["user32.dll,LockWorkStation"])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::Command;
-        Command::new("loginctl")
-            .args(["lock-session"])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+async fn lock_screen(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    let s = state.lock().await;
+    s.platform.lock_screen().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn unlock_screen() -> Result<(), String> {
-    Err("Unlock requires Windows Credential Provider integration (not available in Tauri GUI)".into())
+async fn unlock_screen(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    let s = state.lock().await;
+    s.platform.unlock_screen().await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn toggle_daemon(enabled: bool, state: State<'_, Arc<Mutex<AppState>>>) -> Result<bool, String> {
+    let s = state.lock().await;
+    s.daemon_enabled.store(enabled, Ordering::Relaxed);
+    info!("Daemon auto-lock {}", if enabled { "enabled" } else { "disabled" });
+    Ok(enabled)
+}
+
+// --- Platform adapter ---
+
+fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
+    #[cfg(windows)]
+    { Arc::new(WindowsSecurity::new()) }
+    #[cfg(target_os = "linux")]
+    { Arc::new(LinuxSecurity::new()) }
+    #[cfg(target_os = "macos")]
+    { Arc::new(MacOSSecurity::new()) }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    { compile_error!("unsupported platform") }
+}
+
+// --- Main ---
+
 fn main() {
+    let log_dir = directories::ProjectDirs::from("", "", "WristKey")
+        .map(|d| d.data_dir().join("logs"))
+        .unwrap_or_else(|| std::path::PathBuf::from("logs"));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkey.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    info!("WristKey Tauri starting");
+
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
 
-    let (session, storage) = rt.block_on(async {
-        let storage: Arc<dyn Storage> = match wristkey_core::SledStorage::open_default() {
+    let (session, storage, platform) = rt.block_on(async {
+        let data_dir = directories::ProjectDirs::from("", "", "WristKey")
+            .map(|d| d.data_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("data"));
+        let _ = std::fs::create_dir_all(&data_dir);
+
+        // Use SQLite — supports multi-process access (WAL mode)
+        let storage: Arc<dyn Storage> = match wristkey_core::SqliteStorage::open_default() {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                eprintln!("Warning: Failed to open sled DB ({}), using memory storage", e);
+                warn!("Failed to open sqlite DB ({}), using memory storage", e);
                 Arc::new(wristkey_core::MemoryStorage::new())
             }
         };
+
         let crypto = Arc::new(wristkey_core::EcdsaP256Crypto);
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-        (session, storage)
+        let platform = create_platform_adapter();
+
+        if let Err(e) = platform.register_as_authenticator().await {
+            warn!("Failed to register as authenticator: {}", e);
+        }
+
+        (session, storage, platform)
     });
 
+    let app_state = Arc::new(Mutex::new(AppState {
+        session: session.clone(),
+        storage: storage.clone(),
+        platform: platform.clone(),
+        daemon_enabled: AtomicBool::new(true),
+    }));
+
+    // Start daemon loop in background
+    let daemon_state = app_state.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        rt.block_on(async {
+            loop {
+                let enabled = {
+                    let s = daemon_state.lock().await;
+                    s.daemon_enabled.load(Ordering::Relaxed)
+                };
+
+                if !enabled {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+
+                let (session, platform) = {
+                    let s = daemon_state.lock().await;
+                    (s.session.clone(), s.platform.clone())
+                };
+
+                let ble = match BtleplugAdapter::new().await {
+                    Ok(a) => Arc::new(a) as Arc<dyn BleAdapter>,
+                    Err(e) => {
+                        warn!("BLE adapter unavailable: {}. Retrying in 5s…", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                };
+
+                let conn_mgr = Arc::new(wristkey_daemon::conn_mgr::ConnectionManager::new());
+                let daemon = wristkey_daemon::Daemon::new(session, ble, platform, conn_mgr);
+
+                info!("Daemon loop started");
+                if let Err(e) = daemon.run().await {
+                    warn!("Daemon crashed: {}. Restarting in 5s…", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        });
+    });
+
+    // System tray
+    let show = CustomMenuItem::new("show", "Show");
+    let hide = CustomMenuItem::new("hide", "Hide");
+    let lock_now = CustomMenuItem::new("lock_now", "🔒 Lock Now");
+    let quit = CustomMenuItem::new("quit", "Quit");
+
+    let tray_menu = SystemTrayMenu::new()
+        .add_item(show)
+        .add_item(hide)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(lock_now)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(quit);
+
+    let tray = SystemTray::new().with_menu(tray_menu);
+
     tauri::Builder::default()
-        .manage(Arc::new(Mutex::new(AppState { session, storage })))
+        .system_tray(tray)
+        .on_system_tray_event(|app, event| match event {
+            SystemTrayEvent::LeftClick { .. } | SystemTrayEvent::DoubleClick { .. } => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                "show" => {
+                    if let Some(window) = app.get_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                "hide" => {
+                    if let Some(window) = app.get_window("main") {
+                        let _ = window.hide();
+                    }
+                }
+                "lock_now" => {
+                    let platform = create_platform_adapter();
+                    let _ = std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                        rt.block_on(async { let _ = platform.lock_screen().await; });
+                    }).join();
+                }
+                "quit" => {
+                    std::process::exit(0);
+                }
+                _ => {}
+            },
+            _ => {}
+        })
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_status, get_paired_devices, scan_devices,
             pair_device, forget_device, calibrate_proximity,
-            get_config, set_config, lock_screen, unlock_screen
+            get_config, set_config, lock_screen, unlock_screen,
+            toggle_daemon
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+                event.window().hide().unwrap();
+                api.prevent_close();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| match event {
+            RunEvent::ExitRequested { api, .. } => {
+                api.prevent_exit();
+            }
+            _ => {}
+        });
 }

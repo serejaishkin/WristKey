@@ -1,24 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WristKey</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WristKey</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="sidebar">
+  <nav class="sidebar">
     <button class="nav-btn active" data-tab="status" title="Status">📶</button>
     <button class="nav-btn" data-tab="devices" title="Devices">⌚</button>
-    <button class="nav-btn" data-tab="settings" title="Settings">⚙️</button>
-  </div>
+    <button class="nav-btn" data-tab="settings" title="Settings">⚙</button>
+  </nav>
 
-  <div class="main">
+  <main class="main">
+    <!-- Status Tab -->
     <div id="tab-status" class="tab">
       <h1>Status</h1>
       <div class="card">
         <div class="status-big">
-          <div class="status-icon" id="statusIcon">🔓</div>
+          <div class="status-icon" id="statusIcon">⏳</div>
           <div class="status-text">
             <h2 id="statusTitle">Loading…</h2>
             <p id="statusDetail">Checking connection…</p>
@@ -28,50 +29,80 @@
           <span>Signal strength</span>
           <span id="rssiValue">-- dBm</span>
         </div>
-        <div class="rssi-bar"><div class="rssi-fill" id="rssiBar" style="width:0%"></div></div>
+        <div class="rssi-bar">
+          <div class="rssi-fill" id="rssiFill" style="width:0%"></div>
+        </div>
       </div>
+
       <div class="card">
         <h3>Auto-lock</h3>
         <p class="muted">Screen locks when watch moves away or after timeout.</p>
-        <button class="btn btn-danger" id="lockBtn">🔒 Lock Now</button>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;">
+          <label class="switch">
+            <input type="checkbox" id="daemonToggle" checked>
+            <span class="slider"></span>
+          </label>
+          <span>Enable auto-lock daemon</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button class="btn btn-danger" id="lockBtn">🔒 Lock Now</button>
+          <button class="btn btn-primary" id="unlockBtn">🔓 Unlock</button>
+        </div>
       </div>
     </div>
 
+    <!-- Devices Tab -->
     <div id="tab-devices" class="tab hidden">
       <h1>Devices</h1>
       <div class="card">
-        <h3>Paired</h3>
-        <div id="pairedList"><p class="muted">No paired devices yet.</p></div>
+        <h3>Paired Devices</h3>
+        <div id="pairedList"><p class="muted">Loading…</p></div>
       </div>
+
       <div class="card">
-        <h3>Scan for New</h3>
+        <h3>Scan for New Device</h3>
+        <p class="muted">Open the WristKey app on your watch and keep it nearby.</p>
         <button class="btn btn-primary" id="scanBtn">🔍 Scan for 30 seconds</button>
         <div id="scanResults"></div>
       </div>
+
+      <div id="calibrateProgress" class="card hidden">
+        <h3>Calibration</h3>
+        <div class="rssi-bar" style="margin-top:8px;">
+          <div class="rssi-fill" id="calibrateBar" style="width:0%"></div>
+        </div>
+        <p id="calibrateText" class="muted" style="margin-top:8px;">Hold watch near PC…</p>
+      </div>
     </div>
 
+    <!-- Settings Tab -->
     <div id="tab-settings" class="tab hidden">
       <h1>Settings</h1>
       <div class="card">
+        <h3>Sync</h3>
         <div class="input-group">
-          <label>Auto-lock timeout (seconds)</label>
-          <input type="number" id="timeoutInput" value="30">
+          <label>Challenge freshness window (sec)</label>
+          <input type="number" id="challengeInput" value="30">
+        </div>
+        <p class="muted">How long a challenge/response is considered valid.</p>
+      </div>
+      <div class="card">
+        <h3>Unlock</h3>
+        <div class="input-group">
+          <label>Auto-lock timeout (sec)</label>
+          <input type="number" id="timeoutInput" value="300">
         </div>
         <div class="input-group">
-          <label>RSSI threshold offset (dBm below baseline)</label>
-          <input type="number" id="rssiOffsetInput" value="15">
+          <label>RSSI drop threshold (dB below baseline)</label>
+          <input type="number" id="rssiOffsetInput" value="10">
         </div>
-        <div class="input-group">
-          <label>Challenge timeout (seconds)</label>
-          <input type="number" id="challengeInput" value="10">
-        </div>
+        <p class="muted">How far the signal must drop before the PC locks.</p>
         <button class="btn btn-primary" id="saveBtn">💾 Save</button>
         <span id="saveStatus"></span>
       </div>
     </div>
-  </div>
+  </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/@tauri-apps/api@1.5.0/dist/tauri.umd.min.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

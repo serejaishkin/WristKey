@@ -13,7 +13,8 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
-
+pub mod sqlite_storage;
+pub use sqlite_storage::SqliteStorage;
 #[derive(Error, Debug)]
 pub enum WristKeyError {
     #[error("crypto operation failed: {0}")]
