@@ -48,7 +48,6 @@ pub trait PasswordVault: Send + Sync {
     async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String>;
 }
 
-
 /// Software ECDSA P-256 crypto engine.
 pub struct EcdsaP256Crypto;
 
@@ -74,14 +73,14 @@ impl CryptoEngine for EcdsaP256Crypto {
         let pubkey = p256::PublicKey::from_sec1_bytes(public_key)
             .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
         let verifying_key = VerifyingKey::from(pubkey);
-        
+
         // FIX: support both raw (64 bytes) and DER-encoded (70-72 bytes) signatures
         let sig = if signature.len() == 64 {
             Signature::from_slice(signature)
         } else {
             Signature::from_der(signature)
         }.map_err(|e| WristKeyError::Crypto(format!("invalid signature: {}", e)))?;
-        
+
         verifying_key.verify(data, &sig)
             .map_err(|_| WristKeyError::InvalidSignature)
     }
@@ -339,14 +338,6 @@ pub trait PlatformSecurity: Send + Sync {
     async fn register_as_authenticator(&self) -> Result<()>;
 }
 
-/// Platform-specific password encryption (DPAPI on Windows, keyring on Linux, etc.)
-pub trait PasswordVault: Send + Sync {
-    /// Encrypt a plaintext password into opaque bytes
-    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>>;
-    /// Decrypt opaque bytes back into plaintext password
-    async fn decrypt_password(&self, encrypted: &[u8]) -> Result<String>;
-}
-
 pub struct MockPlatformSecurity {
     locked: Arc<RwLock<bool>>,
 }
@@ -542,7 +533,7 @@ mod tests {
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
         let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Test Watch".into(), pub_key, None, &response, -50).await.unwrap();
+        let device = manager.complete_pairing("Test Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
         assert_eq!(device.name, "Test Watch");
         assert!(manager.state().await.is_authenticated());
     }
@@ -556,7 +547,7 @@ mod tests {
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
         let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50).await.unwrap();
+        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
 
         let unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
         let good_sig = crypto.sign(&priv_key, &unlock_challenge.to_bytes()).await.unwrap();
@@ -573,7 +564,7 @@ mod tests {
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
         let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50).await.unwrap();
+        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
 
         let _unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
         let stale = Challenge::generate();
@@ -591,7 +582,7 @@ mod tests {
         let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
         let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
         let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50).await.unwrap();
+        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
 
         let unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
         let good_sig = crypto.sign(&priv_key, &unlock_challenge.to_bytes()).await.unwrap();
@@ -611,6 +602,7 @@ mod tests {
             device_id: None,
             paired_at: Utc::now(),
             baseline_rssi: -55,
+            address: "AA:BB:CC:DD:EE:FF".into(),
             windows_password: None,
         };
         storage.save_device(&device).await.unwrap();
