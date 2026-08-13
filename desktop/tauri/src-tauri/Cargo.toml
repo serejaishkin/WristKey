@@ -1,0 +1,22 @@
+[package]
+name = "wristkey-tauri"
+version = "0.1.0"
+description = "WristKey GUI — Tauri edition"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = ["shell-open"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.35", features = ["rt-multi-thread", "time", "sync"] }
+tracing = "0.1"
+wristkey-core = { path = "../../crates/core" }
+wristkey-ble = { path = "../../crates/ble" }
+wristkey-daemon = { path = "../../crates/daemon" }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

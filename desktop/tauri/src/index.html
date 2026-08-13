@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WristKey</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="sidebar">
+    <button class="nav-btn active" data-tab="status" title="Status">📶</button>
+    <button class="nav-btn" data-tab="devices" title="Devices">⌚</button>
+    <button class="nav-btn" data-tab="settings" title="Settings">⚙️</button>
+  </div>
+
+  <div class="main">
+    <div id="tab-status" class="tab">
+      <h1>Status</h1>
+      <div class="card">
+        <div class="status-big">
+          <div class="status-icon" id="statusIcon">🔓</div>
+          <div class="status-text">
+            <h2 id="statusTitle">Loading…</h2>
+            <p id="statusDetail">Checking connection…</p>
+          </div>
+        </div>
+        <div class="rssi-row">
+          <span>Signal strength</span>
+          <span id="rssiValue">-- dBm</span>
+        </div>
+        <div class="rssi-bar"><div class="rssi-fill" id="rssiBar" style="width:0%"></div></div>
+      </div>
+      <div class="card">
+        <h3>Auto-lock</h3>
+        <p class="muted">Screen locks when watch moves away or after timeout.</p>
+        <button class="btn btn-danger" id="lockBtn">🔒 Lock Now</button>
+      </div>
+    </div>
+
+    <div id="tab-devices" class="tab hidden">
+      <h1>Devices</h1>
+      <div class="card">
+        <h3>Paired</h3>
+        <div id="pairedList"><p class="muted">No paired devices yet.</p></div>
+      </div>
+      <div class="card">
+        <h3>Scan for New</h3>
+        <button class="btn btn-primary" id="scanBtn">🔍 Scan for 30 seconds</button>
+        <div id="scanResults"></div>
+      </div>
+    </div>
+
+    <div id="tab-settings" class="tab hidden">
+      <h1>Settings</h1>
+      <div class="card">
+        <div class="input-group">
+          <label>Auto-lock timeout (seconds)</label>
+          <input type="number" id="timeoutInput" value="30">
+        </div>
+        <div class="input-group">
+          <label>RSSI threshold offset (dBm below baseline)</label>
+          <input type="number" id="rssiOffsetInput" value="15">
+        </div>
+        <div class="input-group">
+          <label>Challenge timeout (seconds)</label>
+          <input type="number" id="challengeInput" value="10">
+        </div>
+        <button class="btn btn-primary" id="saveBtn">💾 Save</button>
+        <span id="saveStatus"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tauri-apps/api@1.5.0/dist/tauri.umd.min.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

@@ -7,10 +7,10 @@ pub mod tray;
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{interval, sleep, timeout, Instant};
+use tokio::time::{interval, timeout, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
-use wristkey_core::{SessionManager, PlatformSecurity, Result, WristKeyError, Config};
+use wristkey_core::{SessionManager, PlatformSecurity, Result, WristKeyError};
 use wristkey_ble::{BleAdapter, PeripheralInfo};
 use conn_mgr::ConnectionManager;
 
@@ -47,7 +47,7 @@ impl Daemon {
 
         let mut ticker = interval(Duration::from_secs(5));
         let mut last_unlocked: Option<Instant> = None;
-        let mut last_locked: Option<Instant> = None;
+        let mut _last_locked: Option<Instant> = None;
 
         loop {
             ticker.tick().await;
@@ -74,7 +74,7 @@ impl Daemon {
                                 warn!("Lock failed: {}", e);
                             } else {
                                 info!("Auto-locked: watch out of range");
-                                last_locked = Some(Instant::now());
+                                _last_locked = Some(Instant::now());
                             }
                         }
                         Ok(true) => {}
@@ -94,7 +94,7 @@ impl Daemon {
                                 warn!("Timeout lock failed: {}", e);
                             } else {
                                 info!("Auto-locked: timeout {}s", config.auto_lock_timeout_sec);
-                                last_locked = Some(Instant::now());
+                                _last_locked = Some(Instant::now());
                                 last_unlocked = None;
                             }
                         }
@@ -114,7 +114,7 @@ impl Daemon {
         let service_uuid = Uuid::parse_str(SERVICE_UUID)
             .map_err(|e| WristKeyError::Config(format!("invalid service UUID: {}", e)))?;
 
-        let rx = self.ble.scan(service_uuid).await?;
+        let mut rx = self.ble.scan(service_uuid).await?;
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut best_rssi: Option<i16> = None;
 
@@ -125,7 +125,6 @@ impl Daemon {
                         if let Some(rssi) = info.rssi {
                             let threshold = device.baseline_rssi - config.rssi_threshold_offset_dbm;
                             if rssi > threshold {
-                                // Watch is close enough
                                 return Ok(ProximityAction::Unlock);
                             }
                             if best_rssi.map_or(true, |best| rssi > best) {
@@ -139,12 +138,10 @@ impl Daemon {
             }
         }
 
-        // If we saw the watch but it was too weak → lock
         if best_rssi.is_some() {
             return Ok(ProximityAction::Lock);
         }
 
-        // No watch seen at all → lock (or keep current state)
         Ok(ProximityAction::Lock)
     }
 

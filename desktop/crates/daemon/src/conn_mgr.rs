@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use futures::StreamExt;
 use btleplug::api::{Central, CentralEvent, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Peripheral};
-use tracing::{info, warn};
+use tracing::info;
 
 const WRISTKEY_MANUF_ID: u16 = 0xFFFF;
 const PRESENCE_TIMEOUT: Duration = Duration::from_secs(12);

@@ -96,7 +96,7 @@ impl PairingApp {
             });
         });
 
-        let mut app = Self {
+        let app = Self {
             session, storage, state: AppState::Scanning,
             status: "🔍 Scanning for WristKey devices…".into(),
             discovered: Vec::new(), paired_devices,
@@ -109,7 +109,7 @@ impl PairingApp {
     }
 
     fn stop_scan(&mut self) {
-        if let Some(handle) = self.scan_thread.take() {
+        if let Some(_handle) = self.scan_thread.take() {
             // Note: we can't truly abort the thread, but dropping the receiver
             // and ignoring results effectively stops the UI updates.
             self.status = "⏹️ Scan stopped".into();
