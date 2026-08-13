@@ -21,6 +21,7 @@ use chrono::Utc;
 use wristkey_core::{SessionManager, SessionState, Storage, Config, PairedDevice, Response};
 use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 
+// WristKey custom UUIDs (universal, any Wear OS watch)
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
@@ -38,7 +39,6 @@ fn display_name(info: &PeripheralInfo) -> String {
     info.name.clone()
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| {
-            // Use last 4 chars of MAC/ID so the user still sees something
             let id = &info.id;
             if id.len() > 4 {
                 format!("Watch {}", &id[id.len()-4..])
@@ -280,6 +280,17 @@ impl WristKeyApp {
                     }
                     Err(e) => return Err(format!("Connect failed: {}", e)),
                 };
+
+                // Check if WristKey custom service exists on the watch
+                let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
+                let services = adapter.btleplug_adapter()
+                    .and_then(|a| {
+                        // We can't easily list services from adapter, but connect() already logged them
+                        // Fallback: try to read from challenge char — if it fails, service is missing
+                        Some(())
+                    });
+                gui_log(&format!("Service check placeholder: {:?}", services));
+
                 let challenge = match session.begin_pairing().await {
                     Ok(c) => c,
                     Err(e) => {
@@ -297,7 +308,7 @@ impl WristKeyApp {
                     }
                     Err(e) => {
                         let _ = adapter.disconnect(&conn).await;
-                        return Err(format!("Notify subscribe failed: {}", e));
+                        return Err(format!("Notify subscribe failed: {}. Make sure the WristKey app is running on the watch and the watch supports custom BLE GATT services.", e));
                     }
                 };
 
@@ -314,7 +325,7 @@ impl WristKeyApp {
                 }
                 if !write_ok {
                     let _ = adapter.disconnect(&conn).await;
-                    return Err("Failed to write challenge after 3 attempts".into());
+                    return Err("Failed to write challenge after 3 attempts. The WristKey service may not be running on the watch.".into());
                 }
 
                 gui_log("Waiting for response (10s timeout)...");
@@ -578,9 +589,9 @@ impl WristKeyApp {
                     let mut clicked = None;
                     for info in &self.discovered {
                         let name = display_name(info);
-                        let pin = info.pin.as_deref().unwrap_or("----");
                         let rssi_str = info.rssi.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "??".into());
-                        if ui.button(format!("🔗 Pair with {} — PIN {} ({})", name, pin, rssi_str)).clicked() {
+                        let btn_text = format!("🔗 Pair with {} ({})", name, rssi_str);
+                        if ui.button(btn_text).clicked() {
                             clicked = Some(info.clone());
                         }
                     }

@@ -69,8 +69,23 @@ impl BtleplugAdapter {
     }
 }
 
-// Detect if device is likely a smartwatch (Samsung blocks custom advertising, so we fallback to name)
-fn is_likely_watch(name: &Option<String>, _services: &[Uuid], _target_uuid: Uuid) -> bool {
+// Samsung Electronics manufacturer ID
+const SAMSUNG_MANUF_ID: u16 = 0x0075;
+// Samsung Accessory Service UUID (Galaxy Watch always advertises this system service)
+const SAMSUNG_SERVICE_UUID: &str = "0000fd50-0000-1000-8000-00805f9b34fb";
+
+fn is_likely_watch(name: &Option<String>, services: &[Uuid], target_uuid: Uuid) -> bool {
+    // Our custom service found in advertisement (rare on Samsung, but possible on other watches)
+    if services.contains(&target_uuid) {
+        return true;
+    }
+    // Samsung Accessory Service — strong indicator of Galaxy Watch
+    let has_samsung_svc = services.iter().any(|u| {
+        u.to_string().eq_ignore_ascii_case(SAMSUNG_SERVICE_UUID)
+    });
+    if has_samsung_svc {
+        return true;
+    }
     if let Some(n) = name {
         let lower = n.to_lowercase();
         lower.contains("watch") || lower.contains("galaxy") || lower.contains("wristkey")
@@ -78,6 +93,10 @@ fn is_likely_watch(name: &Option<String>, _services: &[Uuid], _target_uuid: Uuid
     } else {
         false
     }
+}
+
+fn is_samsung_device(manuf_data: &HashMap<u16, Vec<u8>>) -> bool {
+    manuf_data.contains_key(&SAMSUNG_MANUF_ID)
 }
 
 #[async_trait]
@@ -118,9 +137,8 @@ impl BleAdapter for BtleplugAdapter {
                                     let has_wristkey_service = props.services.contains(&service_uuid);
                                     let has_wristkey_manuf = props.manufacturer_data.contains_key(&0xFFFF);
                                     let is_watch = is_likely_watch(&props.local_name, &props.services, service_uuid);
-                                    // FIX: also accept devices with strong signal and no name (Samsung Galaxy Watch often advertises without name)
-                                    let strong_signal = props.rssi.map(|r| r > -80).unwrap_or(false);
-                                    let has_wristkey = has_wristkey_service || has_wristkey_manuf || is_watch || strong_signal;
+                                    let is_samsung = is_samsung_device(&props.manufacturer_data);
+                                    let has_wristkey = has_wristkey_service || has_wristkey_manuf || is_watch || is_samsung;
 
                                     let manufacturer_data = if has_wristkey_manuf {
                                         props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default()
@@ -148,9 +166,9 @@ impl BleAdapter for BtleplugAdapter {
 
                                     if has_wristkey {
                                         let found_line = format!(
-                                            ">>> WRISTKEY FOUND: addr={} name={:?} pin={:?} rssi={:?} by_service={} by_manuf={} by_name={} by_rssi={}",
+                                            ">>> WRISTKEY FOUND: addr={} name={:?} pin={:?} rssi={:?} by_service={} by_manuf={} by_name={} by_samsung={}",
                                             info.id, info.name, info.pin, info.rssi,
-                                            has_wristkey_service, has_wristkey_manuf, is_watch, strong_signal
+                                            has_wristkey_service, has_wristkey_manuf, is_watch, is_samsung
                                         );
                                         info!("{}", found_line);
                                         println!("{}", found_line);
