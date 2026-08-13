@@ -155,6 +155,7 @@ impl PairingApp {
                 let _ = session.complete_pairing(
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
                     public_key.clone(), info.device_id.clone(), &response, info.rssi.unwrap_or(-50),
+                    info.id.clone(),
                 ).await;
                 let _ = storage.save_device(&PairedDevice {
                     id: uuid::Uuid::new_v4(),
@@ -163,6 +164,8 @@ impl PairingApp {
                     device_id: info.device_id.clone(),
                     paired_at: Utc::now(),
                     baseline_rssi: info.rssi.unwrap_or(-50),
+                    address: info.id.clone(),
+                    windows_password: None,
                 }).await;
                 let _ = adapter.disconnect(&conn).await;
             });

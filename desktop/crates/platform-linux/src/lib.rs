@@ -37,6 +37,23 @@ impl PlatformSecurity for LinuxSecurity {
         info!("session unlocked via loginctl");
         Ok(())
     }
+
+    async fn is_locked(&self) -> Result<bool> {
+        // Placeholder: detect if session is locked via loginctl
+        let output = Command::new("loginctl").args(["show-session", "--property=LockedHint"]).output().await
+            .map_err(|e| WristKeyError::Platform(format!("loginctl show-session: {}", e)))?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().contains("yes"))
+    }
+
+    async fn register_as_authenticator(&self) -> Result<()> {
+        // Credential Provider registration is Windows-only
+        warn!("register_as_authenticator is a no-op on Linux");
+        Ok(())
+    }
 }
 
 #[async_trait]

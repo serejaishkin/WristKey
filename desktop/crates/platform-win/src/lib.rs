@@ -59,6 +59,18 @@ impl PlatformSecurity for WindowsSecurity {
         // Windows unlock is handled by Credential Provider, not directly
         Ok(())
     }
+
+    async fn is_locked(&self) -> Result<bool> {
+        // TODO: detect locked state via OpenInputDesktop or WTS API
+        warn!("is_locked is a placeholder on Windows — returns false");
+        Ok(false)
+    }
+
+    async fn register_as_authenticator(&self) -> Result<()> {
+        // TODO: register Windows Credential Provider DLL
+        warn!("register_as_authenticator is a placeholder — CP not yet registered");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -67,15 +79,14 @@ impl PasswordVault for WindowsSecurity {
         use windows::Win32::Security::Cryptography::{
             CryptProtectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_LOCAL_MACHINE,
         };
-        use windows::Win32::Foundation::BOOL;
-        
+
         let mut data = password.as_bytes().to_vec();
         let mut blob_in = CRYPT_INTEGER_BLOB {
             cbData: data.len() as u32,
             pbData: data.as_mut_ptr(),
         };
         let mut blob_out = CRYPT_INTEGER_BLOB::default();
-        
+
         unsafe {
             CryptProtectData(
                 &mut blob_in,
@@ -86,7 +97,7 @@ impl PasswordVault for WindowsSecurity {
                 CRYPTPROTECT_LOCAL_MACHINE,
                 &mut blob_out,
             ).map_err(|e| WristKeyError::Platform(format!("CryptProtectData: {:?}", e)))?;
-            
+
             let slice = std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize);
             Ok(slice.to_vec())
         }
@@ -96,14 +107,14 @@ impl PasswordVault for WindowsSecurity {
         use windows::Win32::Security::Cryptography::{
             CryptUnprotectData, CRYPT_INTEGER_BLOB,
         };
-        
+
         let mut data = ciphertext.to_vec();
         let mut blob_in = CRYPT_INTEGER_BLOB {
             cbData: data.len() as u32,
             pbData: data.as_mut_ptr(),
         };
         let mut blob_out = CRYPT_INTEGER_BLOB::default();
-        
+
         unsafe {
             CryptUnprotectData(
                 &mut blob_in,
@@ -114,7 +125,7 @@ impl PasswordVault for WindowsSecurity {
                 0,
                 &mut blob_out,
             ).map_err(|e| WristKeyError::Platform(format!("CryptUnprotectData: {:?}", e)))?;
-            
+
             let slice = std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize);
             String::from_utf8(slice.to_vec())
                 .map_err(|e| WristKeyError::Platform(format!("invalid UTF-8: {}", e)))

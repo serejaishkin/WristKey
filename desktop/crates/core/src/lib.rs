@@ -339,6 +339,14 @@ pub trait PlatformSecurity: Send + Sync {
     async fn register_as_authenticator(&self) -> Result<()>;
 }
 
+/// Platform-specific password encryption (DPAPI on Windows, keyring on Linux, etc.)
+pub trait PasswordVault: Send + Sync {
+    /// Encrypt a plaintext password into opaque bytes
+    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>>;
+    /// Decrypt opaque bytes back into plaintext password
+    async fn decrypt_password(&self, encrypted: &[u8]) -> Result<String>;
+}
+
 pub struct MockPlatformSecurity {
     locked: Arc<RwLock<bool>>,
 }
@@ -425,6 +433,9 @@ impl SessionManager {
     }
     pub async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
         self.storage.list_devices().await
+    }
+    pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> {
+        self.storage.load_device(device_id).await
     }
     pub async fn begin_pairing(&self) -> Result<Challenge> {
         let challenge = Challenge::generate();

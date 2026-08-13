@@ -40,7 +40,7 @@ impl Daemon {
 
     /// Calibrate proximity unlock threshold for a paired device.
     pub async fn calibrate_proximity(&self, device_id: Uuid) -> Result<i16> {
-        let device = self.session.storage.load_device(device_id).await?
+        let device = self.session.load_device(device_id).await?
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         
         info!("Starting proximity calibration for {}", device_id);
