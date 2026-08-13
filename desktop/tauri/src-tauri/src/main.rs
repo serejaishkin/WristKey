@@ -10,6 +10,7 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::Utc;
 use tracing::{info, warn};
+
 use wristkey_core::{SessionManager, Config, Response, Storage, SessionState, PlatformSecurity};
 use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 
@@ -307,11 +308,16 @@ fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
 // --- Main ---
 
 fn main() {
-    let log_dir = directories::ProjectDirs::from("", "", "WristKey")
-        .map(|d| d.data_dir().join("logs"))
+    // Logs next to the .exe
+    let log_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("logs")))
         .unwrap_or_else(|| std::path::PathBuf::from("logs"));
     let _ = std::fs::create_dir_all(&log_dir);
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkey.log");
+    let log_path = log_dir.join("wristkey.log");
+    println!("[WristKey] Logs: {:?}", log_path);
+
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkey");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
