@@ -104,45 +104,55 @@ class WristKeyBleService : Service() {
     }
 
     private fun startGattServer() {
-        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bluetoothManager.adapter ?: run {
-            Log.e(TAG, "Bluetooth adapter not available")
-            return
+        try {
+            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val adapter = bluetoothManager.adapter ?: run {
+                Log.e(TAG, "Bluetooth adapter not available")
+                return
+            }
+            if (!adapter.isEnabled) {
+                Log.e(TAG, "Bluetooth adapter is disabled")
+                return
+            }
+
+            val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+
+            challengeCharacteristic = BluetoothGattCharacteristic(
+                CHALLENGE_CHAR_UUID,
+                BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+                BluetoothGattCharacteristic.PERMISSION_WRITE
+            )
+
+            responseCharacteristic = BluetoothGattCharacteristic(
+                RESPONSE_CHAR_UUID,
+                BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                BluetoothGattCharacteristic.PERMISSION_WRITE
+            ).apply {
+                addDescriptor(BluetoothGattDescriptor(CCCD_UUID, BluetoothGattDescriptor.PERMISSION_WRITE))
+            }
+
+            configCharacteristic = BluetoothGattCharacteristic(
+                CONFIG_CHAR_UUID,
+                BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
+                BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE
+            )
+
+            service.addCharacteristic(challengeCharacteristic)
+            service.addCharacteristic(responseCharacteristic)
+            service.addCharacteristic(configCharacteristic)
+
+            bluetoothGattServer = bluetoothManager.openGattServer(this, gattServerCallback)
+            if (bluetoothGattServer == null) {
+                Log.e(TAG, "openGattServer returned null — GATT server not created")
+                return
+            }
+            val added = bluetoothGattServer?.addService(service)
+            Log.i(TAG, "addService returned: $added (service=$SERVICE_UUID)")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "SecurityException in startGattServer — missing BLUETOOTH_CONNECT permission?", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error in startGattServer", e)
         }
-
-        val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
-
-        challengeCharacteristic = BluetoothGattCharacteristic(
-            CHALLENGE_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
-            BluetoothGattCharacteristic.PERMISSION_WRITE
-        )
-
-        responseCharacteristic = BluetoothGattCharacteristic(
-            RESPONSE_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-            BluetoothGattCharacteristic.PERMISSION_WRITE
-        ).apply {
-            addDescriptor(BluetoothGattDescriptor(CCCD_UUID, BluetoothGattDescriptor.PERMISSION_WRITE))
-        }
-
-        configCharacteristic = BluetoothGattCharacteristic(
-            CONFIG_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
-            BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE
-        )
-
-        service.addCharacteristic(challengeCharacteristic)
-        service.addCharacteristic(responseCharacteristic)
-        service.addCharacteristic(configCharacteristic)
-
-        bluetoothGattServer = bluetoothManager.openGattServer(this, gattServerCallback)
-        if (bluetoothGattServer == null) {
-            Log.e(TAG, "openGattServer returned null — GATT server not created")
-            return
-        }
-        val added = bluetoothGattServer?.addService(service)
-        Log.i(TAG, "addService returned: $added (service=$SERVICE_UUID)")
     }
 
     private fun startAdvertising() {

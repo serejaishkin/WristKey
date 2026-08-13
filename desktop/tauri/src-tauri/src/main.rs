@@ -322,8 +322,12 @@ fn main() {
 
     tracing_subscriber::fmt()
         .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_target(false)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+
+    info!("WristKey started — logs at {:?}", log_path);
 
     info!("WristKey Tauri v2 starting");
 
@@ -485,8 +489,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| match event {
-            RunEvent::ExitRequested { api, .. } => {
-                api.prevent_exit();
+            RunEvent::ExitRequested { api, code, .. } => {
+                if code != Some(0) {
+                    api.prevent_exit();
+                }
             }
             _ => {}
         });
