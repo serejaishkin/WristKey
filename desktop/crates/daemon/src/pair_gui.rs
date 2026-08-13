@@ -110,8 +110,6 @@ impl PairingApp {
 
     fn stop_scan(&mut self) {
         if let Some(_handle) = self.scan_thread.take() {
-            // Note: we can't truly abort the thread, but dropping the receiver
-            // and ignoring results effectively stops the UI updates.
             self.status = "⏹️ Scan stopped".into();
             self.state = AppState::Discovered;
         }
@@ -146,11 +144,17 @@ impl PairingApp {
                 let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
                     Ok(Some(d)) => d, _ => { let _ = adapter.disconnect(&conn).await; return; }
                 };
-                if response_data.len() < 66 { let _ = adapter.disconnect(&conn).await; return; }
-                let sig_len = response_data.len() - 66;
-                let signature = response_data[..sig_len].to_vec();
-                let user_present = response_data[sig_len] != 0;
-                let public_key = response_data[sig_len + 1..].to_vec();
+
+                // Expected format: [signature 64][user_present 1][public_key 65] = 130 bytes
+                if response_data.len() != 130 {
+                    eprintln!("❌ Invalid response length: {} bytes (expected 130)", response_data.len());
+                    let _ = adapter.disconnect(&conn).await;
+                    return;
+                }
+                let signature = response_data[..64].to_vec();
+                let user_present = response_data[64] != 0;
+                let public_key = response_data[65..].to_vec();
+
                 let response = Response { signature, user_present, timestamp: Utc::now() };
                 let _ = session.complete_pairing(
                     info.name.as_deref().unwrap_or("WristKey").to_string(),
@@ -186,14 +190,9 @@ impl eframe::App for PairingApp {
 
             ui.separator();
 
-            // Control buttons row
             ui.horizontal(|ui| {
-                if ui.button("⏹️ Stop Scan").clicked() {
-                    self.stop_scan();
-                }
-                if ui.button("🗑️ Clear List").clicked() {
-                    self.clear_list();
-                }
+                if ui.button("⏹️ Stop Scan").clicked() { self.stop_scan(); }
+                if ui.button("🗑️ Clear List").clicked() { self.clear_list(); }
                 if ui.button("🔄 Rescan").clicked() {
                     self.discovered.clear();
                     self.state = AppState::Scanning;
