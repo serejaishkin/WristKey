@@ -10,7 +10,7 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::Utc;
 use tracing::{info, warn};
-use wristkey_core::{SessionManager, Config, PairedDevice, Response, Storage, SessionState, PlatformSecurity};
+use wristkey_core::{SessionManager, Config, Response, Storage, SessionState, PlatformSecurity};
 use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 
 #[cfg(windows)]
@@ -176,7 +176,7 @@ async fn pair_device(req: PairRequest, state: State<'_, Arc<Mutex<AppState>>>) -
     s.session.complete_pairing(
         req.name,
         public_key,
-        vec![],
+        None,
         &response,
         req.rssi,
         req.id,
