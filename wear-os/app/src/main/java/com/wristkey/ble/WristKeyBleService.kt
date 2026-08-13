@@ -26,6 +26,7 @@ import com.wristkey.security.SecurityManager
 import com.wristkey.sensors.MotionDetector
 import java.util.UUID
 
+@Suppress("DEPRECATION")
 class WristKeyBleService : Service() {
 
     private val binder = LocalBinder()
@@ -93,7 +94,7 @@ class WristKeyBleService : Service() {
 
     private fun startGattServer() {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val bluetoothAdapter = bluetoothManager.adapter ?: run {
+        bluetoothManager.adapter ?: run {
             Log.e(TAG, "Bluetooth adapter not available")
             return
         }
@@ -216,27 +217,22 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "processChallenge: ${challenge.size} bytes")
 
         try {
-            // Determine user presence based on settings and motion
             val userPresent = when (settings.confirmMode) {
                 WristKeySettings.CONFIRM_GESTURE -> motionDetector.isMoving
-                WristKeySettings.CONFIRM_BUTTON -> false // Button press handled separately if needed
-                else -> motionDetector.isMoving // CONFIRM_EITHER — motion is enough for now
+                WristKeySettings.CONFIRM_BUTTON -> false
+                else -> motionDetector.isMoving
             }
 
             if (!userPresent && settings.confirmMode != WristKeySettings.CONFIRM_BUTTON) {
                 Log.w(TAG, "Challenge rejected: no motion detected (anti-relay)")
-                // Still send response but with user_present = 0 so PC rejects it
             }
 
-            // Sign the challenge
             val signature = securityManager.sign(challenge)
             Log.i(TAG, "Signature generated: ${signature.size} bytes")
 
-            // Get public key (65 bytes uncompressed)
             val publicKey = securityManager.getPublicKey()
             Log.i(TAG, "Public key: ${publicKey.size} bytes")
 
-            // Build response: [signature 64][user_present 1][public_key 65] = 130 bytes
             val response = ByteArray(130)
             System.arraycopy(signature, 0, response, 0, 64)
             response[64] = if (userPresent) 1 else 0
@@ -283,17 +279,21 @@ class WristKeyBleService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 it.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
-                @Suppress("DEPRECATION")
                 it.vibrate(100)
             }
         }
+    }
+
+    /** Called from CalibrationScreen — calibration is actually managed by the PC side. */
+    fun requestCalibration() {
+        Log.i(TAG, "requestCalibration: calibration is managed by PC via CONFIG characteristic")
     }
 
     fun isPaired(): Boolean = pairedDeviceAddress != null
     fun getDeviceName(): String = connectedDevice?.name ?: "Not connected"
     fun getLastRssi(): String = if (lastRssi != 0) "$lastRssi" else "--"
     fun isAdvertising(): Boolean = bluetoothGattServer != null
-    fun getAdvertisePin(): String = "----" // Samsung blocks custom advertising
+    fun getAdvertisePin(): String = "----"
 
     fun forgetDevice() {
         pairedDeviceAddress = null
