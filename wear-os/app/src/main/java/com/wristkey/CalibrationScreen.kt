@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.material.*
 import androidx.navigation.NavHostController
+import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -53,11 +54,10 @@ fun CalibrationScreen(
             verticalArrangement = Arrangement.Center
         ) {
             if (!isCalibrating && !showResult) {
-                // Idle state
                 Text(
                     text = "📏 Distance",
                     style = MaterialTheme.typography.title2,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(vertical = 8.dp)
                 )
 
                 if (isCalibrated) {
@@ -69,7 +69,7 @@ fun CalibrationScreen(
                     Text(
                         text = "Touch threshold: ${currentThreshold} dBm",
                         style = MaterialTheme.typography.caption2,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
                 } else {
                     Text(
@@ -81,7 +81,7 @@ fun CalibrationScreen(
                         text = "Calibrate to enable touch-to-unlock",
                         style = MaterialTheme.typography.caption2,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
                 }
 
@@ -122,17 +122,16 @@ fun CalibrationScreen(
                     )
                 }
             } else if (isCalibrating) {
-                // Calibration in progress
                 Text(
                     text = "📡 Calibrating...",
                     style = MaterialTheme.typography.title2,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(vertical = 16.dp)
                 )
 
                 Box(
                     modifier = Modifier
                         .size(80.dp)
-                        .padding(bottom = 16.dp),
+                        .padding(vertical = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("⌚", fontSize = 48.sp)
@@ -142,14 +141,14 @@ fun CalibrationScreen(
                     text = "Bring your watch close to the monitor",
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
 
                 Text(
                     text = "Hold for $countdown seconds...",
                     style = MaterialTheme.typography.title3,
                     color = MaterialTheme.colors.primary,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(vertical = 16.dp)
                 )
 
                 CircularProgressIndicator(
@@ -167,11 +166,10 @@ fun CalibrationScreen(
                     }
                 )
             } else if (showResult) {
-                // Result
                 Text(
                     text = if (settings.isProximityCalibrated) "✅ Done!" else "⏳ Waiting...",
                     style = MaterialTheme.typography.title2,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(vertical = 8.dp)
                 )
                 Text(
                     text = resultText,
