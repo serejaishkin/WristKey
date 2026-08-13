@@ -33,6 +33,21 @@ fn gui_log(msg: &str) {
         .and_then(|mut f| f.write_all(line.as_bytes()));
 }
 
+/// Fallback display name: use advertised name, or short ID, or "Unknown"
+fn display_name(info: &PeripheralInfo) -> String {
+    info.name.clone()
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| {
+            // Use last 4 chars of MAC/ID so the user still sees something
+            let id = &info.id;
+            if id.len() > 4 {
+                format!("Watch {}", &id[id.len()-4..])
+            } else {
+                "Unknown Watch".to_string()
+            }
+        })
+}
+
 pub fn run_app(session: Arc<SessionManager>, storage: Arc<dyn Storage>) {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([560.0, 680.0]),
@@ -226,7 +241,7 @@ impl WristKeyApp {
                     match timeout(Duration::from_secs(1), rx_scan.recv()).await {
                         Ok(Some(info)) => {
                             if !devices.iter().any(|d: &PeripheralInfo| d.id == info.id) {
-                                let name = info.name.as_deref().unwrap_or("Unknown");
+                                let name = display_name(&info);
                                 gui_log(&format!("Discovered device: {} (id={}, rssi={:?})", name, info.id, info.rssi));
                                 devices.push(info);
                                 let _ = tx.send(devices.clone());
@@ -240,10 +255,11 @@ impl WristKeyApp {
     }
 
     fn do_pairing(&mut self, info: PeripheralInfo) {
+        let name = display_name(&info);
         self.scan_state = ScanState::Pairing;
         self.pairing_status = format!(
             "🖐️ Pairing with {}…\nPress the button on the watch to confirm",
-            info.name.as_deref().unwrap_or("Unknown")
+            name
         );
 
         let session = self.session.clone();
@@ -328,12 +344,11 @@ impl WristKeyApp {
                 let user_present = response_data[sig_len] != 0;
                 let public_key = response_data[sig_len + 1..].to_vec();
                 gui_log(&format!("sig_len={} pub_key_len={}", signature.len(), public_key.len()));
-                gui_log(&format!("sig_len={} pub_key_len={}", signature.len(), public_key.len()));
                 let response = Response { signature, user_present, timestamp: Utc::now() };
 
                 gui_log("Calling complete_pairing...");
                 match session.complete_pairing(
-                    info.name.as_deref().unwrap_or("WristKey").to_string(),
+                    info.name.clone().unwrap_or_else(|| info.id.clone()),
                     public_key.clone(),
                     info.device_id.clone(),
                     &response,
@@ -562,9 +577,10 @@ impl WristKeyApp {
                 } else {
                     let mut clicked = None;
                     for info in &self.discovered {
-                        let name = info.name.as_deref().unwrap_or("Unknown Watch");
+                        let name = display_name(info);
                         let pin = info.pin.as_deref().unwrap_or("----");
-                        if ui.button(format!("🔗 Pair with {} — PIN {}", name, pin)).clicked() {
+                        let rssi_str = info.rssi.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "??".into());
+                        if ui.button(format!("🔗 Pair with {} — PIN {} ({})", name, pin, rssi_str)).clicked() {
                             clicked = Some(info.clone());
                         }
                     }
