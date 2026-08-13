@@ -427,6 +427,9 @@ impl SessionManager {
     pub async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
         self.storage.list_devices().await
     }
+    pub async fn load_config(&self) -> Result<Config> {
+        self.storage.load_config().await
+    }
     pub async fn begin_pairing(&self) -> Result<Challenge> {
         let challenge = Challenge::generate();
         *self.state.write().await = SessionState::Pairing { challenge: challenge.clone(), started_at: Utc::now() };
