@@ -352,7 +352,7 @@ fn main() {
         session: session.clone(),
         storage: storage.clone(),
         platform: platform.clone(),
-        daemon_enabled: AtomicBool::new(true),
+        daemon_enabled: AtomicBool::new(false),
     }));
 
     // Start daemon loop in background
@@ -375,10 +375,16 @@ fn main() {
                     continue;
                 }
 
-                let (session, platform) = {
+                let (session, platform, has_devices) = {
                     let s = daemon_state.lock().await;
-                    (s.session.clone(), s.platform.clone())
+                    let devices = s.session.list_devices().await.unwrap_or_default();
+                    (s.session.clone(), s.platform.clone(), !devices.is_empty())
                 };
+
+                if !has_devices {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    continue;
+                }
 
                 let ble = match BtleplugAdapter::new().await {
                     Ok(a) => Arc::new(a) as Arc<dyn BleAdapter>,

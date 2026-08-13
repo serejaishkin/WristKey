@@ -8383,6 +8383,7 @@ dependencies = [
 name = "wristkey-tauri"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "directories",
  "serde",
  "serde_json",
@@ -8393,6 +8394,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
  "wristkey-ble",
  "wristkey-core",
  "wristkey-daemon",

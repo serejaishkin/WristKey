@@ -107,7 +107,7 @@ impl Daemon {
     async fn check_proximity(&self) -> Result<ProximityAction> {
         let devices = self.session.list_devices().await?;
         if devices.is_empty() {
-            return Ok(ProximityAction::Lock);
+            return Ok(ProximityAction::None);
         }
 
         let config = self.session.load_config().await?;
