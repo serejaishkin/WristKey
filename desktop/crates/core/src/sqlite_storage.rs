@@ -37,10 +37,12 @@ impl SqliteStorage {
              CREATE TABLE IF NOT EXISTS config (
                  key TEXT PRIMARY KEY,
                  value BLOB NOT NULL
-             );
-             INSERT OR IGNORE INTO config (key, value) VALUES ('main', ?);",
+             );"
+        ).map_err(|e| WristKeyError::Storage(format!("sqlite init ddl: {}", e)))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO config (key, value) VALUES ('main', ?1)",
             params![&serde_json::to_vec(&Config::default()).unwrap()],
-        ).map_err(|e| WristKeyError::Storage(format!("sqlite init: {}", e)))?;
+        ).map_err(|e| WristKeyError::Storage(format!("sqlite init insert: {}", e)))?;
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
@@ -78,7 +80,8 @@ impl Storage for SqliteStorage {
         let conn = self.conn.clone();
         let device = device.clone();
         tokio::task::spawn_blocking(move || {
-            let mut stmt = conn.blocking_lock().prepare_cached(
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached(
                 "INSERT OR REPLACE INTO devices 
                  (id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
@@ -96,7 +99,8 @@ impl Storage for SqliteStorage {
     async fn load_device(&self, id: Uuid) -> Result<Option<PairedDevice>> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let mut stmt = conn.blocking_lock().prepare_cached(
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached(
                 "SELECT id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password
                  FROM devices WHERE id = ?1"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
@@ -110,15 +114,19 @@ impl Storage for SqliteStorage {
     async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let conn = conn.blocking_lock();
-            let mut stmt = conn.prepare_cached(
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached(
                 "SELECT id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password
                  FROM devices"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
-            let devices = stmt.query_map([], Self::row_to_device)
-                .map_err(|e| WristKeyError::Storage(format!("sqlite query: {}", e)))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| WristKeyError::Storage(format!("sqlite map: {}", e)))?;
+            let mut rows = stmt.query([])
+                .map_err(|e| WristKeyError::Storage(format!("sqlite query: {}", e)))?;
+            let mut devices = Vec::new();
+            while let Some(row) = rows.next()
+                .map_err(|e| WristKeyError::Storage(format!("sqlite row: {}", e)))? {
+                devices.push(Self::row_to_device(row)
+                    .map_err(|e| WristKeyError::Storage(format!("sqlite row map: {}", e)))?);
+            }
             Ok(devices)
         }).await.map_err(|e| WristKeyError::Storage(format!("spawn_blocking: {}", e)))?
     }
@@ -126,7 +134,8 @@ impl Storage for SqliteStorage {
     async fn delete_device(&self, id: Uuid) -> Result<()> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let mut stmt = conn.blocking_lock().prepare_cached(
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached(
                 "DELETE FROM devices WHERE id = ?1"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
             stmt.execute(params![id.to_string()])
@@ -139,7 +148,8 @@ impl Storage for SqliteStorage {
     async fn load_config(&self) -> Result<Config> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let mut stmt = conn.blocking_lock().prepare_cached(
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached(
                 "SELECT value FROM config WHERE key = 'main'"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
             let value: Vec<u8> = stmt.query_row([], |row| row.get(0))
@@ -158,7 +168,8 @@ impl Storage for SqliteStorage {
             WristKeyError::Storage(format!("serialize config: {}", e))
         })?;
         tokio::task::spawn_blocking(move || {
-            let mut stmt = conn.blocking_lock().prepare_cached(
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached(
                 "INSERT OR REPLACE INTO config (key, value) VALUES ('main', ?1)"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
             stmt.execute(params![value])
