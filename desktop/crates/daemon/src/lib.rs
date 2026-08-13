@@ -57,8 +57,8 @@ impl Daemon {
 
         let conn = self.ble.connect(&info).await?;
         
-        // ⚠️ ЗАМЕНИ на реальный UUID характеристики конфига часов
-        let config_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
+        // FIX: real CONFIG_CHAR UUID from WristKeyBleService.kt
+        let config_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
             .map_err(|e| WristKeyError::Config(format!("invalid config UUID: {}", e)))?;
         
         self.ble.write(&conn, config_char, &[0x01]).await?;

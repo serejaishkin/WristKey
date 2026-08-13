@@ -24,7 +24,7 @@ use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
-const CONFIG_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567893";
+const CONFIG_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567894";
 
 fn gui_log(msg: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
