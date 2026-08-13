@@ -17,8 +17,6 @@ fun CalibrationScreen(
     bleService: WristKeyBleService?
 ) {
     val listState = rememberScalingLazyListState()
-    var isCalibrating by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0) }
 
     Scaffold(
         timeText = { TimeText() },
@@ -40,7 +38,7 @@ fun CalibrationScreen(
 
             item {
                 Text(
-                    text = if (isCalibrating) "Hold watch near PC..." else "Calibrate proximity",
+                    text = "Калибровка запускается с ПК.\nОткройте WristKey на компьютере и нажмите 'Калибровка'.",
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp)
@@ -49,41 +47,23 @@ fun CalibrationScreen(
 
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                if (isCalibrating) {
-                    CircularProgressIndicator()
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("$progress/20", style = MaterialTheme.typography.display3)
+                if (settings.isProximityCalibrated) {
+                    Text(
+                        "✅ Калибровано:\n${settings.proximityRssi} dBm",
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center
+                    )
                 } else {
-                    Button(
-                        onClick = {
-                            isCalibrating = true
-                            progress = 0
-                            bleService?.requestCalibration()
-                        },
-                        modifier = Modifier.fillMaxWidth(0.7f)
-                    ) {
-                        Text("Start")
-                    }
+                    Text(
+                        "❌ Не откалибровано",
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
 
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                if (settings.isProximityCalibrated) {
-                    Text(
-                        "✅ Calibrated: ${settings.proximityRssi} dBm",
-                        style = MaterialTheme.typography.caption2
-                    )
-                } else {
-                    Text(
-                        "❌ Not calibrated",
-                        style = MaterialTheme.typography.caption2
-                    )
-                }
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
                 Chip(
                     onClick = { navController.popBackStack() },
                     label = { Text("Back") },

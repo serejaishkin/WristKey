@@ -17,10 +17,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
+import android.widget.Toast
 import com.wristkey.WristKeySettings
 import com.wristkey.security.SecurityManager
 import com.wristkey.sensors.MotionDetector
@@ -42,6 +45,7 @@ class WristKeyBleService : Service() {
     private lateinit var securityManager: SecurityManager
     private lateinit var motionDetector: MotionDetector
     private lateinit var settings: WristKeySettings
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // WristKey custom UUIDs (universal for any Wear OS watch)
     private val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -251,17 +255,27 @@ class WristKeyBleService : Service() {
 
     private fun processConfig(data: ByteArray) {
         when (data.firstOrNull()?.toInt()) {
-            0x01 -> Log.i(TAG, "Calibration start requested")
+            0x01 -> {
+                Log.i(TAG, "Calibration START requested by PC")
+                mainHandler.post {
+                    Toast.makeText(this, "Приложите часы к ПК\nДержите 10 секунд", Toast.LENGTH_LONG).show()
+                }
+            }
             0x02 -> {
                 if (data.size >= 2) {
                     val threshold = data[1].toByte().toInt()
-                    Log.i(TAG, "Calibration result received: threshold=$threshold dBm")
+                    Log.i(TAG, "Calibration RESULT received: threshold=$threshold dBm")
                     settings.saveCalibration(threshold)
+                    mainHandler.post {
+                        Toast.makeText(this, "✅ Калибровка: $threshold dBm", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
             0x03 -> {
-                Log.i(TAG, "Calibration cancelled")
-                settings.clearCalibration()
+                Log.i(TAG, "Calibration CANCELLED by PC")
+                mainHandler.post {
+                    Toast.makeText(this, "Калибровка отменена", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -284,7 +298,6 @@ class WristKeyBleService : Service() {
         }
     }
 
-    /** Called from CalibrationScreen — calibration is actually managed by the PC side. */
     fun requestCalibration() {
         Log.i(TAG, "requestCalibration: calibration is managed by PC via CONFIG characteristic")
     }
