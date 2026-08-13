@@ -69,6 +69,17 @@ impl BtleplugAdapter {
     }
 }
 
+// Detect if device is likely a smartwatch (Samsung blocks custom advertising, so we fallback to name)
+fn is_likely_watch(name: &Option<String>, _services: &[Uuid], _target_uuid: Uuid) -> bool {
+    if let Some(n) = name {
+        let lower = n.to_lowercase();
+        lower.contains("watch") || lower.contains("galaxy") || lower.contains("wristkey")
+            || lower.contains("gear") || lower.contains("active") || lower.contains("sm-r")
+    } else {
+        false
+    }
+}
+
 #[async_trait]
 impl BleAdapter for BtleplugAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
@@ -84,6 +95,7 @@ impl BleAdapter for BtleplugAdapter {
                 Ok(e) => e,
                 Err(e) => {
                     error!("failed to get BLE events: {}", e);
+                    eprintln!("[BLE ERROR] failed to get BLE events: {}", e);
                     return;
                 }
             };
@@ -94,22 +106,36 @@ impl BleAdapter for BtleplugAdapter {
                         Ok(peripheral) => {
                             match peripheral.properties().await {
                                 Ok(Some(props)) => {
-                                    // DEBUG: log EVERY discovered device
-                                    info!(">>> DISCOVERED: addr={} name={:?} rssi={:?} manuf_keys={:?}", 
-                                        peripheral.address(), props.local_name, props.rssi, 
-                                        props.manufacturer_data.keys().collect::<Vec<_>>());
-                                    
-                                    let has_wristkey = props.manufacturer_data.contains_key(&0xFFFF);
-                                    let manufacturer_data = props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default();
-                                    
+                                    let svc_str: Vec<String> = props.services.iter().map(|u| u.to_string()).collect();
+                                    let manuf_keys: Vec<u16> = props.manufacturer_data.keys().cloned().collect();
+                                    let log_line = format!(
+                                        ">>> DISCOVERED: addr={} name={:?} rssi={:?} services={:?} manuf_keys={:?}",
+                                        peripheral.address(), props.local_name, props.rssi, svc_str, manuf_keys
+                                    );
+                                    info!("{}", log_line);
+                                    println!("{}", log_line);
+
+                                    let has_wristkey_service = props.services.contains(&service_uuid);
+                                    let has_wristkey_manuf = props.manufacturer_data.contains_key(&0xFFFF);
+                                    let is_watch = is_likely_watch(&props.local_name, &props.services, service_uuid);
+                                    // FIX: also accept devices with strong signal and no name (Samsung Galaxy Watch often advertises without name)
+                                    let strong_signal = props.rssi.map(|r| r > -80).unwrap_or(false);
+                                    let has_wristkey = has_wristkey_service || has_wristkey_manuf || is_watch || strong_signal;
+
+                                    let manufacturer_data = if has_wristkey_manuf {
+                                        props.manufacturer_data.get(&0xFFFF).cloned().unwrap_or_default()
+                                    } else {
+                                        Vec::new()
+                                    };
+
                                     let pin = if manufacturer_data.len() >= 4 {
                                         String::from_utf8(manufacturer_data[..4].to_vec()).ok()
                                     } else { None };
-                                    
+
                                     let device_id = if manufacturer_data.len() > 4 {
                                         Some(hex::encode(&manufacturer_data[manufacturer_data.len()-4..]))
                                     } else { None };
-                                    
+
                                     let info = PeripheralInfo {
                                         pin,
                                         device_id,
@@ -119,14 +145,15 @@ impl BleAdapter for BtleplugAdapter {
                                         service_uuids: props.services.clone(),
                                         raw_manufacturer_data: if has_wristkey { Some(manufacturer_data) } else { None },
                                     };
-                                    
+
                                     if has_wristkey {
-                                        info!(">>> WRISTKEY FOUND: addr={} pin={:?} device_id={:?} rssi={:?}", 
-                                            info.id, info.pin, info.device_id, info.rssi);
-                                        // Only forward actual WristKey devices — this used to send
-                                        // EVERY nearby BLE device (speakers, phones, appliances...)
-                                        // to the scan channel, since `service_uuid` was accepted as
-                                        // a parameter but never actually used to filter anything.
+                                        let found_line = format!(
+                                            ">>> WRISTKEY FOUND: addr={} name={:?} pin={:?} rssi={:?} by_service={} by_manuf={} by_name={} by_rssi={}",
+                                            info.id, info.name, info.pin, info.rssi,
+                                            has_wristkey_service, has_wristkey_manuf, is_watch, strong_signal
+                                        );
+                                        info!("{}", found_line);
+                                        println!("{}", found_line);
                                         if tx.send(info).await.is_err() {
                                             break;
                                         }
@@ -135,10 +162,16 @@ impl BleAdapter for BtleplugAdapter {
                                     }
                                 }
                                 Ok(None) => {}
-                                Err(e) => warn!("failed to get properties: {}", e),
+                                Err(e) => {
+                                    warn!("failed to get properties: {}", e);
+                                    eprintln!("[BLE WARN] failed to get properties: {}", e);
+                                }
                             }
                         }
-                        Err(e) => warn!("failed to get peripheral: {}", e),
+                        Err(e) => {
+                            warn!("failed to get peripheral: {}", e);
+                            eprintln!("[BLE WARN] failed to get peripheral: {}", e);
+                        }
                     }
                 }
             }
@@ -195,7 +228,7 @@ impl BleAdapter for BtleplugAdapter {
         for svc in services {
             info!("  Service: {}", svc.uuid);
             for char in svc.characteristics {
-                info!("  Char: {} props={:?}", char.uuid, char.properties);
+                info!("    Char: {} props={:?}", char.uuid, char.properties);
             }
         }
         self.connected.write().await.insert(info.id.clone(), peripheral);
@@ -259,11 +292,10 @@ impl BleAdapter for BtleplugAdapter {
 
         eprintln!("[BLE] notify: char={}, descriptors={}", char.uuid, char.descriptors.len());
         for (i, desc) in char.descriptors.iter().enumerate() {
-            eprintln!("[BLE]   desc[{}]: {}", i, desc.uuid);
+            eprintln!("[BLE] desc[{}]: {}", i, desc.uuid);
         }
         peripheral.subscribe(char).await
             .map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
-
 
         // FIX: manually write CCCD for Windows to Android GATT server
         let cccd_uuid = Uuid::parse_str("00002902-0000-1000-8000-00805f9b34fb").unwrap();

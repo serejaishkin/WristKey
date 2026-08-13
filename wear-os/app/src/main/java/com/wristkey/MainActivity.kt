@@ -29,12 +29,7 @@ class MainActivity : ComponentActivity() {
             val binder = service as WristKeyBleService.LocalBinder
             bleService = binder.getService()
             serviceBound = true
-            // Start advertising once service is connected
-            try {
-                bleService?.startAdvertising()
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "Failed to start advertising: ${e.message}")
-            }
+            Log.i("MainActivity", "Service bound, GATT server running")
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             bleService = null
@@ -71,16 +66,16 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var isPaired by remember { mutableStateOf(false) }
     var deviceName by remember { mutableStateOf("Not connected") }
     var showForgetDialog by remember { mutableStateOf(false) }
-    var isAdvertising by remember { mutableStateOf(false) }
-    var advertisePin by remember { mutableStateOf("----") }
+    var isServerRunning by remember { mutableStateOf(false) }
+    var currentPin by remember { mutableStateOf("----") }
 
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
             isPaired = bleService?.isPaired() ?: false
             deviceName = bleService?.getDeviceName() ?: "Not connected"
-            isAdvertising = bleService?.isAdvertising() ?: false
-            advertisePin = bleService?.getAdvertisePin() ?: "----"
+            isServerRunning = bleService?.isAdvertising() ?: false
+            currentPin = bleService?.getAdvertisePin() ?: "----"
         }
     }
 
@@ -116,7 +111,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             item {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    if (isAdvertising) "📡 Ad: PIN $advertisePin" else "❌ Not advertising",
+                    if (isServerRunning) "📡 GATT server: PIN $currentPin" else "❌ Server offline",
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -157,22 +152,6 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 ) {
                     Text("🔓 Unlock PC")
                 }
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Chip(
-                    onClick = {
-                        try {
-                            bleService?.startAdvertising()
-                            Toast.makeText(context, "Advertising restarted", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Ad failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    label = { Text("🔄 Restart Ad") },
-                    modifier = Modifier.fillMaxWidth(0.9f)
-                )
             }
 
             item {

@@ -36,6 +36,10 @@ struct Cli {
 }
 
 fn main() {
+    // FIX: initialize tracing subscriber BEFORE anything else
+    // This makes RUST_LOG=debug work in both daemon and GUI modes
+    tracing_subscriber::fmt::init();
+
     let cli = Cli::parse();
 
     if cli.gui || cli.pair {
@@ -58,7 +62,7 @@ fn main() {
         return;
     }
 
-    let (tray_tx, tray_rx) = std::sync::mpsc::channel::<tray::TrayCommand>();
+    let (tray_tx, tray_rx) = std::sync::mpsc::channel();
 
     let daemon_thread = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -103,11 +107,14 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
     let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkeyd.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    tracing_subscriber::fmt()
+    // Note: tracing_subscriber already initialized in main(),
+    // but daemon mode also writes to file via appender
+    // We re-init here for file logging in daemon mode only
+    let _ = tracing_subscriber::fmt()
         .with_writer(non_blocking)
         .with_target(false)
         .with_thread_ids(true)
-        .init();
+        .try_init();
 
     info!("WristKey daemon starting");
 
@@ -134,8 +141,8 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp/wristkey"));
 
     println!("╔══════════════════════════════════════╗");
-    println!("║  WristKey Daemon v0.1.0              ║");
-    println!("║  PC unlock via Wear OS               ║");
+    println!("║     WristKey Daemon v0.1.0          ║");
+    println!("║   PC unlock via Wear OS             ║");
     println!("╚══════════════════════════════════════╝");
     println!("Logs: {}", log_dir.display());
     println!("Right-click tray icon to control.");
@@ -202,10 +209,6 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
                         Ok(_) => info!("Launched WristKey GUI"),
                         Err(e) => warn!("Failed to launch WristKey GUI: {}", e),
                     }
-                    // Fall through to the wait-for-storage-to-free loop below
-                    // instead of returning — otherwise the daemon would die
-                    // permanently every time "Pair Device" is used from the tray,
-                    // requiring the person to manually restart wristkeyd.exe.
                     restart = true;
                 }
                 Ok(tray::TrayCommand::ListDevices) => {
