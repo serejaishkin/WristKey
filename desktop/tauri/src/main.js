@@ -1,4 +1,7 @@
-const { invoke } = window.__TAURI__;
+if (!window.__TAURI__?.core?.invoke) {
+  console.error('Tauri API not available. Make sure withGlobalTauri is enabled.');
+}
+const invoke = window.__TAURI__?.core?.invoke;
 
 // Navigation
 document.querySelectorAll('.nav-btn').forEach(btn => {
