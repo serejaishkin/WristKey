@@ -164,9 +164,15 @@ class WristKeyBleService : Service() {
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .build()
 
+        val deviceId = securityManager.getDeviceId()
+        val manufData = ByteArray(8)
+        System.arraycopy("WRST".toByteArray(), 0, manufData, 0, 4)
+        System.arraycopy(deviceId, 0, manufData, 4, 4.coerceAtMost(deviceId.size))
+
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
+            .addManufacturerData(0xFFFF, manufData)
             .build()
 
         bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)

@@ -164,19 +164,20 @@ impl BleAdapter for BtleplugAdapter {
                                         raw_manufacturer_data: if has_wristkey { Some(manufacturer_data) } else { None },
                                     };
 
+                                    // Send ALL discovered devices (filtering done by caller if needed)
+                                    let found_line = format!(
+                                        ">>> DEVICE: addr={} name={:?} rssi={:?} wristkey={} (svc={} manuf={} name={} samsung={})",
+                                        info.id, info.name, info.rssi, has_wristkey,
+                                        has_wristkey_service, has_wristkey_manuf, is_watch, is_samsung
+                                    );
                                     if has_wristkey {
-                                        let found_line = format!(
-                                            ">>> WRISTKEY FOUND: addr={} name={:?} pin={:?} rssi={:?} by_service={} by_manuf={} by_name={} by_samsung={}",
-                                            info.id, info.name, info.pin, info.rssi,
-                                            has_wristkey_service, has_wristkey_manuf, is_watch, is_samsung
-                                        );
                                         info!("{}", found_line);
                                         println!("{}", found_line);
-                                        if tx.send(info).await.is_err() {
-                                            break;
-                                        }
                                     } else {
-                                        debug!(">>> NON-WRISTKEY: addr={} name={:?}", info.id, info.name);
+                                        debug!("{}", found_line);
+                                    }
+                                    if tx.send(info).await.is_err() {
+                                        break;
                                     }
                                 }
                                 Ok(None) => {}

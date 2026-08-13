@@ -3,10 +3,18 @@ const { invoke } = window.__TAURI__;
 // Navigation
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
+    // Hide all tabs
     document.querySelectorAll('.tab').forEach(t => t.classList.add('hidden'));
-    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    // Show selected tab
+    const tab = document.getElementById('tab-' + btn.dataset.tab);
+    if (tab) tab.classList.remove('hidden');
+    // Update active button
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    // Load devices when switching to devices tab
+    if (btn.dataset.tab === 'devices') {
+      loadDevices();
+    }
   });
 });
 
@@ -51,7 +59,6 @@ document.getElementById('daemonToggle')?.addEventListener('change', async (e) =>
 });
 
 // Paired devices
-document.getElementById('tab-devices').addEventListener('click', loadDevices);
 async function loadDevices() {
   try {
     const devices = await invoke('get_paired_devices');
