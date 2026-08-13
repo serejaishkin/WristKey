@@ -90,7 +90,7 @@ fun MainSettingsScreen(
             item {
                 Chip(
                     label = { Text("Unlock distance") },
-                    secondaryLabel = { Text("${settings.rssiThreshold} dBm") },
+                    secondaryLabel = { Text("${settings.proximityRssi} dBm") },
                     onClick = { navController.navigate("rssi_threshold") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -205,7 +205,7 @@ fun RssiThresholdScreen(
     settings: WristKeySettings
 ) {
     val listState = rememberScalingLazyListState()
-    var sliderValue by remember { mutableFloatStateOf(settings.rssiThreshold.toFloat()) }
+    var sliderValue by remember { mutableFloatStateOf(settings.proximityRssi.toFloat()) }
 
     Scaffold(
         timeText = { TimeText() },
@@ -263,7 +263,7 @@ fun RssiThresholdScreen(
             item {
                 Button(
                     onClick = {
-                        settings.rssiThreshold = sliderValue.toInt()
+                        settings.proximityRssi = sliderValue.toInt()
                         navController.popBackStack()
                     },
                     modifier = Modifier.padding(top = 16.dp)

@@ -2,97 +2,83 @@ package com.wristkey
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.core.content.edit
 
-/**
- * Persistent settings for WristKey watch app.
- * 
- * Proximity calibration: user places watch near monitor,
- * PC measures RSSI for 10s, saves threshold (+5dBm margin).
- */
 class WristKeySettings(context: Context) {
-
-    companion object {
-        private const val PREFS_NAME = "wristkey_settings"
-        private const val KEY_CONFIRM_MODE = "confirm_mode"
-        private const val KEY_CONFIRM_TIMEOUT_MS = "confirm_timeout_ms"
-        private const val KEY_VIBRATE_ENABLED = "vibrate_enabled"
-        private const val KEY_PROXIMITY_RSSI = "proximity_rssi"
-        private const val KEY_PROXIMITY_CALIBRATED = "proximity_calibrated"
-        private const val KEY_PROXIMITY_CALIBRATED_AT = "proximity_calibrated_at"
-        private const val KEY_PAIRED_DEVICES = "paired_devices"
-
-        const val CONFIRM_GESTURE = "gesture"
-        const val CONFIRM_BUTTON = "button"
-        const val CONFIRM_EITHER = "either"
-
-        const val DEFAULT_CONFIRM_TIMEOUT = 6000L
-        const val DEFAULT_PROXIMITY_RSSI = -40
-        const val RSSI_MARGIN_DB = 5  // +5 dBm margin after calibration
-    }
-
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    var confirmMode: String
-        get() = prefs.getString(KEY_CONFIRM_MODE, CONFIRM_EITHER) ?: CONFIRM_EITHER
-        set(value) = prefs.edit { putString(KEY_CONFIRM_MODE, value) }
+    companion object {
+        private const val PREFS_NAME = "WristKeyPrefs"
+        private const val KEY_CONFIRM_MODE = "confirm_mode"
+        private const val KEY_RSSI_THRESHOLD = "rssi_threshold"
+        private const val KEY_PROXIMITY_RSSI = "proximity_rssi"
+        private const val KEY_PROXIMITY_UNLOCK = "proximity_unlock"
+        private const val KEY_VIBRATE = "vibrate"
+        private const val KEY_PAIRED_DEVICES = "paired_devices"
+        private const val KEY_IS_CALIBRATED = "is_calibrated"
 
-    var confirmTimeoutMs: Long
-        get() = prefs.getLong(KEY_CONFIRM_TIMEOUT_MS, DEFAULT_CONFIRM_TIMEOUT)
-        set(value) = prefs.edit { putLong(KEY_CONFIRM_TIMEOUT_MS, value) }
+        const val CONFIRM_GESTURE = 0
+        const val CONFIRM_BUTTON = 1
+        const val CONFIRM_EITHER = 2
+    }
+
+    var confirmMode: Int
+        get() = prefs.getInt(KEY_CONFIRM_MODE, CONFIRM_EITHER)
+        set(value) = prefs.edit().putInt(KEY_CONFIRM_MODE, value).apply()
+
+    var rssiThreshold: Int
+        get() = prefs.getInt(KEY_RSSI_THRESHOLD, -60)
+        set(value) = prefs.edit().putInt(KEY_RSSI_THRESHOLD, value).apply()
+
+    var proximityRssi: Int
+        get() = prefs.getInt(KEY_PROXIMITY_RSSI, -40)
+        set(value) = prefs.edit().putInt(KEY_PROXIMITY_RSSI, value).apply()
+
+    var proximityUnlockEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PROXIMITY_UNLOCK, false)
+        set(value) = prefs.edit().putBoolean(KEY_PROXIMITY_UNLOCK, value).apply()
 
     var vibrateEnabled: Boolean
-        get() = prefs.getBoolean(KEY_VIBRATE_ENABLED, false)
-        set(value) = prefs.edit { putBoolean(KEY_VIBRATE_ENABLED, value) }
+        get() = prefs.getBoolean(KEY_VIBRATE, true)
+        set(value) = prefs.edit().putBoolean(KEY_VIBRATE, value).apply()
 
-    /** RSSI threshold for proximity unlock (calibrated, not manual) */
-    var proximityRssi: Int
-        get() = prefs.getInt(KEY_PROXIMITY_RSSI, DEFAULT_PROXIMITY_RSSI)
-        set(value) = prefs.edit { putInt(KEY_PROXIMITY_RSSI, value) }
-
-    /** Whether proximity has been calibrated */
     var isProximityCalibrated: Boolean
-        get() = prefs.getBoolean(KEY_PROXIMITY_CALIBRATED, false)
-        set(value) = prefs.edit { putBoolean(KEY_PROXIMITY_CALIBRATED, value) }
+        get() = prefs.getBoolean(KEY_IS_CALIBRATED, false)
+        set(value) = prefs.edit().putBoolean(KEY_IS_CALIBRATED, value).apply()
 
-    /** When calibration was performed */
-    var calibratedAt: Long
-        get() = prefs.getLong(KEY_PROXIMITY_CALIBRATED_AT, 0)
-        set(value) = prefs.edit { putLong(KEY_PROXIMITY_CALIBRATED_AT, value) }
-
-    var pairedDevices: Set<String>
+    val pairedDevices: Set<String>
         get() = prefs.getStringSet(KEY_PAIRED_DEVICES, emptySet()) ?: emptySet()
-        set(value) = prefs.edit { putStringSet(KEY_PAIRED_DEVICES, value) }
 
-    fun addPairedDevice(deviceIdHex: String) {
-        val current = pairedDevices.toMutableSet()
-        current.add(deviceIdHex)
-        pairedDevices = current
+    fun addPairedDevice(deviceId: String) {
+        val devices = pairedDevices.toMutableSet()
+        devices.add(deviceId)
+        prefs.edit().putStringSet(KEY_PAIRED_DEVICES, devices).apply()
     }
 
-    fun removePairedDevice(deviceIdHex: String) {
-        val current = pairedDevices.toMutableSet()
-        current.remove(deviceIdHex)
-        pairedDevices = current
+    fun removePairedDevice(deviceId: String) {
+        val devices = pairedDevices.toMutableSet()
+        devices.remove(deviceId)
+        prefs.edit().putStringSet(KEY_PAIRED_DEVICES, devices).apply()
     }
 
-    /** Save calibrated proximity threshold with margin */
-    fun saveCalibration(measuredRssi: Int) {
-        // measuredRssi is negative (e.g. -42). Margin makes it less negative (e.g. -37)
-        // so watch must be AT LEAST as close as during calibration
-        val threshold = measuredRssi + RSSI_MARGIN_DB
-        proximityRssi = threshold.coerceIn(-90, -20)
-        isProximityCalibrated = true
-        calibratedAt = System.currentTimeMillis()
+    fun clearPairedDevices() {
+        prefs.edit().remove(KEY_PAIRED_DEVICES).apply()
+    }
+
+    fun saveCalibration(rssi: Int) {
+        prefs.edit()
+            .putInt(KEY_PROXIMITY_RSSI, rssi)
+            .putBoolean(KEY_IS_CALIBRATED, true)
+            .apply()
     }
 
     fun clearCalibration() {
-        isProximityCalibrated = false
-        calibratedAt = 0
-        proximityRssi = DEFAULT_PROXIMITY_RSSI
+        prefs.edit()
+            .remove(KEY_PROXIMITY_RSSI)
+            .putBoolean(KEY_IS_CALIBRATED, false)
+            .apply()
     }
 
     fun reset() {
-        prefs.edit { clear() }
+        prefs.edit().clear().apply()
     }
 }

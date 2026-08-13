@@ -1,8 +1,8 @@
 //! Unified WristKey GUI — launched via `wristkeyd.exe --gui` (or `--pair`, kept
 //! as an alias for backward compatibility). Three tabs:
-//!   1. Status   — live connection/session state
-//!   2. Devices  — paired devices (with Forget) + "scan for new" sub-section
-//!   3. Settings — sync / unlock configuration
+//! 1. Status — live connection/session state
+//! 2. Devices — paired devices (with Forget) + "scan for new" sub-section
+//! 3. Settings — sync / unlock configuration
 //!
 //! Runs on the caller's thread (must be the true process main thread — this is
 //! a hard winit requirement, see main.rs). BLE and storage operations run in
@@ -274,7 +274,6 @@ impl WristKeyApp {
                 let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
                 let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
 
-                // FIX: subscribe BEFORE writing challenge (race condition)
                 let mut rx = match adapter.notify(&conn, response_char).await {
                     Ok(r) => {
                         gui_log("Subscribed to response characteristic (notify)");
@@ -390,7 +389,6 @@ impl eframe::App for WristKeyApp {
             }
         }
 
-        // Poll pairing result
         if let Some(rx) = &self.pairing_result_rx {
             if let Ok(result) = rx.try_recv() {
                 match result {
@@ -610,7 +608,7 @@ impl WristKeyApp {
         });
         ui.label(egui::RichText::new(
             "How long a challenge/response is considered valid. Lower = stricter \
-             replay protection, but less tolerant of slow BLE round-trips."
+            replay protection, but less tolerant of slow BLE round-trips."
         ).small().weak());
 
         ui.add_space(12.0);
@@ -625,7 +623,7 @@ impl WristKeyApp {
         });
         ui.label(egui::RichText::new(
             "How far the signal must drop below the baseline recorded at pairing \
-             time before the PC locks — higher = watch needs to move further away."
+            time before the PC locks — higher = watch needs to move further away."
         ).small().weak());
 
         ui.add_space(16.0);

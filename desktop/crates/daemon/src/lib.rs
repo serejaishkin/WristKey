@@ -42,7 +42,7 @@ impl Daemon {
     pub async fn calibrate_proximity(&self, device_id: Uuid) -> Result<i16> {
         let device = self.session.load_device(device_id).await?
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
-        
+
         info!("Starting proximity calibration for {}", device_id);
 
         let info = PeripheralInfo {
@@ -56,11 +56,10 @@ impl Daemon {
         };
 
         let conn = self.ble.connect(&info).await?;
-        
-        // FIX: real CONFIG_CHAR UUID from WristKeyBleService.kt
+
         let config_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
             .map_err(|e| WristKeyError::Config(format!("invalid config UUID: {}", e)))?;
-        
+
         self.ble.write(&conn, config_char, &[0x01]).await?;
         info!("Sent START_CALIBRATION to watch");
 
@@ -88,7 +87,7 @@ impl Daemon {
         let rssi_byte = threshold as i8;
         self.ble.write(&conn, config_char, &[0x02, rssi_byte as u8]).await?;
         info!("Sent CALIBRATION_RESULT: {} dBm", threshold);
-        
+
         let _ = self.ble.disconnect(&conn).await;
         Ok(threshold)
     }

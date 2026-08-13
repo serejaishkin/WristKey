@@ -1,283 +1,143 @@
 package com.wristkey.ble
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.Service
-import android.bluetooth.*
-import android.bluetooth.le.AdvertiseCallback
-import android.bluetooth.le.AdvertiseData
-import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
-import android.os.Vibrator
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import com.wristkey.R
 import com.wristkey.WristKeySettings
-import com.wristkey.security.SecurityManager
-import com.wristkey.sensors.MotionDetector
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.*
 import kotlinx.coroutines.*
+import java.nio.ByteBuffer
+import java.util.UUID
 
 class WristKeyBleService : Service() {
-
     companion object {
-        private const val TAG = "WristKeyBLE"
-        const val CHANNEL_ID = "wristkey_ble_channel"
-        const val NOTIFICATION_ID = 1
-
+        const val TAG = "WristKeyBleService"
         val SERVICE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
         val STATUS_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
-        val CLIENT_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
-        /** Config characteristic: PC sends calibration commands and RSSI data */
         val CONFIG_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
 
-        const val STATUS_DISCONNECTED: Byte = 0x00
-        const val STATUS_PAIRING: Byte = 0x01
-        const val STATUS_AUTHENTICATED: Byte = 0x02
-
-        /** Config commands from PC */
         const val CMD_START_CALIBRATION: Byte = 0x01
         const val CMD_CALIBRATION_RESULT: Byte = 0x02
         const val CMD_CANCEL_CALIBRATION: Byte = 0x03
-
-        var pairingPin: String = (1000..9999).random().toString()
-            private set
-        var deviceIdHex: String = ""
-            private set
     }
 
     private val binder = LocalBinder()
-    private var bluetoothManager: BluetoothManager? = null
-    private var bluetoothAdapter: BluetoothAdapter? = null
-    private var gattServer: BluetoothGattServer? = null
-    private var advertiser: android.bluetooth.le.BluetoothLeAdvertiser? = null
-    private var advertiseCallback: AdvertiseCallback? = null
-
-    private val securityManager = SecurityManager()
-    private val motionDetector by lazy { MotionDetector(this) }
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
-    private lateinit var settings: WristKeySettings
-
-    private var currentDevice: BluetoothDevice? = null
-    private var responseCharacteristic: BluetoothGattCharacteristic? = null
-    private var statusCharacteristic: BluetoothGattCharacteristic? = null
-    private var configCharacteristic: BluetoothGattCharacteristic? = null
-
-    /** Last RSSI received from PC via CONFIG_CHAR */
-    @Volatile
-    private var lastRssiFromPc: Int = -100
-
-    /** Calibration state */
-    @Volatile
-    private var calibrationInProgress: Boolean = false
-
-    @Volatile
-    private var lastUserPresentTime: Long = 0
+    private var bluetoothGatt: BluetoothGatt? = null
+    private var settings: WristKeySettings? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var calibrationInProgress = false
+    private var lastRssiFromPc = -100
+    private var lastRssi = -100
+    private var pairedDeviceName: String? = null
+    private var isPairedState = false
 
     inner class LocalBinder : Binder() {
         fun getService(): WristKeyBleService = this@WristKeyBleService
     }
 
+    override fun onBind(intent: Intent?): IBinder = binder
+
     override fun onCreate() {
         super.onCreate()
         settings = WristKeySettings(this)
-        createNotificationChannel()
-        bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bluetoothAdapter = bluetoothManager?.adapter
-        motionDetector.start()
+        isPairedState = settings?.pairedDevices?.isNotEmpty() == true
     }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try {
-            startForeground(NOTIFICATION_ID, buildNotification("Initializing…"))
-        } catch (e: Exception) {
-            Log.e(TAG, "startForeground failed", e)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        deviceIdHex = securityManager.getDeviceId().joinToString("") { "%02x".format(it) }
-        Log.i(TAG, "Device ID: $deviceIdHex")
-
-        startGattServer()
-        startAdvertising()
-        return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        stopAdvertising()
-        stopGattServer()
-        motionDetector.stop()
-        serviceScope.cancel()
         super.onDestroy()
+        serviceScope.cancel()
+        bluetoothGatt?.close()
     }
 
-    fun resetPairing() {
-        Log.i(TAG, "Resetting pairing state")
-        currentDevice?.let { device -> gattServer?.cancelConnection(device) }
-        currentDevice = null
-        updateStatus(STATUS_DISCONNECTED)
-        securityManager.resetKeys()
-        pairingPin = (1000..9999).random().toString()
-        deviceIdHex = securityManager.getDeviceId().joinToString("") { "%02x".format(it) }
-        stopAdvertising()
-        startAdvertising()
-        Log.i(TAG, "Pairing reset complete, new PIN: $pairingPin, Device ID: $deviceIdHex")
+    fun isPaired(): Boolean = isPairedState
+
+    fun getDeviceName(): String = pairedDeviceName ?: "Not connected"
+
+    fun getLastRssi(): Int = lastRssi
+
+    fun sendUnlockChallenge() {
+        Log.i(TAG, "sendUnlockChallenge called")
+        // TODO: implement BLE write to PC for unlock
     }
 
-    fun getSettings(): WristKeySettings = settings
+    fun forgetDevice() {
+        Log.i(TAG, "forgetDevice called")
+        settings?.clearPairedDevices()
+        isPairedState = false
+        pairedDeviceName = null
+    }
 
-    /** Called from UI to request calibration start */
     fun requestCalibration() {
-        // PC will detect this and start sending RSSI data
+        Log.i(TAG, "requestCalibration called")
         calibrationInProgress = true
         lastRssiFromPc = -100
-        Log.i(TAG, "Calibration requested by user")
     }
 
     fun cancelCalibration() {
+        Log.i(TAG, "cancelCalibration called")
         calibrationInProgress = false
-        Log.i(TAG, "Calibration cancelled by user")
     }
 
-    private fun startGattServer() {
-        val gattServerCallback = object : BluetoothGattServerCallback() {
-            override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-                when (newState) {
-                    BluetoothProfile.STATE_CONNECTED -> {
-                        Log.i(TAG, "Device connected: ${device.address}")
-                        currentDevice = device
-                        updateStatus(STATUS_AUTHENTICATED)
-                        updateNotification("Connected to ${device.name ?: "PC"}")
-                    }
-                    BluetoothProfile.STATE_DISCONNECTED -> {
-                        Log.i(TAG, "Device disconnected: ${device.address}")
-                        if (currentDevice?.address == device.address) {
-                            currentDevice = null
-                            lastRssiFromPc = -100
-                            updateStatus(STATUS_DISCONNECTED)
-                            updateNotification("Waiting for PC…")
-                        }
-                    }
-                }
-            }
+    fun isCalibrationInProgress(): Boolean = calibrationInProgress
 
-            override fun onCharacteristicWriteRequest(
-                device: BluetoothDevice, requestId: Int,
-                characteristic: BluetoothGattCharacteristic,
-                preparedWrite: Boolean, responseNeeded: Boolean,
-                offset: Int, value: ByteArray?
-            ) {
-                val data = value ?: byteArrayOf()
-                Log.i(TAG, "onCharacteristicWriteRequest: uuid=${characteristic.uuid} len=${data.size}")
+    fun getLastRssiFromPc(): Int = lastRssiFromPc
 
-                when (characteristic.uuid) {
-                    CHALLENGE_CHAR_UUID -> {
-                        Log.i(TAG, "About to call handleChallenge")
-                        handleChallenge(device, requestId, responseNeeded, data)
-                    }
-                    CONFIG_CHAR_UUID -> {
-                        handleConfigWrite(device, requestId, responseNeeded, data)
-                    }
-                    else -> {
-                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
-                    }
-                }
-            }
-
-            override fun onDescriptorWriteRequest(
-                device: BluetoothDevice, requestId: Int,
-                descriptor: BluetoothGattDescriptor,
-                preparedWrite: Boolean, responseNeeded: Boolean,
-                offset: Int, value: ByteArray?
-            ) {
-                Log.i(TAG, "onDescriptorWriteRequest: uuid=${descriptor.uuid} value=${value?.contentToString()}")
-                if (descriptor.uuid == CLIENT_CONFIG_UUID) {
-                    descriptor.value = value
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
-                    Log.i(TAG, "CCCD updated: ${value?.contentToString()}")
-                }
-            }
-        }
-
-        gattServer = bluetoothManager?.openGattServer(this, gattServerCallback)
-        if (gattServer == null) {
-            Log.e(TAG, "Failed to open GATT server")
-            return
-        }
-
-        val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
-
-        val challengeChar = BluetoothGattCharacteristic(
-            CHALLENGE_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
-            BluetoothGattCharacteristic.PERMISSION_WRITE
-        )
-
-        responseCharacteristic = BluetoothGattCharacteristic(
-            RESPONSE_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE,
-            BluetoothGattCharacteristic.PERMISSION_READ
-        ).apply {
-            addDescriptor(BluetoothGattDescriptor(
-                CLIENT_CONFIG_UUID,
-                BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
-            ))
-        }
-
-        statusCharacteristic = BluetoothGattCharacteristic(
-            STATUS_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-            BluetoothGattCharacteristic.PERMISSION_READ
-        ).apply {
-            addDescriptor(BluetoothGattDescriptor(
-                CLIENT_CONFIG_UUID,
-                BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
-            ))
-            setValue(byteArrayOf(STATUS_DISCONNECTED))
-        }
-
-        configCharacteristic = BluetoothGattCharacteristic(
-            CONFIG_CHAR_UUID,
-            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-            BluetoothGattCharacteristic.PERMISSION_WRITE
-        ).apply {
-            addDescriptor(BluetoothGattDescriptor(
-                CLIENT_CONFIG_UUID,
-                BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
-            ))
-        }
-
-        service.addCharacteristic(challengeChar)
-        service.addCharacteristic(responseCharacteristic)
-        service.addCharacteristic(statusCharacteristic)
-        service.addCharacteristic(configCharacteristic)
-
-        gattServer?.addService(service)
-        Log.i(TAG, "GATT server started with ${service.characteristics.size} characteristics")
+    private fun connectToDevice(device: BluetoothDevice) {
+        bluetoothGatt = device.connectGatt(this, false, gattCallback)
     }
 
-    /** Handle config commands from PC */
-    private fun handleConfigWrite(
-        device: BluetoothDevice, requestId: Int,
-        responseNeeded: Boolean, value: ByteArray
-    ) {
-        if (value.isEmpty()) {
-            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            return
+    private val gattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                Log.i(TAG, "Connected to GATT server.")
+                gatt.discoverServices()
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                Log.i(TAG, "Disconnected from GATT server.")
+            }
         }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                val service = gatt.getService(SERVICE_UUID)
+                service?.getCharacteristic(CONFIG_CHAR_UUID)?.let { char ->
+                    gatt.setCharacteristicNotification(char, true)
+                    val descriptor = char.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                    descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    gatt.writeDescriptor(descriptor)
+                }
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            if (characteristic.uuid == CONFIG_CHAR_UUID) {
+                handleConfigCommand(value)
+            }
+        }
+
+        override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                lastRssi = rssi
+            }
+        }
+    }
+
+    private fun handleConfigCommand(value: ByteArray) {
+        if (value.isEmpty()) return
 
         val cmd = value[0]
         when (cmd) {
@@ -285,16 +145,13 @@ class WristKeyBleService : Service() {
                 Log.i(TAG, "PC requested calibration start")
                 calibrationInProgress = true
                 lastRssiFromPc = -100
-                // Notify UI if possible (via broadcast or callback)
             }
             CMD_CALIBRATION_RESULT -> {
-                // Format: [CMD_CALIBRATION_RESULT, rssi_byte (signed)]
                 if (value.size >= 2) {
-                    val rssi = value[1].toInt()  // signed byte
+                    val rssi = value[1].toInt()
                     Log.i(TAG, "PC sent calibration result: $rssi dBm")
-                    settings.saveCalibration(rssi)
+                    settings?.saveCalibration(rssi)
                     calibrationInProgress = false
-                    // Notify UI
                 }
             }
             CMD_CANCEL_CALIBRATION -> {
@@ -302,213 +159,11 @@ class WristKeyBleService : Service() {
                 calibrationInProgress = false
             }
             else -> {
-                // Raw RSSI update during calibration: [rssi_byte]
                 if (value.size == 1) {
                     lastRssiFromPc = value[0].toInt()
                     Log.d(TAG, "RSSI update from PC: $lastRssiFromPc dBm")
                 }
             }
         }
-
-        if (responseNeeded) {
-            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-        }
-    }
-
-    private fun stopGattServer() {
-        gattServer?.close()
-        gattServer = null
-    }
-
-    private fun handleChallenge(
-        device: BluetoothDevice, requestId: Int,
-        responseNeeded: Boolean, value: ByteArray?
-    ) {
-        Log.i(TAG, "handleChallenge START")
-        if (value == null || value.size < 24) {
-            Log.w(TAG, "Invalid challenge length: ${value?.size}")
-            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, 0, null)
-            return
-        }
-        Log.i(TAG, "handleChallenge: value ok, len=${value.size}")
-
-        val nonce = value.copyOfRange(0, 16)
-        val timestamp = ByteBuffer.wrap(value.copyOfRange(16, 24)).order(ByteOrder.LITTLE_ENDIAN).long
-        val now = System.currentTimeMillis() / 1000
-        Log.i(TAG, "handleChallenge: timestamp=$timestamp now=$now")
-        if (kotlin.math.abs(now - timestamp) > 30) {
-            Log.w(TAG, "Challenge timestamp expired: $timestamp vs $now")
-            if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            return
-        }
-        Log.i(TAG, "handleChallenge: timestamp ok")
-
-        if (responseNeeded) {
-            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            Log.i(TAG, "handleChallenge: sendResponse sent")
-        }
-
-        // === PROXIMITY UNLOCK ===
-        if (settings.isProximityCalibrated && lastRssiFromPc >= settings.proximityRssi) {
-            Log.i(TAG, "PROXIMITY UNLOCK: RSSI=$lastRssiFromPc >= threshold=${settings.proximityRssi}")
-            serviceScope.launch {
-                signAndNotify(device, nonce, value, userPresent = true, skipConfirmation = true)
-            }
-            return
-        }
-
-        // === NORMAL UNLOCK ===
-        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        if (settings.vibrateEnabled) {
-            try {
-                vibrator?.vibrate(longArrayOf(0, 300, 200, 300), -1)
-            } catch (e: Exception) {
-                Log.w(TAG, "Vibration failed", e)
-            }
-        }
-
-        Log.i(TAG, "Challenge received, waiting for confirmation...")
-
-        serviceScope.launch {
-            val startTime = System.currentTimeMillis()
-            val timeoutMs = settings.confirmTimeoutMs
-            var confirmed = false
-
-            while (System.currentTimeMillis() - startTime < timeoutMs) {
-                val moving = motionDetector.isMoving
-                val present = isUserPresent()
-                val mode = settings.confirmMode
-                val gestureOk = mode == WristKeySettings.CONFIRM_GESTURE || mode == WristKeySettings.CONFIRM_EITHER
-                val buttonOk = mode == WristKeySettings.CONFIRM_BUTTON || mode == WristKeySettings.CONFIRM_EITHER
-
-                if ((gestureOk && moving) || (buttonOk && present)) {
-                    confirmed = true
-                    Log.i(TAG, "handleChallenge: confirmed! (mode=$mode)")
-                    break
-                }
-                delay(300)
-            }
-
-            if (!confirmed) {
-                Log.w(TAG, "Challenge rejected: timeout")
-                updateNotification("Confirmation not received")
-                return@launch
-            }
-
-            signAndNotify(device, nonce, value, userPresent = isUserPresent(), skipConfirmation = false)
-        }
-    }
-
-    private suspend fun signAndNotify(
-        device: BluetoothDevice,
-        nonce: ByteArray,
-        value: ByteArray,
-        userPresent: Boolean,
-        skipConfirmation: Boolean
-    ) {
-        Log.i(TAG, "Signing challenge (skip=$skipConfirmation)")
-        updateNotification(if (skipConfirmation) "Proximity unlock..." else "Confirmed, sending...")
-
-        val userPresentByte: Byte = if (userPresent) 1 else 0
-        val payload = nonce + value.copyOfRange(16, 24)
-
-        val signature = try {
-            securityManager.sign(payload)
-        } catch (e: Exception) {
-            Log.e(TAG, "Signing failed", e)
-            updateNotification("Signing error")
-            return
-        }
-
-        val publicKey = securityManager.getPublicKey()
-        val response = signature + byteArrayOf(userPresentByte) + publicKey
-
-        responseCharacteristic?.value = response
-
-        val notified = try {
-            gattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false) ?: false
-        } catch (e: Exception) {
-            Log.e(TAG, "notifyCharacteristicChanged failed", e)
-            false
-        }
-
-        Log.i(TAG, "Challenge signed and notified. userPresent=$userPresent, notified=$notified")
-        updateNotification("Connected to " + (device.name ?: "PC"))
-    }
-
-    private fun startAdvertising() {
-        val adapter = bluetoothAdapter ?: return
-        advertiser = adapter.bluetoothLeAdvertiser ?: return
-
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setConnectable(true)
-            .setTimeout(0)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-            .build()
-
-        val pinBytes = pairingPin.toByteArray(Charsets.UTF_8)
-        val deviceIdBytes = deviceIdHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val manufacturerData = pinBytes + deviceIdBytes
-
-        val data = AdvertiseData.Builder()
-            .setIncludeTxPowerLevel(false)
-            .setIncludeDeviceName(false)
-            .addManufacturerData(0xFFFF, manufacturerData)
-            .build()
-
-        advertiseCallback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                Log.i(TAG, "Advertising started, PIN: $pairingPin")
-                updateNotification("PIN: $pairingPin")
-            }
-            override fun onStartFailure(errorCode: Int) {
-                Log.e(TAG, "Advertising failed: $errorCode")
-            }
-        }
-
-        advertiser?.startAdvertising(settings, data, advertiseCallback!!)
-    }
-
-    private fun stopAdvertising() {
-        advertiser?.stopAdvertising(advertiseCallback)
-        advertiser = null
-        advertiseCallback = null
-    }
-
-    private fun updateStatus(status: Byte) {
-        statusCharacteristic?.value = byteArrayOf(status)
-        currentDevice?.let { device ->
-            gattServer?.notifyCharacteristicChanged(device, statusCharacteristic, false)
-        }
-    }
-
-    private fun updateNotification(text: String) {
-        val notification = buildNotification(text)
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, notification)
-    }
-
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-    }
-
-    private fun buildNotification(text: String): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("WristKey")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true)
-            .build()
-    }
-
-    fun confirmUserPresent() {
-        lastUserPresentTime = System.currentTimeMillis()
-        Log.i(TAG, "User presence confirmed via button")
-    }
-
-    private fun isUserPresent(): Boolean {
-        return System.currentTimeMillis() - lastUserPresentTime < 60_000
     }
 }
