@@ -13,6 +13,10 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.AdvertiseCallback
+import android.bluetooth.le.AdvertiseData
+import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.content.Intent
 import android.os.Binder
@@ -20,6 +24,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.ParcelUuid
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -34,6 +39,7 @@ class WristKeyBleService : Service() {
 
     private val binder = LocalBinder()
     private var bluetoothGattServer: BluetoothGattServer? = null
+    private var bluetoothLeAdvertiser: BluetoothLeAdvertiser? = null
     private var challengeCharacteristic: BluetoothGattCharacteristic? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
     private var configCharacteristic: BluetoothGattCharacteristic? = null
@@ -75,6 +81,7 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "onStartCommand called")
         startForegroundService()
         if (bluetoothGattServer == null) startGattServer()
+        if (bluetoothLeAdvertiser == null) startAdvertising()
         return START_STICKY
     }
 
@@ -138,10 +145,63 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "addService returned: $added (service=$SERVICE_UUID)")
     }
 
+    private fun startAdvertising() {
+        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val adapter = bluetoothManager.adapter ?: run {
+            Log.e(TAG, "Bluetooth adapter not available for advertising")
+            return
+        }
+        bluetoothLeAdvertiser = adapter.bluetoothLeAdvertiser
+        if (bluetoothLeAdvertiser == null) {
+            Log.e(TAG, "BluetoothLeAdvertiser is null — advertising not supported")
+            return
+        }
+
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setConnectable(true)
+            .setTimeout(0)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .build()
+
+        val data = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .addServiceUuid(ParcelUuid(SERVICE_UUID))
+            .build()
+
+        bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)
+        Log.i(TAG, "startAdvertising called")
+    }
+
+    private fun stopAdvertising() {
+        bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+        bluetoothLeAdvertiser = null
+        Log.i(TAG, "Advertising stopped")
+    }
+
+    private val advertiseCallback = object : AdvertiseCallback() {
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            Log.i(TAG, "Advertising started successfully")
+        }
+
+        override fun onStartFailure(errorCode: Int) {
+            Log.e(TAG, "Advertising failed to start: errorCode=$errorCode")
+            when (errorCode) {
+                ADVERTISE_FAILED_DATA_TOO_LARGE -> Log.e(TAG, "ADVERTISE_FAILED_DATA_TOO_LARGE")
+                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> Log.e(TAG, "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS")
+                ADVERTISE_FAILED_ALREADY_STARTED -> Log.e(TAG, "ADVERTISE_FAILED_ALREADY_STARTED")
+                ADVERTISE_FAILED_INTERNAL_ERROR -> Log.e(TAG, "ADVERTISE_FAILED_INTERNAL_ERROR")
+                ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> Log.e(TAG, "ADVERTISE_FAILED_FEATURE_UNSUPPORTED")
+            }
+        }
+    }
+
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onServiceAdded(status: Int, service: BluetoothGattService?) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "onServiceAdded SUCCESS: ${service?.uuid}")
+                // Start advertising after service is successfully added
+                startAdvertising()
             } else {
                 Log.e(TAG, "onServiceAdded FAILED: status=$status, uuid=${service?.uuid}")
             }
@@ -305,7 +365,7 @@ class WristKeyBleService : Service() {
     fun isPaired(): Boolean = pairedDeviceAddress != null
     fun getDeviceName(): String = connectedDevice?.name ?: "Not connected"
     fun getLastRssi(): String = if (lastRssi != 0) "$lastRssi" else "--"
-    fun isAdvertising(): Boolean = bluetoothGattServer != null
+    fun isAdvertising(): Boolean = bluetoothLeAdvertiser != null
     fun getAdvertisePin(): String = "----"
 
     fun forgetDevice() {
@@ -322,7 +382,9 @@ class WristKeyBleService : Service() {
         super.onDestroy()
         Log.i(TAG, "onDestroy called")
         motionDetector.stop()
+        stopAdvertising()
         bluetoothGattServer?.close()
+        bluetoothGattServer = null
     }
 
     companion object {
