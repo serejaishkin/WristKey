@@ -201,10 +201,12 @@ class WristKeyBleService : Service() {
             offset: Int, value: ByteArray?
         ) {
             Log.i(TAG, "onDescriptorWriteRequest: ${descriptor?.uuid}")
-            if (descriptor?.uuid == CCCD_UUID) {
-                descriptor.value = value
-                if (responseNeeded) {
-                    bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            descriptor?.let {
+                if (it.uuid == CCCD_UUID) {
+                    it.value = value
+                    if (responseNeeded) {
+                        bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    }
                 }
             }
         }
