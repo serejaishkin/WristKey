@@ -3,7 +3,7 @@ package com.wristkey
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.wear.compose.material.*
+import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -11,26 +11,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.wear.compose.material.*
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.wristkey.ble.WristKeyBleService
 
-/**
- * Wear OS Settings screen for WristKey.
- * 
- * Screens:
- * 1. Main settings list
- * 2. Confirmation mode (gesture / button / either)
- * 3. RSSI threshold (distance) slider
- * 4. Paired devices list
- * 5. Proximity unlock settings
- */
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            WristKeyTheme {
+            MaterialTheme {
                 SettingsNavHost()
             }
         }
@@ -92,7 +83,6 @@ fun MainSettingsScreen(
                     label = { Text("Confirmation") },
                     secondaryLabel = { Text(confirmModeLabel) },
                     onClick = { navController.navigate("confirm_mode") },
-                    icon = { Icon(androidx.wear.compose.material.IconDefaults.TapChipIcon, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -102,7 +92,6 @@ fun MainSettingsScreen(
                     label = { Text("Unlock distance") },
                     secondaryLabel = { Text("${settings.rssiThreshold} dBm") },
                     onClick = { navController.navigate("rssi_threshold") },
-                    icon = { Icon(androidx.wear.compose.material.IconDefaults.TapChipIcon, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -112,7 +101,6 @@ fun MainSettingsScreen(
                     label = { Text("Proximity unlock") },
                     secondaryLabel = { Text(if (settings.proximityUnlockEnabled) "ON" else "OFF") },
                     onClick = { navController.navigate("proximity_unlock") },
-                    icon = { Icon(androidx.wear.compose.material.IconDefaults.TapChipIcon, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -122,7 +110,6 @@ fun MainSettingsScreen(
                     label = { Text("Paired PCs") },
                     secondaryLabel = { Text("${settings.pairedDevices.size} devices") },
                     onClick = { navController.navigate("paired_devices") },
-                    icon = { Icon(androidx.wear.compose.material.IconDefaults.TapChipIcon, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -145,9 +132,7 @@ fun MainSettingsScreen(
                         settings.reset()
                         Toast.makeText(context, "Settings reset", Toast.LENGTH_SHORT).show()
                     },
-                    colors = ChipDefaults.primaryChipColors(
-                        backgroundColor = MaterialTheme.colors.error
-                    ),
+                    colors = ChipDefaults.primaryChipColors(),
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -196,7 +181,8 @@ fun ConfirmModeScreen(
                 Triple(WristKeySettings.CONFIRM_EITHER, "🤚🔘 Either", "Gesture or button")
             )
 
-            items(modes) { (mode, title, desc) ->
+            items(modes.size) { index ->
+                val (mode, title, desc) = modes[index]
                 ToggleChip(
                     checked = selected == mode,
                     onCheckedChange = {
@@ -234,17 +220,17 @@ fun RssiThresholdScreen(
             item {
                 Text(
                     text = "📡 Distance",
-                    style = MaterialTheme.typology.title3,
+                    style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
             }
 
             item {
                 val label = when {
-                    sliderValue >= -30 -> "Touching (≤5 cm)"
-                    sliderValue >= -45 -> "Very close (≤20 cm)"
-                    sliderValue >= -60 -> "Near monitor (≤1 m)"
-                    sliderValue >= -75 -> "Same room (≤3 m)"
+                    sliderValue >= -30f -> "Touching (≤5 cm)"
+                    sliderValue >= -45f -> "Very close (≤20 cm)"
+                    sliderValue >= -60f -> "Near monitor (≤1 m)"
+                    sliderValue >= -75f -> "Same room (≤3 m)"
                     else -> "Far away"
                 }
                 Text(
@@ -268,6 +254,8 @@ fun RssiThresholdScreen(
                     onValueChange = { sliderValue = it },
                     valueRange = -90f..-20f,
                     steps = 14,
+                    decreaseIcon = { Text("-") },
+                    increaseIcon = { Text("+") },
                     modifier = Modifier.fillMaxWidth(0.8f)
                 )
             }
@@ -328,8 +316,8 @@ fun ProximityUnlockScreen(
             if (enabled) {
                 item {
                     val label = when {
-                        sliderValue >= -30 -> "Touching monitor"
-                        sliderValue >= -40 -> "Very close"
+                        sliderValue >= -30f -> "Touching monitor"
+                        sliderValue >= -40f -> "Very close"
                         else -> "Close"
                     }
                     Text(
@@ -352,6 +340,8 @@ fun ProximityUnlockScreen(
                         onValueChange = { sliderValue = it },
                         valueRange = -60f..-20f,
                         steps = 8,
+                        decreaseIcon = { Text("-") },
+                        increaseIcon = { Text("+") },
                         modifier = Modifier.fillMaxWidth(0.8f)
                     )
                 }
@@ -419,17 +409,15 @@ fun PairedDevicesScreen(
                     )
                 }
             } else {
-                items(devices) { deviceId ->
+                items(devices.size) { index ->
+                    val deviceId = devices[index]
                     Chip(
                         label = { Text(deviceId.take(8) + "...") },
                         secondaryLabel = { Text("Paired") },
                         onClick = {
-                            // Show confirmation dialog to forget
-                            // For simplicity, just forget immediately
                             settings.removePairedDevice(deviceId)
                             Toast.makeText(context, "Forgot device", Toast.LENGTH_SHORT).show()
                         },
-                        icon = { Icon(androidx.wear.compose.material.IconDefaults.TapChipIcon, contentDescription = null) },
                         modifier = Modifier.fillMaxWidth(0.9f)
                     )
                 }

@@ -1,19 +1,18 @@
 package com.wristkey
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.material.*
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-// Add this composable inside SettingsActivity.kt, in the SwipeDismissableNavHost
-// Add route "calibration" to composables
 
 @Composable
 fun CalibrationScreenRoute(
@@ -88,7 +87,6 @@ fun CalibrationScreen(
 
                 Button(
                     onClick = {
-                        // Tell PC to start calibration (via CONFIG_CHAR or status)
                         bleService?.requestCalibration()
                         isCalibrating = true
                         progress = 0f
@@ -100,12 +98,11 @@ fun CalibrationScreen(
                                 countdown--
                                 progress = (10 - countdown) / 10f
                             }
-                            // Calibration finished — PC should have sent threshold
                             isCalibrating = false
                             showResult = true
-                            resultText = if (settings.isProximityCalibrated) 
-                                "Saved: ${settings.proximityRssi} dBm" 
-                                else "Waiting for PC..."
+                            resultText = if (settings.isProximityCalibrated)
+                                "Saved: ${settings.proximityRssi} dBm"
+                            else "Waiting for PC..."
                         }
                     },
                     modifier = Modifier.fillMaxWidth(0.8f)
@@ -121,7 +118,6 @@ fun CalibrationScreen(
                             settings.clearCalibration()
                             Toast.makeText(context, "Calibration reset", Toast.LENGTH_SHORT).show()
                         },
-                        colors = ChipDefaults.secondaryChipColors(),
                         modifier = Modifier.fillMaxWidth(0.8f)
                     )
                 }
@@ -133,7 +129,6 @@ fun CalibrationScreen(
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Simple watch icon placeholder
                 Box(
                     modifier = Modifier
                         .size(80.dp)
@@ -169,8 +164,7 @@ fun CalibrationScreen(
                     onClick = {
                         isCalibrating = false
                         bleService?.cancelCalibration()
-                    },
-                    colors = ChipDefaults.secondaryChipColors()
+                    }
                 )
             } else if (showResult) {
                 // Result
