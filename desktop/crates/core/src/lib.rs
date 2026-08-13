@@ -422,8 +422,8 @@ impl SessionManager {
     pub async fn state(&self) -> SessionState {
         self.state.read().await.clone()
     }
-    pub async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
-        self.storage.list_devices().await
+      pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> {
+        self.storage.load_device(device_id).await
     }
     pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> {
         self.storage.load_device(device_id).await
