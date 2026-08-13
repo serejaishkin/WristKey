@@ -77,7 +77,7 @@ pub struct WristKeyApp {
     status: Arc<Mutex<StatusSnapshot>>,
     paired_devices: Vec<PairedDevice>,
     devices_dirty: bool,
-    pending_forget: Option<Uuid>,
+    pending_forget: Option<uuid::Uuid>,
     scan_state: ScanState,
     discovered: Vec<PeripheralInfo>,
     scan_rx: Option<mpsc::Receiver<Vec<PeripheralInfo>>>,
@@ -345,16 +345,21 @@ impl WristKeyApp {
                         return Err("Timeout waiting for watch response (10s). Make sure you shook your wrist or pressed the button on the watch.".into());
                     }
                 };
-                if response_data.len() < 66 {
+
+                // Expected format: [signature 64][user_present 1][public_key 65] = 130 bytes
+                if response_data.len() != 130 {
                     let _ = adapter.disconnect(&conn).await;
-                    return Err(format!("Response too short: {} bytes (expected >= 66)", response_data.len()));
+                    return Err(format!(
+                        "Invalid response length: {} bytes (expected exactly 130: 64 sig + 1 user_present + 65 pubkey).                          Make sure the WristKey app on the watch is up to date.",
+                        response_data.len()
+                    ));
                 }
 
-                let sig_len = response_data.len() - 66;
-                let signature = response_data[..sig_len].to_vec();
-                let user_present = response_data[sig_len] != 0;
-                let public_key = response_data[sig_len + 1..].to_vec();
-                gui_log(&format!("sig_len={} pub_key_len={}", signature.len(), public_key.len()));
+                let signature = response_data[..64].to_vec();
+                let user_present = response_data[64] != 0;
+                let public_key = response_data[65..].to_vec();
+
+                gui_log(&format!("sig_len={} user_present={} pub_key_len={}", signature.len(), user_present, public_key.len()));
                 let response = Response { signature, user_present, timestamp: Utc::now() };
 
                 gui_log("Calling complete_pairing...");
@@ -634,8 +639,7 @@ impl WristKeyApp {
             ui.text_edit_singleline(&mut self.settings_form.challenge_timeout_sec);
         });
         ui.label(egui::RichText::new(
-            "How long a challenge/response is considered valid. Lower = stricter \
-            replay protection, but less tolerant of slow BLE round-trips."
+            "How long a challenge/response is considered valid. Lower = stricter             replay protection, but less tolerant of slow BLE round-trips."
         ).small().weak());
 
         ui.add_space(12.0);
@@ -649,8 +653,7 @@ impl WristKeyApp {
             ui.text_edit_singleline(&mut self.settings_form.rssi_threshold_offset_dbm);
         });
         ui.label(egui::RichText::new(
-            "How far the signal must drop below the baseline recorded at pairing \
-            time before the PC locks — higher = watch needs to move further away."
+            "How far the signal must drop below the baseline recorded at pairing             time before the PC locks — higher = watch needs to move further away."
         ).small().weak());
 
         ui.add_space(16.0);

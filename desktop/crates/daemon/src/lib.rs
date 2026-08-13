@@ -121,7 +121,17 @@ impl Daemon {
         while Instant::now() < deadline {
             match timeout(Duration::from_millis(500), rx.recv()).await {
                 Ok(Some(info)) => {
-                    if let Some(device) = devices.iter().find(|d| d.address == info.id) {
+                    // Try to match by address first, then by name for Samsung watches
+                    let matched = devices.iter().find(|d| d.address == info.id)
+                        .or_else(|| {
+                            if let Some(ref name) = info.name {
+                                devices.iter().find(|d| d.name.eq_ignore_ascii_case(name))
+                            } else {
+                                None
+                            }
+                        });
+
+                    if let Some(device) = matched {
                         if let Some(rssi) = info.rssi {
                             let threshold = device.baseline_rssi - config.rssi_threshold_offset_dbm;
                             if rssi > threshold {

@@ -13,8 +13,11 @@ use futures::StreamExt;
 use btleplug::api::{Central, CentralEvent, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Peripheral};
 use tracing::info;
+use uuid::Uuid;
 
 const WRISTKEY_MANUF_ID: u16 = 0xFFFF;
+const SAMSUNG_MANUF_ID: u16 = 0x0075;
+const SAMSUNG_SERVICE_UUID: &str = "0000fd50-0000-1000-8000-00805f9b34fb";
 const PRESENCE_TIMEOUT: Duration = Duration::from_secs(12);
 const RSSI_LOCK_THRESHOLD: i16 = -78;
 
@@ -43,31 +46,62 @@ impl ConnectionManager {
 
     pub async fn on_advertisement(&self, peripheral: &Peripheral) {
         if let Ok(Some(props)) = peripheral.properties().await {
-            if let Some(manuf) = props.manufacturer_data.get(&WRISTKEY_MANUF_ID) {
-                if manuf.len() >= 8 {
-                    let pin = String::from_utf8_lossy(&manuf[..4]).to_string();
-                    let device_id = manuf[4..8].to_vec();
-                    let device_id_hex = hex::encode(&device_id);
-                    let addr = peripheral.address().to_string();
-                    let rssi = props.rssi.unwrap_or(-100);
+            let addr = peripheral.address().to_string();
+            let rssi = props.rssi.unwrap_or(-100);
+            let svc_str: Vec<String> = props.services.iter().map(|u| u.to_string()).collect();
 
-                    let mut p = self.presence.lock().await;
-                    p.insert(addr.clone(), WristKeyPresence {
-                        last_seen: Instant::now(),
-                        last_rssi: rssi,
-                        device_id: device_id.clone(),
-                        pin: pin.clone(),
-                    });
+            // Check if this is a WristKey device or Samsung Galaxy Watch
+            let has_wristkey_manuf = props.manufacturer_data.contains_key(&WRISTKEY_MANUF_ID);
+            let is_samsung = props.manufacturer_data.contains_key(&SAMSUNG_MANUF_ID);
+            let has_samsung_svc = props.services.iter().any(|u| {
+                u.to_string().eq_ignore_ascii_case(SAMSUNG_SERVICE_UUID)
+            });
+            let is_watch_name = props.local_name.as_ref().map(|n| {
+                let lower = n.to_lowercase();
+                lower.contains("watch") || lower.contains("galaxy") || lower.contains("wristkey")
+                    || lower.contains("gear") || lower.contains("active") || lower.contains("sm-r")
+            }).unwrap_or(false);
 
-                    let mut m = self.device_id_to_addr.lock().await;
-                    m.insert(device_id_hex, addr.clone());
+            let is_wristkey = has_wristkey_manuf || is_samsung || has_samsung_svc || is_watch_name;
 
-                    let mut per = self.peripherals.lock().await;
-                    per.insert(addr.clone(), peripheral.clone());
-
-                    info!(%addr, %rssi, %pin, "Presence updated (advertisement)");
-                }
+            if !is_wristkey {
+                return;
             }
+
+            let (pin, device_id) = if has_wristkey_manuf {
+                let manuf = props.manufacturer_data.get(&WRISTKEY_MANUF_ID).unwrap();
+                let pin = String::from_utf8_lossy(&manuf[..4.min(manuf.len())]).to_string();
+                let device_id = if manuf.len() >= 8 { manuf[4..8].to_vec() } else { vec![] };
+                (pin, device_id)
+            } else {
+                // Samsung fallback: use last 4 chars of MAC as pseudo-device-id
+                let pseudo_id = if addr.len() >= 4 {
+                    addr[addr.len()-4..].bytes().collect()
+                } else {
+                    addr.bytes().collect()
+                };
+                ("----".into(), pseudo_id)
+            };
+
+            let device_id_hex = hex::encode(&device_id);
+
+            let mut p = self.presence.lock().await;
+            p.insert(addr.clone(), WristKeyPresence {
+                last_seen: Instant::now(),
+                last_rssi: rssi,
+                device_id: device_id.clone(),
+                pin: pin.clone(),
+            });
+
+            let mut m = self.device_id_to_addr.lock().await;
+            if !device_id_hex.is_empty() {
+                m.insert(device_id_hex, addr.clone());
+            }
+
+            let mut per = self.peripherals.lock().await;
+            per.insert(addr.clone(), peripheral.clone());
+
+            info!(%addr, %rssi, %pin, %is_samsung, %has_samsung_svc, "Presence updated");
         }
     }
 

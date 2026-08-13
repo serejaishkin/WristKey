@@ -18,7 +18,12 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
+import com.wristkey.WristKeySettings
+import com.wristkey.security.SecurityManager
+import com.wristkey.sensors.MotionDetector
 import java.util.UUID
 
 class WristKeyBleService : Service() {
@@ -32,6 +37,10 @@ class WristKeyBleService : Service() {
     private var connectedDevice: BluetoothDevice? = null
     private var pairedDeviceAddress: String? = null
     private var lastRssi: Int = 0
+
+    private lateinit var securityManager: SecurityManager
+    private lateinit var motionDetector: MotionDetector
+    private lateinit var settings: WristKeySettings
 
     // WristKey custom UUIDs (universal for any Wear OS watch)
     private val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
@@ -49,8 +58,12 @@ class WristKeyBleService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "onCreate called")
+        securityManager = SecurityManager()
+        motionDetector = MotionDetector(this)
+        settings = WristKeySettings(this)
         startForegroundService()
         startGattServer()
+        motionDetector.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -199,16 +212,59 @@ class WristKeyBleService : Service() {
 
     private fun processChallenge(challenge: ByteArray) {
         Log.i(TAG, "processChallenge: ${challenge.size} bytes")
-        // TODO: generate real response with signature + user_present + public_key
-        val fakeResponse = ByteArray(66) { 0x01 }
-        sendResponse(fakeResponse)
+
+        try {
+            // Determine user presence based on settings and motion
+            val userPresent = when (settings.confirmMode) {
+                WristKeySettings.CONFIRM_GESTURE -> motionDetector.isMoving
+                WristKeySettings.CONFIRM_BUTTON -> false // Button press handled separately if needed
+                else -> motionDetector.isMoving // CONFIRM_EITHER — motion is enough for now
+            }
+
+            if (!userPresent && settings.confirmMode != WristKeySettings.CONFIRM_BUTTON) {
+                Log.w(TAG, "Challenge rejected: no motion detected (anti-relay)")
+                // Still send response but with user_present = 0 so PC rejects it
+            }
+
+            // Sign the challenge
+            val signature = securityManager.sign(challenge)
+            Log.i(TAG, "Signature generated: ${signature.size} bytes")
+
+            // Get public key (65 bytes uncompressed)
+            val publicKey = securityManager.getPublicKey()
+            Log.i(TAG, "Public key: ${publicKey.size} bytes")
+
+            // Build response: [signature 64][user_present 1][public_key 65] = 130 bytes
+            val response = ByteArray(130)
+            System.arraycopy(signature, 0, response, 0, 64)
+            response[64] = if (userPresent) 1 else 0
+            System.arraycopy(publicKey, 0, response, 65, 65)
+
+            Log.i(TAG, "Response built: ${response.size} bytes (sig=${signature.size}, user_present=$userPresent, pubkey=${publicKey.size})")
+            sendResponse(response)
+
+            if (settings.vibrateEnabled) {
+                vibrate()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process challenge", e)
+        }
     }
 
     private fun processConfig(data: ByteArray) {
         when (data.firstOrNull()?.toInt()) {
             0x01 -> Log.i(TAG, "Calibration start requested")
-            0x02 -> Log.i(TAG, "Calibration result received")
-            0x03 -> Log.i(TAG, "Calibration cancelled")
+            0x02 -> {
+                if (data.size >= 2) {
+                    val threshold = data[1].toByte().toInt()
+                    Log.i(TAG, "Calibration result received: threshold=$threshold dBm")
+                    settings.saveCalibration(threshold)
+                }
+            }
+            0x03 -> {
+                Log.i(TAG, "Calibration cancelled")
+                settings.clearCalibration()
+            }
         }
     }
 
@@ -219,6 +275,18 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "notifyCharacteristicChanged: $notified")
     }
 
+    private fun vibrate() {
+        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        vibrator?.let {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                it.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                it.vibrate(100)
+            }
+        }
+    }
+
     fun isPaired(): Boolean = pairedDeviceAddress != null
     fun getDeviceName(): String = connectedDevice?.name ?: "Not connected"
     fun getLastRssi(): String = if (lastRssi != 0) "$lastRssi" else "--"
@@ -227,6 +295,7 @@ class WristKeyBleService : Service() {
 
     fun forgetDevice() {
         pairedDeviceAddress = null
+        settings.clearPairedDevices()
         Log.i(TAG, "Device forgotten")
     }
 
@@ -237,6 +306,7 @@ class WristKeyBleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "onDestroy called")
+        motionDetector.stop()
         bluetoothGattServer?.close()
     }
 
