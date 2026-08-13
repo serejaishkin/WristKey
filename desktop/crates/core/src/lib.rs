@@ -339,14 +339,6 @@ pub trait PlatformSecurity: Send + Sync {
     async fn register_as_authenticator(&self) -> Result<()>;
 }
 
-/// Platform-specific password encryption (DPAPI on Windows, keyring on Linux, etc.)
-pub trait PasswordVault: Send + Sync {
-    /// Encrypt a plaintext password into opaque bytes
-    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>>;
-    /// Decrypt opaque bytes back into plaintext password
-    async fn decrypt_password(&self, encrypted: &[u8]) -> Result<String>;
-}
-
 pub struct MockPlatformSecurity {
     locked: Arc<RwLock<bool>>,
 }
