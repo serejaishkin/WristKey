@@ -1,11 +1,15 @@
 package com.wristkey.ble
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
 import android.content.Intent
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.ParcelUuid
 import android.util.Log
@@ -16,6 +20,8 @@ import java.util.UUID
 class WristKeyBleService : Service() {
     companion object {
         const val TAG = "WristKeyBleService"
+        const val NOTIF_CHANNEL_ID = "wristkey_ble"
+        const val NOTIF_ID = 1
         val SERVICE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
@@ -53,6 +59,7 @@ class WristKeyBleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "onCreate")
         settings = WristKeySettings(this)
         isPairedState = settings?.pairedDevices?.isNotEmpty() == true
 
@@ -60,18 +67,42 @@ class WristKeyBleService : Service() {
         bluetoothAdapter = bluetoothManager?.adapter
         advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
 
-        // Generate random 4-digit PIN and 4-byte device ID for this session
         currentPin = (1000..9999).random().toString()
         advertiseDeviceId = ByteArray(4) { (0..255).random().toByte() }
 
-        Log.i(TAG, "Service created. PIN=$currentPin deviceId=${hex(advertiseDeviceId)}")
+        Log.i(TAG, "Service created. PIN=$currentPin")
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand")
+        createNotificationChannel()
+        val notification = Notification.Builder(this, NOTIF_CHANNEL_ID)
+            .setContentTitle("WristKey")
+            .setContentText("BLE service running")
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .build()
+        startForeground(NOTIF_ID, notification)
+        return START_STICKY
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "onDestroy")
         super.onDestroy()
         stopAdvertising()
         serviceScope.cancel()
         bluetoothGatt?.close()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIF_CHANNEL_ID,
+                "WristKey BLE",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
     }
 
     // --- Advertising API ---
@@ -81,53 +112,59 @@ class WristKeyBleService : Service() {
     fun isAdvertising(): Boolean = isAdvertising
 
     fun startAdvertising() {
-        val adv = advertiser ?: run {
-            Log.e(TAG, "BluetoothLeAdvertiser not available (BLE off or unsupported)")
-            return
-        }
-
-        stopAdvertising()
-
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(true)
-            .build()
-
-        // Manufacturer data: 4 bytes PIN (ASCII) + 4 bytes device_id
-        // PC scans for manufacturer_data[0xFFFF] = PIN + device_id
-        val pinBytes = currentPin.toByteArray(Charsets.UTF_8)
-        val manufacturerData = pinBytes + advertiseDeviceId
-
-        val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
-            .addManufacturerData(0xFFFF, manufacturerData)
-            .addServiceUuid(ParcelUuid(SERVICE_UUID))
-            .build()
-
-        advertiseCallback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                isAdvertising = true
-                Log.i(TAG, "Advertising started. PIN=$currentPin")
+        try {
+            val adv = advertiser ?: run {
+                Log.e(TAG, "BluetoothLeAdvertiser not available")
+                return
             }
 
-            override fun onStartFailure(errorCode: Int) {
-                isAdvertising = false
-                Log.e(TAG, "Advertising failed: errorCode=$errorCode")
-            }
-        }
+            stopAdvertising()
 
-        adv.startAdvertising(settings, data, advertiseCallback)
+            val settings = AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(true)
+                .build()
+
+            val pinBytes = currentPin.toByteArray(Charsets.UTF_8)
+            val manufacturerData = pinBytes + advertiseDeviceId
+
+            val data = AdvertiseData.Builder()
+                .setIncludeDeviceName(true)
+                .addManufacturerData(0xFFFF, manufacturerData)
+                .addServiceUuid(ParcelUuid(SERVICE_UUID))
+                .build()
+
+            advertiseCallback = object : AdvertiseCallback() {
+                override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                    isAdvertising = true
+                    Log.i(TAG, "Advertising started. PIN=$currentPin")
+                }
+
+                override fun onStartFailure(errorCode: Int) {
+                    isAdvertising = false
+                    Log.e(TAG, "Advertising failed: errorCode=$errorCode")
+                }
+            }
+
+            adv.startAdvertising(settings, data, advertiseCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "startAdvertising exception: ${e.message}", e)
+        }
     }
 
     fun stopAdvertising() {
-        advertiser?.stopAdvertising(advertiseCallback)
+        try {
+            advertiser?.stopAdvertising(advertiseCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "stopAdvertising exception: ${e.message}")
+        }
         advertiseCallback = null
         isAdvertising = false
         Log.i(TAG, "Advertising stopped")
     }
 
-    // --- Existing API (kept from repo) ---
+    // --- Existing API ---
 
     fun isPaired(): Boolean = isPairedState
 
@@ -137,7 +174,6 @@ class WristKeyBleService : Service() {
 
     fun sendUnlockChallenge() {
         Log.i(TAG, "sendUnlockChallenge called")
-        // TODO: implement BLE write to PC for unlock
     }
 
     fun forgetDevice() {
