@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{State, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, Manager, CustomMenuItem, RunEvent};
+use tauri::{State, Manager, RunEvent};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -317,7 +319,7 @@ fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    info!("WristKey Tauri starting");
+    info!("WristKey Tauri v2 starting");
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
 
@@ -327,7 +329,6 @@ fn main() {
             .unwrap_or_else(|| std::path::PathBuf::from("data"));
         let _ = std::fs::create_dir_all(&data_dir);
 
-        // Use SQLite — supports multi-process access (WAL mode)
         let storage: Arc<dyn Storage> = match wristkey_core::SqliteStorage::open_default() {
             Ok(s) => Arc::new(s),
             Err(e) => {
@@ -400,56 +401,61 @@ fn main() {
         });
     });
 
-    // System tray
-    let show = CustomMenuItem::new("show", "Show");
-    let hide = CustomMenuItem::new("hide", "Hide");
-    let lock_now = CustomMenuItem::new("lock_now", "🔒 Lock Now");
-    let quit = CustomMenuItem::new("quit", "Quit");
-
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(show)
-        .add_item(hide)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(lock_now)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
-
-    let tray = SystemTray::new().with_menu(tray_menu);
-
     tauri::Builder::default()
-        .system_tray(tray)
-        .on_system_tray_event(|app, event| match event {
-            SystemTrayEvent::LeftClick { .. } | SystemTrayEvent::DoubleClick { .. } => {
-                if let Some(window) = app.get_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "show" => {
-                    if let Some(window) = app.get_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            let hide_i = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
+            let lock_i = MenuItem::with_id(app, "lock_now", "🔒 Lock Now", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+            let menu = Menu::with_items(app, &[
+                &show_i,
+                &hide_i,
+                &PredefinedMenuItem::separator(app)?,
+                &lock_i,
+                &PredefinedMenuItem::separator(app)?,
+                &quit_i,
+            ])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
-                }
-                "hide" => {
-                    if let Some(window) = app.get_window("main") {
-                        let _ = window.hide();
+                    "hide" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
                     }
-                }
-                "lock_now" => {
-                    let platform = create_platform_adapter();
-                    let _ = std::thread::spawn(move || {
-                        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-                        rt.block_on(async { let _ = platform.lock_screen().await; });
-                    }).join();
-                }
-                "quit" => {
-                    std::process::exit(0);
-                }
-                _ => {}
-            },
-            _ => {}
+                    "lock_now" => {
+                        let platform = create_platform_adapter();
+                        let _ = std::thread::spawn(move || {
+                            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                            rt.block_on(async { let _ = platform.lock_screen().await; });
+                        }).join();
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { .. } = event {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
         })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
@@ -458,9 +464,9 @@ fn main() {
             get_config, set_config, lock_screen, unlock_screen,
             toggle_daemon
         ])
-        .on_window_event(|event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-                event.window().hide().unwrap();
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
                 api.prevent_close();
             }
         })
