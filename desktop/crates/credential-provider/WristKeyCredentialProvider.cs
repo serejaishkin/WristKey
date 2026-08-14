@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -6,8 +7,6 @@ using System.Text;
 
 namespace WristKeyCredentialProvider
 {
-    // ==================== COM Interop Interfaces ====================
-
     [ComImport, Guid("D27C3481-5A1C-4B2E-9BDA-5D9C1D5E0F1A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     public interface ICredentialProvider
     {
@@ -59,8 +58,6 @@ namespace WristKeyCredentialProvider
         [PreserveSig] int SetFieldBitmap(IntPtr pcpc, uint dwFieldId, IntPtr hbmp);
     }
 
-    // ==================== Enums and Structs ====================
-
     public enum CREDENTIAL_PROVIDER_USAGE_SCENARIO { CPUS_LOGON = 1, CPUS_UNLOCK_WORKSTATION = 2 }
     public enum CREDENTIAL_PROVIDER_FIELD_STATE { CPFS_DISPLAY_IN_SELECTED_TILE = 1 }
     public enum CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE { CPFIS_NONE = 0 }
@@ -84,8 +81,6 @@ namespace WristKeyCredentialProvider
         public const int E_NOTIMPL = unchecked((int)0x80004001);
         public const int E_FAIL = unchecked((int)0x80004005);
     }
-
-    // ==================== Native Methods (LSA + Kerberos) ====================
 
     public static class NativeMethods
     {
@@ -141,8 +136,6 @@ namespace WristKeyCredentialProvider
         }
     }
 
-    // ==================== Credential Provider ====================
-
     [ComVisible(true)]
     [Guid("A1B2C3D4-E5F6-7890-ABCD-EF1234567895")]
     [ClassInterface(ClassInterfaceType.None)]
@@ -161,7 +154,10 @@ namespace WristKeyCredentialProvider
             return HRESULT.E_NOTIMPL;
         }
 
-        public int SetSerialization(ref CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs) => HRESULT.S_OK;
+        public int SetSerialization(ref CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs)
+        {
+            return HRESULT.S_OK;
+        }
 
         public int Advise(ICredentialProviderEvents pcpe, ulong upAdviseContext)
         {
@@ -169,7 +165,11 @@ namespace WristKeyCredentialProvider
             return HRESULT.S_OK;
         }
 
-        public int UnAdvise() { _events = null; return HRESULT.S_OK; }
+        public int UnAdvise()
+        {
+            _events = null;
+            return HRESULT.S_OK;
+        }
 
         public int GetFieldDescriptorCount(out uint pdwCount)
         {
@@ -202,8 +202,15 @@ namespace WristKeyCredentialProvider
     [ClassInterface(ClassInterfaceType.None)]
     public class WristKeyCredential : ICredentialProviderCredential
     {
-        public int Advise(ICredentialProviderCredentialEvents pcpce) => HRESULT.S_OK;
-        public int UnAdvise() => HRESULT.S_OK;
+        public int Advise(ICredentialProviderCredentialEvents pcpce)
+        {
+            return HRESULT.S_OK;
+        }
+
+        public int UnAdvise()
+        {
+            return HRESULT.S_OK;
+        }
 
         public int SetSelected(out int pbAutoLogon)
         {
@@ -211,7 +218,10 @@ namespace WristKeyCredentialProvider
             return HRESULT.S_OK;
         }
 
-        public int SetDeselected() => HRESULT.S_OK;
+        public int SetDeselected()
+        {
+            return HRESULT.S_OK;
+        }
 
         public int GetFieldState(uint dwFieldId, out CREDENTIAL_PROVIDER_FIELD_STATE pcpfs, out CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE pcpfis)
         {
@@ -222,7 +232,10 @@ namespace WristKeyCredentialProvider
 
         public int GetStringValue(uint dwFieldId, out string ppsz)
         {
-            ppsz = dwFieldId == 0 ? "WristKey Unlock" : "Bring your watch close to unlock...";
+            if (dwFieldId == 0)
+                ppsz = "WristKey Unlock";
+            else
+                ppsz = "Bring your watch close to unlock...";
             return HRESULT.S_OK;
         }
 
@@ -258,7 +271,10 @@ namespace WristKeyCredentialProvider
             return HRESULT.E_NOTIMPL;
         }
 
-        public int SetStringValue(uint dwFieldId, string psz) => HRESULT.S_OK;
+        public int SetStringValue(uint dwFieldId, string psz)
+        {
+            return HRESULT.S_OK;
+        }
 
         public int GetSerialization(out CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE pcpgsr,
             out CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs, out string ppszOptionalStatusText,
@@ -278,7 +294,7 @@ namespace WristKeyCredentialProvider
                 }
 
                 uint authPackage = GetAuthenticationPackage();
-                byte[] serialized = SerializeKerbInteractiveUnlockLogon("", password);
+                byte[] serialized = SerializeKerbInteractiveUnlockLogon("", password, "");
 
                 IntPtr pSerialized = Marshal.AllocCoTaskMem(serialized.Length);
                 Marshal.Copy(serialized, 0, pSerialized, serialized.Length);
@@ -295,7 +311,7 @@ namespace WristKeyCredentialProvider
             }
             catch (Exception ex)
             {
-                ppszOptionalStatusText = $"WristKey error: {ex.Message}";
+                ppszOptionalStatusText = "WristKey error: " + ex.Message;
                 pcpsiOptionalStatusIcon = (int)CREDENTIAL_PROVIDER_STATUS_ICON.CPSI_ERROR;
                 pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_NO_CREDENTIAL_NOT_FINISHED;
                 return HRESULT.E_FAIL;
@@ -313,11 +329,11 @@ namespace WristKeyCredentialProvider
         {
             try
             {
-                using (var client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
                     PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(2000);
-                    using (var reader = new StreamReader(client, Encoding.UTF8))
+                    using (StreamReader reader = new StreamReader(client, Encoding.UTF8))
                     {
                         return reader.ReadLine();
                     }
@@ -332,7 +348,7 @@ namespace WristKeyCredentialProvider
             if (NativeMethods.LsaConnectUntrusted(out lsaHandle) != NativeMethods.STATUS_SUCCESS)
                 return 2;
 
-            var packageName = new NativeMethods.LSA_STRING
+            NativeMethods.LSA_STRING packageName = new NativeMethods.LSA_STRING
             {
                 Length = (ushort)"Kerberos".Length,
                 MaximumLength = (ushort)("Kerberos".Length + 1),
@@ -348,9 +364,9 @@ namespace WristKeyCredentialProvider
             return result == NativeMethods.STATUS_SUCCESS ? authPackage : 2;
         }
 
-        private byte[] SerializeKerbInteractiveUnlockLogon(string username, string password, string domain = "")
+        private byte[] SerializeKerbInteractiveUnlockLogon(string username, string password, string domain)
         {
-            var logon = new NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON
+            NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON logon = new NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON
             {
                 Logon = new NativeMethods.KERB_INTERACTIVE_LOGON
                 {
