@@ -135,7 +135,7 @@ class WristKeyBleService : Service() {
 
             challengeCharacteristic = BluetoothGattCharacteristic(
                 CHALLENGE_CHAR_UUID,
-                BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+                BluetoothGattCharacteristic.PROPERTY_WRITE,
                 BluetoothGattCharacteristic.PERMISSION_WRITE
             )
 
@@ -303,25 +303,25 @@ class WristKeyBleService : Service() {
                     return
                 }
 
+                // Always send write response first (required for PROPERTY_WRITE)
+                if (responseNeeded) {
+                    bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    Log.i(TAG, "Challenge write acknowledged to addr=${device?.address}")
+                }
+
                 // Check if this is a pairing request (no paired device yet)
                 if (pairedDeviceAddress == null) {
                     Log.i(TAG, "Pairing request from addr=${device?.address} - showing dialog")
                     pendingChallenge = challenge
                     pairingDeviceAddress = device?.address
                     pairingRequested.set(true)
-                    if (responseNeeded) {
-                        bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                    }
                     // Vibrate to notify user
                     if (settings.vibrateEnabled) {
                         vibrate()
                     }
                 } else {
                     // Already paired - process normally
-                    value?.let { processChallenge(it) }
-                    if (responseNeeded) {
-                        bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                    }
+                    processChallenge(challenge)
                 }
             } else if (characteristic?.uuid == CONFIG_CHAR_UUID) {
                 value?.let { processConfig(it) }

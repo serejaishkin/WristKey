@@ -163,6 +163,16 @@ async fn get_paired_devices(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Ve
     }).collect())
 }
 
+/// Parse device_id from manufacturer data payload:
+/// [0..3] = "WRST", [4..7] = device_id (4 bytes)
+fn parse_device_id_from_manufacturer_data(data: &[u8]) -> Option<String> {
+    if data.len() >= 8 && &data[..4] == b"WRST" {
+        Some(format!("WRST-{:02X}{:02X}{:02X}{:02X}", data[4], data[5], data[6], data[7]))
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 async fn scan_devices() -> Result<Vec<DiscoveredDeviceDto>, String> {
     info!("scan_devices called");
@@ -176,15 +186,19 @@ async fn scan_devices() -> Result<Vec<DiscoveredDeviceDto>, String> {
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(tokio::time::Duration::from_millis(500), rx.recv()).await {
             Ok(Some(info)) => {
+                // Use device_id from manufacturer data as unique ID (MAC changes due to BLE privacy)
+                let device_id = info.raw_manufacturer_data.as_ref()
+                    .and_then(|data| parse_device_id_from_manufacturer_data(data))
+                    .unwrap_or_else(|| info.id.clone());
                 let display_name = info.name
                     .filter(|n| !n.trim().is_empty())
-                    .unwrap_or_else(|| format!("Watch {}", &info.id));
-                debug!("scan_devices: found device id={} name={} rssi={:?}", info.id, display_name, info.rssi);
+                    .unwrap_or_else(|| format!("Watch {}", &device_id));
+                debug!("scan_devices: found device id={} name={} rssi={:?} mac={}", device_id, display_name, info.rssi, info.id);
                 found.push(DiscoveredDeviceDto {
-                    id: info.id.clone(),
+                    id: device_id,
                     name: display_name,
                     rssi: info.rssi.unwrap_or(-50),
-                    address: info.id.clone(),
+                    address: info.id.clone(), // MAC for connection
                 });
             }
             Ok(None) => { trace!("scan_devices: channel closed"); break; }
@@ -224,13 +238,17 @@ async fn pair_device(req: PairRequest, state: State<'_, Arc<Mutex<AppState>>>) -
     let mut write_ok = false;
     for attempt in 1..=3 {
         info!("pair_device: writing challenge attempt {}/3", attempt);
-        if adapter.write(&conn, challenge_char, &challenge.to_bytes()).await.is_ok() {
-            write_ok = true;
-            info!("pair_device: challenge written successfully");
-            break;
+        match adapter.write(&conn, challenge_char, &challenge.to_bytes()).await {
+            Ok(_) => {
+                write_ok = true;
+                info!("pair_device: challenge written successfully");
+                break;
+            }
+            Err(e) => {
+                warn!("pair_device: challenge write attempt {} failed: {}", attempt, e);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
         }
-        warn!("pair_device: challenge write attempt {} failed, retrying...", attempt);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     if !write_ok {
         let _ = adapter.disconnect(&conn).await;
@@ -240,8 +258,8 @@ async fn pair_device(req: PairRequest, state: State<'_, Arc<Mutex<AppState>>>) -
 
     info!("pair_device: subscribing to response notifications");
     let mut rx = adapter.notify(&conn, response_char).await.map_err(|e| { error!("adapter.notify failed: {}", e); e.to_string() })?;
-    info!("pair_device: waiting for watch response (timeout 10s)...");
-    let response_data = match tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await {
+    info!("pair_device: waiting for watch response (timeout 30s)...");
+    let response_data = match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
         Ok(Some(d)) => { info!("pair_device: received response, {} bytes", d.len()); d }
         Ok(None) => {
             let _ = adapter.disconnect(&conn).await;

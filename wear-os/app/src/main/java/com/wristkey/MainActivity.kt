@@ -27,21 +27,6 @@ import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
-    private var bleService: WristKeyBleService? = null
-    private var serviceBound by mutableStateOf(false)
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            val binder = service as WristKeyBleService.LocalBinder
-            bleService = binder.getService()
-            serviceBound = true
-            Log.i("MainActivity", "Service bound, GATT server running")
-        }
-        override fun onServiceDisconnected(name: ComponentName?) {
-            bleService = null
-            serviceBound = false
-        }
-    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -49,7 +34,6 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.entries.all { it.value }
         if (allGranted) {
             Log.i("MainActivity", "All BLE permissions granted")
-            startBleService()
         } else {
             Log.e("MainActivity", "Some BLE permissions denied: $permissions")
             Toast.makeText(this, "BLE permissions required", Toast.LENGTH_LONG).show()
@@ -77,31 +61,50 @@ class MainActivity : ComponentActivity() {
         }
 
         if (requiredPermissions.isNotEmpty()) {
-            Log.i("MainActivity", "Requesting permissions: $requiredPermissions")
             permissionLauncher.launch(requiredPermissions.toTypedArray())
-        } else {
-            startBleService()
         }
 
         setContent {
             MaterialTheme {
-                MainScreen(bleService)
+                WristKeyApp()
+            }
+        }
+    }
+}
+
+@Composable
+fun WristKeyApp() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var bleService by remember { mutableStateOf<WristKeyBleService?>(null) }
+    var serviceBound by remember { mutableStateOf(false) }
+
+    val serviceConnection = remember {
+        object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                val binder = service as WristKeyBleService.LocalBinder
+                bleService = binder.getService()
+                serviceBound = true
+                Log.i("MainActivity", "Service CONNECTED")
+            }
+            override fun onServiceDisconnected(name: ComponentName?) {
+                bleService = null
+                serviceBound = false
+                Log.i("MainActivity", "Service DISCONNECTED")
             }
         }
     }
 
-    private fun startBleService() {
-        bindService(
-            Intent(this, WristKeyBleService::class.java),
-            serviceConnection,
-            Context.BIND_AUTO_CREATE
-        )
+    DisposableEffect(Unit) {
+        val intent = Intent(context, WristKeyBleService::class.java)
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        onDispose {
+            if (serviceBound) {
+                context.unbindService(serviceConnection)
+            }
+        }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (serviceBound) unbindService(serviceConnection)
-    }
+    MainScreen(bleService)
 }
 
 @Composable
@@ -116,22 +119,34 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var isServerRunning by remember { mutableStateOf(false) }
     var currentPin by remember { mutableStateOf("----") }
 
-    var showPairingDialog by remember { mutableStateOf(false) }
+    var hasPairingRequest by remember { mutableStateOf(false) }
     var pairingAddress by remember { mutableStateOf("--") }
+    var showPairingDialog by remember { mutableStateOf(false) }
+
+    // Use rememberUpdatedState so the loop always sees the latest bleService
+    val currentService by rememberUpdatedState(bleService)
 
     LaunchedEffect(Unit) {
         while (true) {
-            delay(1000)
-            isPaired = bleService?.isPaired() ?: false
-            deviceName = bleService?.getDeviceName() ?: "Not connected"
-            deviceAddress = bleService?.getConnectedDeviceAddress() ?: "--"
-            isServerRunning = bleService?.isAdvertising() ?: false
-            currentPin = bleService?.getAdvertisePin() ?: "----"
+            delay(300)
+            val svc = currentService ?: continue
 
-            if (bleService?.pairingRequested?.get() == true && !showPairingDialog) {
-                pairingAddress = bleService.getPairingDeviceAddress()
+            isPaired = svc.isPaired()
+            deviceName = svc.getDeviceName()
+            deviceAddress = svc.getConnectedDeviceAddress()
+            isServerRunning = svc.isAdvertising()
+            currentPin = svc.getAdvertisePin()
+
+            val requested = svc.pairingRequested.get()
+            if (requested && !hasPairingRequest) {
+                hasPairingRequest = true
+                pairingAddress = svc.getPairingDeviceAddress()
                 showPairingDialog = true
-                Log.i("MainActivity", "Showing pairing dialog for addr=$pairingAddress")
+                Log.i("MainActivity", "PAIRING REQUEST from addr=$pairingAddress")
+            } else if (!requested && hasPairingRequest) {
+                hasPairingRequest = false
+                showPairingDialog = false
+                Log.i("MainActivity", "Pairing cleared")
             }
         }
     }
@@ -204,6 +219,42 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 )
             }
 
+            // PAIR BUTTON
+            if (hasPairingRequest) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            val ok = bleService?.confirmPairing() ?: false
+                            hasPairingRequest = false
+                            showPairingDialog = false
+                            if (ok) {
+                                Toast.makeText(context, "✅ Paired!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "❌ Pairing failed", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(0.9f)
+                    ) {
+                        Text("✅ Pair Request")
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Chip(
+                        onClick = {
+                            bleService?.rejectPairing()
+                            hasPairingRequest = false
+                            showPairingDialog = false
+                            Toast.makeText(context, "❌ Pairing rejected", Toast.LENGTH_SHORT).show()
+                        },
+                        label = { Text("❌ Reject") },
+                        modifier = Modifier.fillMaxWidth(0.9f)
+                    )
+                }
+            }
+
             item {
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
@@ -238,7 +289,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
         }
     }
 
-    if (showPairingDialog) {
+    if (showPairingDialog && hasPairingRequest) {
         Dialog(onDismissRequest = { }) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -255,6 +306,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 Row {
                     Button(onClick = {
                         showPairingDialog = false
+                        hasPairingRequest = false
                         bleService?.rejectPairing()
                         Toast.makeText(context, "❌ Pairing rejected", Toast.LENGTH_SHORT).show()
                     }) {
@@ -263,6 +315,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(onClick = {
                         showPairingDialog = false
+                        hasPairingRequest = false
                         val ok = bleService?.confirmPairing() ?: false
                         if (ok) {
                             Toast.makeText(context, "✅ Paired!", Toast.LENGTH_SHORT).show()
