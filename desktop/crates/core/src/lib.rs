@@ -13,10 +13,13 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
+
 pub mod sqlite_storage;
 pub use sqlite_storage::SqliteStorage;
+
 pub mod rssi_filter;
 pub use rssi_filter::{RssiSmoother, KalmanFilter, EmaFilter, HysteresisGate};
+
 #[derive(Error, Debug)]
 pub enum WristKeyError {
     #[error("crypto operation failed: {0}")]
@@ -145,6 +148,7 @@ impl Storage for MemoryStorage {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct PairedDevice {
     pub id: Uuid,
     pub name: String,
@@ -495,5 +499,4 @@ mod tests {
         assert!(manager.verify_unlock(&good).await.is_ok());
         assert!(manager.state().await.is_authenticated());
     }
-
-    
+}

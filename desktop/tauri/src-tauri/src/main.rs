@@ -75,7 +75,6 @@ struct CalibrateResult {
 
 // --- Commands ---
 
-
 #[tauri::command]
 async fn set_macos_password(password: String) -> Result<(), String> {
     wristkey_platform_macos::MacOSSecurity::save_password_to_keychain(&password)
@@ -92,6 +91,7 @@ async fn delete_macos_password() -> Result<(), String> {
 async fn check_macos_accessibility() -> Result<bool, String> {
     Ok(wristkey_platform_macos::MacOSSecurity::check_accessibility_permission())
 }
+
 #[tauri::command]
 async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto, String> {
     let s = state.lock().await;
@@ -160,7 +160,6 @@ async fn pair_device(req: PairRequest, state: State<'_, Arc<Mutex<AppState>>>) -
         raw_manufacturer_data: None,
     };
     let conn = adapter.connect(&info).await.map_err(|e| e.to_string())?;
-    let challenge = s.session.begin_pairing().await.map_err(|e| e.to_string())?;
     let challenge_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap();
     let response_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap();
 
@@ -252,18 +251,18 @@ async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>)
         return Err("No RSSI samples collected".into());
     }
 
-    let avg = samples.iter().sum::<i16>() / samples.len() as i16;
-    let threshold = avg.saturating_add(5).min(-20).max(-90);
+    // Use median instead of average for robustness
+    samples.sort();
+    let median = samples[samples.len() / 2];
+    let threshold = median.saturating_add(5).min(-20).max(-90);
     let rssi_byte = threshold as i8;
     adapter.write(&conn, config_char, &[0x02, rssi_byte as u8]).await.map_err(|e| e.to_string())?;
-    info!("Calibration complete: avg={} dBm, threshold={} dBm", avg, threshold);
+    info!("Calibration complete: median={} dBm, threshold={} dBm", median, threshold);
 
-    let mut updated = device;
-    updated.baseline_rssi = threshold;
-    s.storage.save_device(&updated).await.map_err(|e| e.to_string())?;
+    s.session.update_baseline_rssi(device_uuid, threshold).await.map_err(|e| e.to_string())?;
 
     let _ = adapter.disconnect(&conn).await;
-    Ok(CalibrateResult { avg, threshold, samples: samples.len() as u32 })
+    Ok(CalibrateResult { avg: median, threshold, samples: samples.len() as u32 })
 }
 
 #[tauri::command]
@@ -311,7 +310,7 @@ async fn toggle_daemon(enabled: bool, state: State<'_, Arc<Mutex<AppState>>>) ->
 
 // --- Platform adapter ---
 
-fn create_platform_adapter(None) -> Arc<dyn PlatformSecurity> {
+fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
     #[cfg(windows)]
     { Arc::new(WindowsSecurity::new()) }
     #[cfg(target_os = "linux")]
@@ -345,7 +344,6 @@ fn main() {
         .init();
 
     info!("WristKey started — logs at {:?}", log_path);
-
     info!("WristKey Tauri v2 starting");
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -366,7 +364,7 @@ fn main() {
 
         let crypto = Arc::new(wristkey_core::EcdsaP256Crypto);
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-        let platform = create_platform_adapter(None);
+        let platform = create_platform_adapter();
 
         if let Err(e) = platform.register_as_authenticator().await {
             warn!("Failed to register as authenticator: {}", e);
@@ -467,7 +465,7 @@ fn main() {
                         }
                     }
                     "lock_now" => {
-                        let platform = create_platform_adapter(None);
+                        let platform = create_platform_adapter();
                         let _ = std::thread::spawn(move || {
                             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
                             rt.block_on(async { let _ = platform.lock_screen().await; });
@@ -495,7 +493,8 @@ fn main() {
             get_status, get_paired_devices, scan_devices,
             pair_device, forget_device, calibrate_proximity,
             get_config, set_config, lock_screen, unlock_screen,
-            toggle_daemon
+            toggle_daemon, set_macos_password, delete_macos_password,
+            check_macos_accessibility
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
