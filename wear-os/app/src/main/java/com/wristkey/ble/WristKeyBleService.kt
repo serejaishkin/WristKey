@@ -33,6 +33,7 @@ import com.wristkey.WristKeySettings
 import com.wristkey.security.SecurityManager
 import com.wristkey.sensors.MotionDetector
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Suppress("DEPRECATION")
 class WristKeyBleService : Service() {
@@ -48,12 +49,17 @@ class WristKeyBleService : Service() {
     private var pairedDeviceAddress: String? = null
     private var lastRssi: Int = 0
 
+    // FIX 1: pending user presence for CONFIRM_BUTTON mode
+    private val pendingUserPresent = AtomicBoolean(false)
+    private val userPresenceTimeoutHandler = Handler(Looper.getMainLooper())
+    private var userPresenceRunnable: Runnable? = null
+
     private lateinit var securityManager: SecurityManager
     private lateinit var motionDetector: MotionDetector
     private lateinit var settings: WristKeySettings
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // WristKey custom UUIDs (universal for any Wear OS watch)
+    // Universal WristKey UUIDs — same on all watches (Samsung, Pixel, Fossil, etc.)
     private val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     private val CHALLENGE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
     private val RESPONSE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
@@ -123,10 +129,11 @@ class WristKeyBleService : Service() {
                 BluetoothGattCharacteristic.PERMISSION_WRITE
             )
 
+            // FIX 4: PERMISSION_READ for notify characteristic
             responseCharacteristic = BluetoothGattCharacteristic(
                 RESPONSE_CHAR_UUID,
                 BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-                BluetoothGattCharacteristic.PERMISSION_WRITE
+                BluetoothGattCharacteristic.PERMISSION_READ
             ).apply {
                 addDescriptor(BluetoothGattDescriptor(CCCD_UUID, BluetoothGattDescriptor.PERMISSION_WRITE))
             }
@@ -143,13 +150,13 @@ class WristKeyBleService : Service() {
 
             bluetoothGattServer = bluetoothManager.openGattServer(this, gattServerCallback)
             if (bluetoothGattServer == null) {
-                Log.e(TAG, "openGattServer returned null — GATT server not created")
+                Log.e(TAG, "openGattServer returned null - GATT server not created")
                 return
             }
             val added = bluetoothGattServer?.addService(service)
             Log.i(TAG, "addService returned: $added (service=$SERVICE_UUID)")
         } catch (e: SecurityException) {
-            Log.e(TAG, "SecurityException in startGattServer — missing BLUETOOTH_CONNECT permission?", e)
+            Log.e(TAG, "SecurityException in startGattServer - missing BLUETOOTH_CONNECT permission?", e)
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error in startGattServer", e)
         }
@@ -163,11 +170,11 @@ class WristKeyBleService : Service() {
         }
         bluetoothLeAdvertiser = adapter.bluetoothLeAdvertiser
         if (bluetoothLeAdvertiser == null) {
-            Log.e(TAG, "BluetoothLeAdvertiser is null — advertising not supported")
+            Log.e(TAG, "BluetoothLeAdvertiser is null - advertising not supported")
             return
         }
 
-        val settings = AdvertiseSettings.Builder()
+        val advSettings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setConnectable(true)
             .setTimeout(0)
@@ -185,7 +192,7 @@ class WristKeyBleService : Service() {
             .addManufacturerData(0xFFFF, manufData)
             .build()
 
-        bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)
+        bluetoothLeAdvertiser?.startAdvertising(advSettings, data, advertiseCallback)
         Log.i(TAG, "startAdvertising called")
     }
 
@@ -216,7 +223,6 @@ class WristKeyBleService : Service() {
         override fun onServiceAdded(status: Int, service: BluetoothGattService?) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "onServiceAdded SUCCESS: ${service?.uuid}")
-                // Start advertising after service is successfully added
                 startAdvertising()
             } else {
                 Log.e(TAG, "onServiceAdded FAILED: status=$status, uuid=${service?.uuid}")
@@ -235,6 +241,15 @@ class WristKeyBleService : Service() {
                         connectedDevice = null
                     }
                 }
+            }
+        }
+
+        // FIX 5: onNotificationSent for debugging
+        override fun onNotificationSent(device: BluetoothDevice?, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "onNotificationSent SUCCESS to ${device?.address}")
+            } else {
+                Log.e(TAG, "onNotificationSent FAILED: status=$status to ${device?.address}")
             }
         }
 
@@ -296,15 +311,28 @@ class WristKeyBleService : Service() {
     private fun processChallenge(challenge: ByteArray) {
         Log.i(TAG, "processChallenge: ${challenge.size} bytes")
 
+        // FIX 3: validate challenge length
+        if (challenge.size < 16) {
+            Log.e(TAG, "Challenge too short: ${challenge.size} bytes (expected >= 16)")
+            return
+        }
+
         try {
+            // FIX 1: proper user presence logic
             val userPresent = when (settings.confirmMode) {
                 WristKeySettings.CONFIRM_GESTURE -> motionDetector.isMoving
-                WristKeySettings.CONFIRM_BUTTON -> false
+                WristKeySettings.CONFIRM_BUTTON -> {
+                    val pending = pendingUserPresent.getAndSet(false)
+                    if (pending) {
+                        Log.i(TAG, "User presence confirmed via button request")
+                    }
+                    pending
+                }
                 else -> motionDetector.isMoving
             }
 
-            if (!userPresent && settings.confirmMode != WristKeySettings.CONFIRM_BUTTON) {
-                Log.w(TAG, "Challenge rejected: no motion detected (anti-relay)")
+            if (!userPresent) {
+                Log.w(TAG, "Challenge rejected: user presence not confirmed (mode=${settings.confirmMode})")
             }
 
             val signature = securityManager.sign(challenge)
@@ -321,7 +349,7 @@ class WristKeyBleService : Service() {
             Log.i(TAG, "Response built: ${response.size} bytes (sig=${signature.size}, user_present=$userPresent, pubkey=${publicKey.size})")
             sendResponse(response)
 
-            if (settings.vibrateEnabled) {
+            if (settings.vibrateEnabled && userPresent) {
                 vibrate()
             }
         } catch (e: Exception) {
@@ -374,6 +402,36 @@ class WristKeyBleService : Service() {
         }
     }
 
+    // FIX 2: requestUserPresence — called from UI when user presses "Unlock PC" button
+    // Sets pendingUserPresent=true for 10 seconds so next challenge will be accepted
+    fun requestUserPresence() {
+        Log.i(TAG, "requestUserPresence: user explicitly requested unlock")
+        pendingUserPresent.set(true)
+
+        userPresenceRunnable?.let { userPresenceTimeoutHandler.removeCallbacks(it) }
+
+        val runnable = Runnable {
+            if (pendingUserPresent.getAndSet(false)) {
+                Log.i(TAG, "User presence request expired (10s timeout)")
+            }
+        }
+        userPresenceRunnable = runnable
+        userPresenceTimeoutHandler.postDelayed(runnable, 10000)
+
+        mainHandler.post {
+            Toast.makeText(this, "✅ Разблокировка разрешена (10 сек)", Toast.LENGTH_SHORT).show()
+        }
+        if (settings.vibrateEnabled) {
+            vibrate()
+        }
+    }
+
+    // Deprecated: kept for compatibility, delegates to requestUserPresence
+    fun sendUnlockChallenge() {
+        Log.i(TAG, "sendUnlockChallenge deprecated, use requestUserPresence")
+        requestUserPresence()
+    }
+
     fun requestCalibration() {
         Log.i(TAG, "requestCalibration: calibration is managed by PC via CONFIG characteristic")
     }
@@ -390,13 +448,10 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "Device forgotten")
     }
 
-    fun sendUnlockChallenge() {
-        Log.i(TAG, "Unlock challenge requested")
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "onDestroy called")
+        userPresenceRunnable?.let { userPresenceTimeoutHandler.removeCallbacks(it) }
         motionDetector.stop()
         stopAdvertising()
         bluetoothGattServer?.close()

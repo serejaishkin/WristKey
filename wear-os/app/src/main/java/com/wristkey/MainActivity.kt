@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val requiredPermissions = mutableListOf<String>()
+        val requiredPermissions = mutableListOf()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 requiredPermissions.add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -189,11 +189,9 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = {
-                        if (isPaired) {
-                            bleService?.sendUnlockChallenge()
-                        } else {
-                            Toast.makeText(context, "Not paired", Toast.LENGTH_SHORT).show()
-                        }
+                        // FIX: requestUserPresence instead of broken sendUnlockChallenge
+                        // This sets a flag that the next challenge from PC will be accepted
+                        bleService?.requestUserPresence()
                     },
                     modifier = Modifier.fillMaxWidth(0.7f)
                 ) {
