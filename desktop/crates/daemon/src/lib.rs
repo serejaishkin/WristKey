@@ -1,9 +1,6 @@
 //! WristKey daemon library — GUI, connection manager, and presence loop.
 
 pub mod conn_mgr;
-pub mod gui;
-pub mod pair_gui;
-pub mod tray;
 
 use std::sync::Arc;
 use std::time::Duration;

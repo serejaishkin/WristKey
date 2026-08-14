@@ -9,3 +9,8 @@ wristkey-core = { path = "../core" }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+application-services = "0.1"

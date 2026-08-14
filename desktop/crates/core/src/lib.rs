@@ -15,6 +15,8 @@ use tracing::info;
 use uuid::Uuid;
 pub mod sqlite_storage;
 pub use sqlite_storage::SqliteStorage;
+pub mod rssi_filter;
+pub use rssi_filter::{RssiSmoother, KalmanFilter, EmaFilter, HysteresisGate};
 #[derive(Error, Debug)]
 pub enum WristKeyError {
     #[error("crypto operation failed: {0}")]
@@ -143,115 +145,6 @@ impl Storage for MemoryStorage {
     }
 }
 
-pub struct SledStorage {
-    db: sled::Db,
-}
-
-impl SledStorage {
-    pub fn new(path: impl Into<PathBuf>) -> Result<Self> {
-        let path = path.into();
-        let db = sled::open(&path).map_err(|e| {
-            WristKeyError::Storage(format!("failed to open sled db at {:?}: {}", path, e))
-        })?;
-        Ok(Self { db })
-    }
-
-    pub fn open_default() -> Result<Self> {
-        let dirs = directories::ProjectDirs::from("", "", "WristKey")
-            .ok_or_else(|| WristKeyError::Storage("cannot determine data directory".into()))?;
-        let path = dirs.data_dir();
-        std::fs::create_dir_all(path).map_err(|e| {
-            WristKeyError::Storage(format!("failed to create data dir: {}", e))
-        })?;
-        Self::new(path.join("wristkey.db"))
-    }
-}
-
-#[async_trait]
-impl Storage for SledStorage {
-    async fn save_device(&self, device: &PairedDevice) -> Result<()> {
-        let key = format!("device:{}", device.id);
-        let value = bincode::serialize(device).map_err(|e| {
-            WristKeyError::Storage(format!("serialize device: {}", e))
-        })?;
-        self.db.insert(key, value).map_err(|e| {
-            WristKeyError::Storage(format!("sled insert: {}", e))
-        })?;
-        self.db.flush_async().await.map_err(|e| {
-            WristKeyError::Storage(format!("sled flush: {}", e))
-        })?;
-        info!("persisted device {}", device.id);
-        Ok(())
-    }
-
-    async fn load_device(&self, id: Uuid) -> Result<Option<PairedDevice>> {
-        let key = format!("device:{}", id);
-        match self.db.get(&key) {
-            Ok(Some(value)) => {
-                let device: PairedDevice = bincode::deserialize(&value).map_err(|e| {
-                    WristKeyError::Storage(format!("deserialize device: {}", e))
-                })?;
-                Ok(Some(device))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => Err(WristKeyError::Storage(format!("sled get: {}", e))),
-        }
-    }
-
-    async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
-        let mut devices = Vec::new();
-        for item in self.db.scan_prefix("device:") {
-            let (_, value) = item.map_err(|e| {
-                WristKeyError::Storage(format!("sled scan: {}", e))
-            })?;
-            let device: PairedDevice = bincode::deserialize(&value).map_err(|e| {
-                WristKeyError::Storage(format!("deserialize device: {}", e))
-            })?;
-            devices.push(device);
-        }
-        Ok(devices)
-    }
-
-    async fn delete_device(&self, id: Uuid) -> Result<()> {
-        let key = format!("device:{}", id);
-        self.db.remove(&key).map_err(|e| {
-            WristKeyError::Storage(format!("sled remove: {}", e))
-        })?;
-        self.db.flush_async().await.map_err(|e| {
-            WristKeyError::Storage(format!("sled flush: {}", e))
-        })?;
-        info!("deleted device {}", id);
-        Ok(())
-    }
-
-    async fn load_config(&self) -> Result<Config> {
-        match self.db.get("config") {
-            Ok(Some(value)) => {
-                let config: Config = bincode::deserialize(&value).map_err(|e| {
-                    WristKeyError::Storage(format!("deserialize config: {}", e))
-                })?;
-                Ok(config)
-            }
-            Ok(None) => Ok(Config::default()),
-            Err(e) => Err(WristKeyError::Storage(format!("sled get config: {}", e))),
-        }
-    }
-
-    async fn save_config(&self, config: &Config) -> Result<()> {
-        let value = bincode::serialize(config).map_err(|e| {
-            WristKeyError::Storage(format!("serialize config: {}", e))
-        })?;
-        self.db.insert("config", value).map_err(|e| {
-            WristKeyError::Storage(format!("sled insert config: {}", e))
-        })?;
-        self.db.flush_async().await.map_err(|e| {
-            WristKeyError::Storage(format!("sled flush config: {}", e))
-        })?;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairedDevice {
     pub id: Uuid,
     pub name: String,
@@ -592,41 +485,4 @@ mod tests {
         assert!(manager.state().await.is_authenticated());
     }
 
-    #[tokio::test]
-    async fn test_sled_storage_persistence() {
-        let tmp = temp_dir().join(format!("wristkey_test_{}", Uuid::new_v4()));
-        let storage = SledStorage::new(&tmp).unwrap();
-        let device = PairedDevice {
-            id: Uuid::new_v4(),
-            name: "Sled Watch".into(),
-            public_key: vec![1, 2, 3],
-            device_id: None,
-            paired_at: Utc::now(),
-            baseline_rssi: -55,
-            address: "AA:BB:CC:DD:EE:FF".into(),
-            windows_password: None,
-        };
-        storage.save_device(&device).await.unwrap();
-        let loaded = storage.load_device(device.id).await.unwrap().unwrap();
-        assert_eq!(loaded.name, "Sled Watch");
-        let devices = storage.list_devices().await.unwrap();
-        assert_eq!(devices.len(), 1);
-        storage.delete_device(device.id).await.unwrap();
-        assert!(storage.load_device(device.id).await.unwrap().is_none());
-        let config = Config { auto_lock_timeout_sec: 60, ..Default::default() };
-        storage.save_config(&config).await.unwrap();
-        let loaded_config = storage.load_config().await.unwrap();
-        assert_eq!(loaded_config.auto_lock_timeout_sec, 60);
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_config_toml_roundtrip() {
-        let config = Config { auto_lock_timeout_sec: 45, rssi_threshold_offset_dbm: 20, challenge_timeout_sec: 15 };
-        let tmp = temp_dir().join("wristkey_test_config.toml");
-        config.to_file(&tmp).unwrap();
-        let loaded = Config::from_file(&tmp).unwrap();
-        assert_eq!(loaded.auto_lock_timeout_sec, 45);
-        let _ = std::fs::remove_file(&tmp);
-    }
-}
+    

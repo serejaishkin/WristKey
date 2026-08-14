@@ -75,6 +75,23 @@ struct CalibrateResult {
 
 // --- Commands ---
 
+
+#[tauri::command]
+async fn set_macos_password(password: String) -> Result<(), String> {
+    wristkey_platform_macos::MacOSSecurity::save_password_to_keychain(&password)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_macos_password() -> Result<(), String> {
+    wristkey_platform_macos::MacOSSecurity::delete_password_from_keychain()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn check_macos_accessibility() -> Result<bool, String> {
+    Ok(wristkey_platform_macos::MacOSSecurity::check_accessibility_permission())
+}
 #[tauri::command]
 async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto, String> {
     let s = state.lock().await;
@@ -294,7 +311,7 @@ async fn toggle_daemon(enabled: bool, state: State<'_, Arc<Mutex<AppState>>>) ->
 
 // --- Platform adapter ---
 
-fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
+fn create_platform_adapter(None) -> Arc<dyn PlatformSecurity> {
     #[cfg(windows)]
     { Arc::new(WindowsSecurity::new()) }
     #[cfg(target_os = "linux")]
@@ -349,7 +366,7 @@ fn main() {
 
         let crypto = Arc::new(wristkey_core::EcdsaP256Crypto);
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-        let platform = create_platform_adapter();
+        let platform = create_platform_adapter(None);
 
         if let Err(e) = platform.register_as_authenticator().await {
             warn!("Failed to register as authenticator: {}", e);
@@ -450,7 +467,7 @@ fn main() {
                         }
                     }
                     "lock_now" => {
-                        let platform = create_platform_adapter();
+                        let platform = create_platform_adapter(None);
                         let _ = std::thread::spawn(move || {
                             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
                             rt.block_on(async { let _ = platform.lock_screen().await; });

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use clap::Parser;
 use tracing::{error, info, warn};
-use wristkey_core::{Config, CryptoEngine, EcdsaP256Crypto, SessionManager, SledStorage, Storage};
+use wristkey_core::{Config, CryptoEngine, EcdsaP256Crypto, SessionManager, SqliteStorage, Storage};
 use wristkey_ble::BleAdapter;
 use wristkey_daemon::conn_mgr::{ConnectionManager, run_presence_loop};
 
@@ -45,7 +45,7 @@ fn main() {
     if cli.gui || cli.pair {
         println!("Opening WristKey…");
         let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
-        let storage = Arc::new(SledStorage::open_default().expect("storage"));
+        let storage = Arc::new(SqliteStorage::open_default().expect("storage"));
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
         wristkey_daemon::gui::run_app(session, storage);
         return;
@@ -80,7 +80,7 @@ fn main() {
 
 async fn list_devices() -> Result<(), Box<dyn std::error::Error>> {
     let crypto: Arc<dyn CryptoEngine> = Arc::new(EcdsaP256Crypto);
-    let storage = Arc::new(SledStorage::open_default()?);
+    let storage = Arc::new(SqliteStorage::open_default()?);
     let session = Arc::new(SessionManager::new(crypto, storage.clone()));
     match session.list_devices().await {
         Ok(devices) => {
@@ -149,7 +149,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
 
     let platform = create_platform_adapter();
 
-    let mut storage: Option<Arc<dyn Storage>> = Some(Arc::new(SledStorage::open_default()?));
+    let mut storage: Option<Arc<dyn Storage>> = Some(Arc::new(SqliteStorage::open_default()?));
     let mut session: Option<Arc<SessionManager>> = Some(Arc::new(SessionManager::new(crypto.clone(), storage.as_ref().unwrap().clone())));
     storage.as_ref().unwrap().save_config(&_config).await?;
 
@@ -273,7 +273,7 @@ async fn run_daemon(cli: Cli, tray_rx: std::sync::mpsc::Receiver<tray::TrayComma
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
-            match SledStorage::open_default() {
+            match SqliteStorage::open_default() {
                 Ok(s) => break Arc::new(s),
                 Err(e) => {
                     warn!("pairing database still in use ({}), still waiting...", e);
