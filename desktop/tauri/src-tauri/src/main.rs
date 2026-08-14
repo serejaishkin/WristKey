@@ -42,6 +42,7 @@ struct DiscoveredDeviceDto {
     id: String,
     name: String,
     rssi: i16,
+    address: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -64,6 +65,7 @@ struct PairRequest {
     id: String,
     name: String,
     rssi: i16,
+    address: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -139,7 +141,7 @@ async fn get_paired_devices(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Ve
         id: d.id.to_string(),
         name: d.name,
         baseline_rssi: d.baseline_rssi,
-        address: d.address,
+        address: d.address.clone(),
         paired_at: d.paired_at.to_rfc3339(),
     }).collect())
 }
@@ -159,6 +161,7 @@ async fn scan_devices() -> Result<Vec<DiscoveredDeviceDto>, String> {
                     id: info.id.clone(),
                     name: info.name.unwrap_or_else(|| "Unknown".into()),
                     rssi: info.rssi.unwrap_or(-50),
+                    address: info.id.clone(),
                 });
             }
             _ => break,
@@ -184,7 +187,6 @@ async fn pair_device(req: PairRequest, state: State<'_, Arc<Mutex<AppState>>>) -
     let challenge_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap();
     let response_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap();
 
-    // FIX: generate challenge before writing
     let challenge = s.session.begin_pairing().await.map_err(|e| e.to_string())?;
 
     let mut write_ok = false;

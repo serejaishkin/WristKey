@@ -49,6 +49,11 @@ class WristKeyBleService : Service() {
     private var pairedDeviceAddress: String? = null
     private var lastRssi: Int = 0
 
+    // Pairing dialog state
+    private var pendingChallenge: ByteArray? = null
+    private var pairingDeviceAddress: String? = null
+    val pairingRequested = AtomicBoolean(false)
+
     private val pendingUserPresent = AtomicBoolean(false)
     private val userPresenceTimeoutHandler = Handler(Looper.getMainLooper())
     private var userPresenceRunnable: Runnable? = null
@@ -76,6 +81,13 @@ class WristKeyBleService : Service() {
         securityManager = SecurityManager()
         motionDetector = MotionDetector(this)
         settings = WristKeySettings(this)
+        // Load previously paired device address if any
+        try {
+            pairedDeviceAddress = settings.getPairedDeviceAddress()
+            Log.i(TAG, "Loaded paired device address: $pairedDeviceAddress")
+        } catch (e: Exception) {
+            Log.w(TAG, "getPairedDeviceAddress not available in settings")
+        }
         startForegroundService()
         startGattServer()
         motionDetector.start()
@@ -183,8 +195,6 @@ class WristKeyBleService : Service() {
         System.arraycopy("WRST".toByteArray(), 0, manufData, 0, 4)
         System.arraycopy(deviceId, 0, manufData, 4, 4.coerceAtMost(deviceId.size))
 
-        // FIX: split advertisement and scan response to avoid ADVERTISE_FAILED_DATA_TOO_LARGE
-        // Legacy advertisement limit = 31 bytes. 128-bit UUID (16b) + manuf data (8b) + headers = overflow.
         val advData = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addManufacturerData(0xFFFF, "WRST".toByteArray())
@@ -244,6 +254,12 @@ class WristKeyBleService : Service() {
                     Log.i(TAG, "Device disconnected: addr=${device?.address}")
                     if (connectedDevice?.address == device?.address) {
                         connectedDevice = null
+                        // Clear pending pairing if device disconnected
+                        if (pairingRequested.getAndSet(false)) {
+                            pendingChallenge = null
+                            pairingDeviceAddress = null
+                            Log.i(TAG, "Cleared pending pairing request due to disconnect")
+                        }
                     }
                 }
             }
@@ -278,9 +294,34 @@ class WristKeyBleService : Service() {
         ) {
             Log.i(TAG, "onCharacteristicWriteRequest: ${characteristic?.uuid}, ${value?.size} bytes from addr=${device?.address}")
             if (characteristic?.uuid == CHALLENGE_CHAR_UUID) {
-                value?.let { processChallenge(it) }
-                if (responseNeeded) {
-                    bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                val challenge = value ?: byteArrayOf()
+                if (challenge.size < 16) {
+                    Log.e(TAG, "Challenge too short: ${challenge.size} bytes")
+                    if (responseNeeded) {
+                        bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH, 0, null)
+                    }
+                    return
+                }
+
+                // Check if this is a pairing request (no paired device yet)
+                if (pairedDeviceAddress == null) {
+                    Log.i(TAG, "Pairing request from addr=${device?.address} - showing dialog")
+                    pendingChallenge = challenge
+                    pairingDeviceAddress = device?.address
+                    pairingRequested.set(true)
+                    if (responseNeeded) {
+                        bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    }
+                    // Vibrate to notify user
+                    if (settings.vibrateEnabled) {
+                        vibrate()
+                    }
+                } else {
+                    // Already paired - process normally
+                    value?.let { processChallenge(it) }
+                    if (responseNeeded) {
+                        bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    }
                 }
             } else if (characteristic?.uuid == CONFIG_CHAR_UUID) {
                 value?.let { processConfig(it) }
@@ -314,11 +355,6 @@ class WristKeyBleService : Service() {
 
     private fun processChallenge(challenge: ByteArray) {
         Log.i(TAG, "processChallenge: ${challenge.size} bytes")
-
-        if (challenge.size < 16) {
-            Log.e(TAG, "Challenge too short: ${challenge.size} bytes (expected >= 16)")
-            return
-        }
 
         try {
             val userPresent = when (settings.confirmMode) {
@@ -364,7 +400,7 @@ class WristKeyBleService : Service() {
             0x01 -> {
                 Log.i(TAG, "Calibration START requested by PC")
                 mainHandler.post {
-                    Toast.makeText(this, "Приложите часы к ПК\nДержите 10 секунд", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Hold watch near PC for 10s", Toast.LENGTH_LONG).show()
                 }
             }
             0x02 -> {
@@ -373,14 +409,14 @@ class WristKeyBleService : Service() {
                     Log.i(TAG, "Calibration RESULT received: threshold=$threshold dBm")
                     settings.saveCalibration(threshold)
                     mainHandler.post {
-                        Toast.makeText(this, "✅ Калибровка: $threshold dBm", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "Calibration: $threshold dBm", Toast.LENGTH_LONG).show()
                     }
                 }
             }
             0x03 -> {
                 Log.i(TAG, "Calibration CANCELLED by PC")
                 mainHandler.post {
-                    Toast.makeText(this, "Калибровка отменена", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Calibration cancelled", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -404,6 +440,62 @@ class WristKeyBleService : Service() {
         }
     }
 
+    // Called from UI when user presses "Pair" in the pairing dialog
+    fun confirmPairing(): Boolean {
+        val challenge = pendingChallenge
+        if (challenge == null) {
+            Log.w(TAG, "confirmPairing: no pending challenge")
+            return false
+        }
+        Log.i(TAG, "confirmPairing: processing pending challenge from addr=$pairingDeviceAddress")
+
+        // Mark as paired
+        pairedDeviceAddress = pairingDeviceAddress
+        try {
+            settings.savePairedDeviceAddress(pairingDeviceAddress ?: "")
+        } catch (e: Exception) {
+            Log.w(TAG, "savePairedDeviceAddress not available")
+        }
+
+        // Clear dialog state
+        pendingChallenge = null
+        pairingRequested.set(false)
+
+        // Process the challenge with user_present=true (explicit user confirmation)
+        try {
+            val signature = securityManager.sign(challenge)
+            val publicKey = securityManager.getPublicKey()
+            val response = ByteArray(130)
+            System.arraycopy(signature, 0, response, 0, 64)
+            response[64] = 1  // user_present = true (explicitly confirmed)
+            System.arraycopy(publicKey, 0, response, 65, 65)
+            Log.i(TAG, "Pairing response built: ${response.size} bytes (user_present=true)")
+            sendResponse(response)
+            if (settings.vibrateEnabled) {
+                vibrate()
+            }
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process pairing challenge", e)
+            return false
+        }
+    }
+
+    // Called from UI when user presses "Cancel" in the pairing dialog
+    fun rejectPairing() {
+        Log.i(TAG, "rejectPairing: user cancelled pairing request from addr=$pairingDeviceAddress")
+        pendingChallenge = null
+        pairingRequested.set(false)
+        pairingDeviceAddress?.let { addr ->
+            connectedDevice?.let { device ->
+                if (device.address == addr) {
+                    bluetoothGattServer?.cancelConnection(device)
+                }
+            }
+        }
+        pairingDeviceAddress = null
+    }
+
     fun requestUserPresence() {
         Log.i(TAG, "requestUserPresence: user explicitly requested unlock")
         pendingUserPresent.set(true)
@@ -419,7 +511,7 @@ class WristKeyBleService : Service() {
         userPresenceTimeoutHandler.postDelayed(runnable, 10000)
 
         mainHandler.post {
-            Toast.makeText(this, "✅ Разблокировка разрешена (10 сек)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Unlock allowed (10 sec)", Toast.LENGTH_SHORT).show()
         }
         if (settings.vibrateEnabled) {
             vibrate()
@@ -441,9 +533,13 @@ class WristKeyBleService : Service() {
     fun isAdvertising(): Boolean = bluetoothLeAdvertiser != null
     fun getAdvertisePin(): String = "----"
     fun getConnectedDeviceAddress(): String = connectedDevice?.address ?: "--"
+    fun getPairingDeviceAddress(): String = pairingDeviceAddress ?: "--"
 
     fun forgetDevice() {
         pairedDeviceAddress = null
+        pairingDeviceAddress = null
+        pendingChallenge = null
+        pairingRequested.set(false)
         settings.clearPairedDevices()
         Log.i(TAG, "Device forgotten")
     }

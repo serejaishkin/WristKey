@@ -43,7 +43,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // FIX: explicit type annotation for Kotlin type inference
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions: Map<String, Boolean> ->
@@ -108,7 +107,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(bleService: WristKeyBleService?) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val settings = remember { WristKeySettings(context) }
 
     var isLocked by remember { mutableStateOf(false) }
     var isPaired by remember { mutableStateOf(false) }
@@ -118,6 +116,10 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var isServerRunning by remember { mutableStateOf(false) }
     var currentPin by remember { mutableStateOf("----") }
 
+    // Pairing dialog state
+    var showPairingDialog by remember { mutableStateOf(false) }
+    var pairingAddress by remember { mutableStateOf("--") }
+
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
@@ -126,6 +128,13 @@ fun MainScreen(bleService: WristKeyBleService?) {
             deviceAddress = bleService?.getConnectedDeviceAddress() ?: "--"
             isServerRunning = bleService?.isAdvertising() ?: false
             currentPin = bleService?.getAdvertisePin() ?: "----"
+
+            // Check for pending pairing request
+            if (bleService?.pairingRequested?.get() == true && !showPairingDialog) {
+                pairingAddress = bleService.getPairingDeviceAddress()
+                showPairingDialog = true
+                Log.i("MainActivity", "Showing pairing dialog for addr=$pairingAddress")
+            }
         }
     }
 
@@ -151,14 +160,13 @@ fun MainScreen(bleService: WristKeyBleService?) {
 
             item {
                 Text(
-                    if (isPaired) "🔗 $deviceName" else "⚪ Not paired",
+                    if (isPaired) "[P] $deviceName" else "[ ] Not paired",
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
 
-            // FIX: show MAC address of connected device
             item {
                 Text(
                     "MAC: $deviceAddress",
@@ -171,7 +179,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             item {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    if (isServerRunning) "📡 GATT server: PIN $currentPin" else "❌ Server offline",
+                    if (isServerRunning) "[ON] Server PIN $currentPin" else "[OFF] Server offline",
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -181,7 +189,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    if (isLocked) "🔒 Locked" else "🔓 Unlocked",
+                    if (isLocked) "[L] Locked" else "[U] Unlocked",
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -206,7 +214,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
                     },
                     modifier = Modifier.fillMaxWidth(0.7f)
                 ) {
-                    Text("🔓 Unlock PC")
+                    Text("Unlock PC")
                 }
             }
 
@@ -225,13 +233,54 @@ fun MainScreen(bleService: WristKeyBleService?) {
                     onClick = {
                         context.startActivity(Intent(context, SettingsActivity::class.java))
                     },
-                    label = { Text("⚙ Settings") },
+                    label = { Text("Settings") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
         }
     }
 
+    // Pairing confirmation dialog
+    if (showPairingDialog) {
+        Dialog(onDismissRequest = { }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Pair Request", style = MaterialTheme.typography.title3)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Device: $pairingAddress",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.body2
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Row {
+                    Button(onClick = {
+                        showPairingDialog = false
+                        bleService?.rejectPairing()
+                        Toast.makeText(context, "Pairing rejected", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = {
+                        showPairingDialog = false
+                        val ok = bleService?.confirmPairing() ?: false
+                        if (ok) {
+                            Toast.makeText(context, "Paired!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Pairing failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Text("Pair")
+                    }
+                }
+            }
+        }
+    }
+
+    // Forget device dialog
     if (showForgetDialog) {
         Dialog(onDismissRequest = { showForgetDialog = false }) {
             Column(

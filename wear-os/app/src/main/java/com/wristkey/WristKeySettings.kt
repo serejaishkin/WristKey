@@ -14,6 +14,7 @@ class WristKeySettings(context: Context) {
         private const val KEY_PROXIMITY_UNLOCK = "proximity_unlock"
         private const val KEY_VIBRATE = "vibrate"
         private const val KEY_PAIRED_DEVICES = "paired_devices"
+        private const val KEY_PAIRED_DEVICE_ADDRESS = "paired_device_address"
         private const val KEY_IS_CALIBRATED = "is_calibrated"
 
         const val CONFIRM_GESTURE = 0
@@ -61,7 +62,18 @@ class WristKeySettings(context: Context) {
     }
 
     fun clearPairedDevices() {
-        prefs.edit().remove(KEY_PAIRED_DEVICES).apply()
+        prefs.edit()
+            .remove(KEY_PAIRED_DEVICES)
+            .remove(KEY_PAIRED_DEVICE_ADDRESS)
+            .apply()
+    }
+
+    fun savePairedDeviceAddress(address: String) {
+        prefs.edit().putString(KEY_PAIRED_DEVICE_ADDRESS, address).apply()
+    }
+
+    fun getPairedDeviceAddress(): String? {
+        return prefs.getString(KEY_PAIRED_DEVICE_ADDRESS, null)
     }
 
     fun saveCalibration(rssi: Int) {
