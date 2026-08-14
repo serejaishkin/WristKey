@@ -400,6 +400,17 @@ impl SessionManager {
             _ => Ok(false),
         }
     }
+    /// Update baseline_rssi for a device in persistent storage.
+    /// Used after calibration to save the new threshold on desktop.
+    pub async fn update_baseline_rssi(&self, device_id: Uuid, baseline_rssi: i16) -> Result<()> {
+        let mut device = self.storage.load_device(device_id).await?
+            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        device.baseline_rssi = baseline_rssi;
+        self.storage.save_device(&device).await?;
+        info!("Updated baseline_rssi for device {} to {} dBm", device_id, baseline_rssi);
+        Ok(())
+    }
+
     pub async fn disconnect(&self) {
         *self.state.write().await = SessionState::Disconnected;
         info!("session disconnected");
