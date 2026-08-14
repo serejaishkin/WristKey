@@ -116,7 +116,6 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var isServerRunning by remember { mutableStateOf(false) }
     var currentPin by remember { mutableStateOf("----") }
 
-    // Pairing dialog state
     var showPairingDialog by remember { mutableStateOf(false) }
     var pairingAddress by remember { mutableStateOf("--") }
 
@@ -129,7 +128,6 @@ fun MainScreen(bleService: WristKeyBleService?) {
             isServerRunning = bleService?.isAdvertising() ?: false
             currentPin = bleService?.getAdvertisePin() ?: "----"
 
-            // Check for pending pairing request
             if (bleService?.pairingRequested?.get() == true && !showPairingDialog) {
                 pairingAddress = bleService.getPairingDeviceAddress()
                 showPairingDialog = true
@@ -160,7 +158,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
 
             item {
                 Text(
-                    if (isPaired) "[P] $deviceName" else "[ ] Not paired",
+                    if (isPaired) "🔗 $deviceName" else "⚪ Not paired",
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -179,7 +177,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             item {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    if (isServerRunning) "[ON] Server PIN $currentPin" else "[OFF] Server offline",
+                    if (isServerRunning) "📡 Server PIN $currentPin" else "❌ Server offline",
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -189,7 +187,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    if (isLocked) "[L] Locked" else "[U] Unlocked",
+                    if (isLocked) "🔒 Locked" else "🔓 Unlocked",
                     style = MaterialTheme.typography.body2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -214,7 +212,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
                     },
                     modifier = Modifier.fillMaxWidth(0.7f)
                 ) {
-                    Text("Unlock PC")
+                    Text("🔓 Unlock PC")
                 }
             }
 
@@ -233,21 +231,20 @@ fun MainScreen(bleService: WristKeyBleService?) {
                     onClick = {
                         context.startActivity(Intent(context, SettingsActivity::class.java))
                     },
-                    label = { Text("Settings") },
+                    label = { Text("⚙ Settings") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
         }
     }
 
-    // Pairing confirmation dialog
     if (showPairingDialog) {
         Dialog(onDismissRequest = { }) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Pair Request", style = MaterialTheme.typography.title3)
+                Text("🔗 Pair Request", style = MaterialTheme.typography.title3)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "Device: $pairingAddress",
@@ -259,28 +256,27 @@ fun MainScreen(bleService: WristKeyBleService?) {
                     Button(onClick = {
                         showPairingDialog = false
                         bleService?.rejectPairing()
-                        Toast.makeText(context, "Pairing rejected", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "❌ Pairing rejected", Toast.LENGTH_SHORT).show()
                     }) {
-                        Text("Cancel")
+                        Text("❌ Cancel")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(onClick = {
                         showPairingDialog = false
                         val ok = bleService?.confirmPairing() ?: false
                         if (ok) {
-                            Toast.makeText(context, "Paired!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "✅ Paired!", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(context, "Pairing failed", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "❌ Pairing failed", Toast.LENGTH_SHORT).show()
                         }
                     }) {
-                        Text("Pair")
+                        Text("✅ Pair")
                     }
                 }
             }
         }
     }
 
-    // Forget device dialog
     if (showForgetDialog) {
         Dialog(onDismissRequest = { showForgetDialog = false }) {
             Column(

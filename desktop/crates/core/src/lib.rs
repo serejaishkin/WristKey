@@ -153,18 +153,22 @@ pub struct PairedDevice {
     pub id: Uuid,
     pub name: String,
     pub public_key: Vec<u8>,
-    pub device_id: Option<String>,
+    pub device_id: Option<Vec<u8>>,
     pub paired_at: DateTime<Utc>,
     pub baseline_rssi: i16,
     pub address: String,
     pub windows_password: Option<Vec<u8>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+// FIX: serde(default) allows old configs in DB to deserialize without new fields
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Config {
     pub auto_lock_timeout_sec: u64,
     pub rssi_threshold_offset_dbm: i16,
     pub challenge_timeout_sec: u64,
+    pub log_to_file: bool,
+    pub log_to_console: bool,
+    pub log_level: String,
 }
 
 impl Default for Config {
@@ -173,6 +177,9 @@ impl Default for Config {
             auto_lock_timeout_sec: 30,
             rssi_threshold_offset_dbm: 15,
             challenge_timeout_sec: 10,
+            log_to_file: true,
+            log_to_console: true,
+            log_level: "info".into(),
         }
     }
 }
@@ -334,7 +341,7 @@ impl SessionManager {
         info!("pairing started");
         Ok(challenge)
     }
-    pub async fn complete_pairing(&self, device_name: String, public_key: Vec<u8>, device_id: Option<String>, response: &Response, baseline_rssi: i16, address: String) -> Result<PairedDevice> {
+    pub async fn complete_pairing(&self, device_name: String, public_key: Vec<u8>, device_id: Option<Vec<u8>>, response: &Response, baseline_rssi: i16, address: String) -> Result<PairedDevice> {
         let state = self.state.read().await.clone();
         let challenge = match state {
             SessionState::Pairing { challenge, .. } => challenge,
@@ -404,8 +411,6 @@ impl SessionManager {
             _ => Ok(false),
         }
     }
-    /// Update baseline_rssi for a device in persistent storage.
-    /// Used after calibration to save the new threshold on desktop.
     pub async fn update_baseline_rssi(&self, device_id: Uuid, baseline_rssi: i16) -> Result<()> {
         let mut device = self.storage.load_device(device_id).await?
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
