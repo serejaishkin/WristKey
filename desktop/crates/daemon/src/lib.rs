@@ -1,499 +1,370 @@
-//! WristKey core: state machine, crypto traits, and challenge-response logic.
+//! WristKey daemon library — GUI, connection manager, and presence loop.
+//!
+//! Merged: cryptographic unlock (Claude) + RSSI smoothing (Kimi) + debounce.
 
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use ecdsa::signature::{Signer, Verifier};
-use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::PathBuf;
+pub mod conn_mgr;
+
 use std::sync::Arc;
-use thiserror::Error;
-use tokio::sync::RwLock;
-use tracing::info;
+use std::time::Duration;
+use tokio::time::{interval, timeout, Instant};
+use tracing::{info, warn};
 use uuid::Uuid;
-pub mod sqlite_storage;
-pub use sqlite_storage::SqliteStorage;
-pub mod rssi_filter;
-pub use rssi_filter::{RssiSmoother, KalmanFilter, EmaFilter, HysteresisGate};
-#[derive(Error, Debug)]
-pub enum WristKeyError {
-    #[error("crypto operation failed: {0}")]
-    Crypto(String),
-    #[error("invalid signature")]
-    InvalidSignature,
-    #[error("session error: {0}")]
-    Session(String),
-    #[error("storage error: {0}")]
-    Storage(String),
-    #[error("protocol error: {0}")]
-    Protocol(String),
-    #[error("platform error: {0}")]
-    Platform(String),
-    #[error("ble error: {0}")]
-    Ble(String),
-    #[error("config error: {0}")]
-    Config(String),
+use wristkey_core::{SessionManager, PlatformSecurity, Result, WristKeyError, Response};
+use wristkey_ble::{BleAdapter, PeripheralInfo};
+use conn_mgr::ConnectionManager;
+
+const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
+const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
+const CONFIG_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567894";
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ProximityAction {
+    Unlock,
+    Lock,
+    None,
 }
 
-pub type Result<T> = std::result::Result<T, WristKeyError>;
-
-#[async_trait]
-pub trait CryptoEngine: Send + Sync {
-    async fn generate_keypair(&self) -> Result<(Vec<u8>, Vec<u8>)>;
-    async fn sign(&self, private_key: &[u8], data: &[u8]) -> Result<Vec<u8>>;
-    async fn verify(&self, public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<()>;
+/// Debounce counter for lock decisions.
+/// Requires 3 consecutive weak readings before locking.
+struct DebounceCounter {
+    weak_count: u8,
+    threshold: u8,
 }
 
-#[async_trait]
-pub trait PasswordVault: Send + Sync {
-    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>>;
-    async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String>;
-}
-
-/// Software ECDSA P-256 crypto engine.
-pub struct EcdsaP256Crypto;
-
-#[async_trait]
-impl CryptoEngine for EcdsaP256Crypto {
-    async fn generate_keypair(&self) -> Result<(Vec<u8>, Vec<u8>)> {
-        let signing_key = SigningKey::random(&mut rand::thread_rng());
-        let verifying_key = signing_key.verifying_key();
-        let pubkey_bytes = verifying_key.to_encoded_point(false).as_bytes().to_vec();
-        Ok((signing_key.to_bytes().to_vec(), pubkey_bytes))
+impl DebounceCounter {
+    fn new(threshold: u8) -> Self {
+        Self { weak_count: 0, threshold }
     }
 
-    async fn sign(&self, private_key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
-        let key_bytes: [u8; 32] = private_key.try_into()
-            .map_err(|_| WristKeyError::Crypto("invalid private key length".into()))?;
-        let signing_key = SigningKey::from_bytes(&key_bytes.into())
-            .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
-        let sig: Signature = signing_key.sign(data);
-        Ok(sig.to_bytes().to_vec())
+    /// Returns true if should lock (threshold reached)
+    fn record_weak(&mut self) -> bool {
+        self.weak_count += 1;
+        self.weak_count >= self.threshold
     }
 
-    async fn verify(&self, public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<()> {
-        let pubkey = p256::PublicKey::from_sec1_bytes(public_key)
-            .map_err(|e| WristKeyError::Crypto(e.to_string()))?;
-        let verifying_key = VerifyingKey::from(pubkey);
+    fn record_strong(&mut self) {
+        self.weak_count = 0;
+    }
 
-        let sig = if signature.len() == 64 {
-            Signature::from_slice(signature)
-        } else {
-            Signature::from_der(signature)
-        }.map_err(|e| WristKeyError::Crypto(format!("invalid signature: {}", e)))?;
-
-        verifying_key.verify(data, &sig)
-            .map_err(|_| WristKeyError::InvalidSignature)
+    fn reset(&mut self) {
+        self.weak_count = 0;
     }
 }
 
-#[async_trait]
-pub trait Storage: Send + Sync {
-    async fn save_device(&self, device: &PairedDevice) -> Result<()>;
-    async fn load_device(&self, id: Uuid) -> Result<Option<PairedDevice>>;
-    async fn list_devices(&self) -> Result<Vec<PairedDevice>>;
-    async fn delete_device(&self, id: Uuid) -> Result<()>;
-    async fn load_config(&self) -> Result<Config>;
-    async fn save_config(&self, config: &Config) -> Result<()>;
+pub struct Daemon {
+    pub session: Arc<SessionManager>,
+    pub ble: Arc<dyn BleAdapter>,
+    pub platform: Arc<dyn PlatformSecurity>,
+    pub conn_mgr: Arc<ConnectionManager>,
+    debounce: std::sync::Mutex<DebounceCounter>,
 }
 
-pub struct MemoryStorage {
-    devices: Arc<RwLock<HashMap<Uuid, PairedDevice>>>,
-    config: Arc<RwLock<Config>>,
-}
-
-impl Default for MemoryStorage {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl MemoryStorage {
-    pub fn new() -> Self {
+impl Daemon {
+    pub fn new(
+        session: Arc<SessionManager>,
+        ble: Arc<dyn BleAdapter>,
+        platform: Arc<dyn PlatformSecurity>,
+        conn_mgr: Arc<ConnectionManager>,
+    ) -> Self {
         Self {
-            devices: Arc::new(RwLock::new(HashMap::new())),
-            config: Arc::new(RwLock::new(Config::default())),
+            session,
+            ble,
+            platform,
+            conn_mgr,
+            debounce: std::sync::Mutex::new(DebounceCounter::new(3)),
         }
     }
-}
 
-#[async_trait]
-impl Storage for MemoryStorage {
-    async fn save_device(&self, device: &PairedDevice) -> Result<()> {
-        self.devices.write().await.insert(device.id, device.clone());
-        info!("saved device {}", device.id);
-        Ok(())
-    }
-    async fn load_device(&self, id: Uuid) -> Result<Option<PairedDevice>> {
-        Ok(self.devices.read().await.get(&id).cloned())
-    }
-    async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
-        Ok(self.devices.read().await.values().cloned().collect())
-    }
-    async fn delete_device(&self, id: Uuid) -> Result<()> {
-        self.devices.write().await.remove(&id);
-        info!("deleted device {}", id);
-        Ok(())
-    }
-    async fn load_config(&self) -> Result<Config> {
-        Ok(self.config.read().await.clone())
-    }
-    async fn save_config(&self, config: &Config) -> Result<()> {
-        *self.config.write().await = config.clone();
-        Ok(())
-    }
-}
+    pub async fn run(&self) -> Result<()> {
+        info!("Daemon main loop running (cryptographic unlock + RSSI smoothing)");
+        self.platform.register_as_authenticator().await?;
 
-pub struct PairedDevice {
-    pub id: Uuid,
-    pub name: String,
-    pub public_key: Vec<u8>,
-    pub device_id: Option<String>,
-    pub paired_at: DateTime<Utc>,
-    pub baseline_rssi: i16,
-    pub address: String,
-    pub windows_password: Option<Vec<u8>>,
-}
+        let mut ticker = interval(Duration::from_secs(5));
+        let mut last_unlocked: Option<Instant> = None;
+        let mut _last_locked: Option<Instant> = None;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Config {
-    pub auto_lock_timeout_sec: u64,
-    pub rssi_threshold_offset_dbm: i16,
-    pub challenge_timeout_sec: u64,
-}
+        loop {
+            ticker.tick().await;
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            auto_lock_timeout_sec: 30,
-            rssi_threshold_offset_dbm: 15,
-            challenge_timeout_sec: 10,
-        }
-    }
-}
-
-impl Config {
-    pub fn from_file(path: &std::path::Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let contents = std::fs::read_to_string(path).map_err(|e| {
-            WristKeyError::Config(format!("read config file: {}", e))
-        })?;
-        toml::from_str(&contents).map_err(|e| {
-            WristKeyError::Config(format!("parse config file: {}", e))
-        })
-    }
-
-    pub fn to_file(&self, path: &std::path::Path) -> Result<()> {
-        let contents = toml::to_string_pretty(self).map_err(|e| {
-            WristKeyError::Config(format!("serialize config: {}", e))
-        })?;
-        std::fs::write(path, contents).map_err(|e| {
-            WristKeyError::Config(format!("write config file: {}", e))
-        })
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Challenge {
-    pub nonce: [u8; 16],
-    pub issued_at: DateTime<Utc>,
-}
-
-impl Challenge {
-    pub fn generate() -> Self {
-        let mut nonce = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut nonce);
-        Self { nonce, issued_at: Utc::now() }
-    }
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = self.nonce.to_vec();
-        let ts = self.issued_at.timestamp() as u64;
-        buf.extend_from_slice(&ts.to_le_bytes());
-        buf
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Response {
-    pub signature: Vec<u8>,
-    pub user_present: bool,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[async_trait]
-pub trait PlatformSecurity: Send + Sync {
-    async fn lock_screen(&self) -> Result<()>;
-    async fn unlock_screen(&self) -> Result<()>;
-    async fn is_locked(&self) -> Result<bool>;
-    async fn register_as_authenticator(&self) -> Result<()>;
-}
-
-pub struct MockPlatformSecurity {
-    locked: Arc<RwLock<bool>>,
-}
-
-impl Default for MockPlatformSecurity {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl MockPlatformSecurity {
-    pub fn new() -> Self {
-        Self {
-            locked: Arc::new(RwLock::new(false)),
-        }
-    }
-}
-
-#[async_trait]
-impl PlatformSecurity for MockPlatformSecurity {
-    async fn lock_screen(&self) -> Result<()> {
-        *self.locked.write().await = true;
-        info!("MOCK: screen locked");
-        Ok(())
-    }
-
-    async fn unlock_screen(&self) -> Result<()> {
-        *self.locked.write().await = false;
-        info!("MOCK: screen unlocked");
-        Ok(())
-    }
-
-    async fn is_locked(&self) -> Result<bool> {
-        Ok(*self.locked.read().await)
-    }
-
-    async fn register_as_authenticator(&self) -> Result<()> {
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum SessionState {
-    Disconnected,
-    Pairing { challenge: Challenge, started_at: DateTime<Utc> },
-    Verifying { device_id: Uuid, challenge: Challenge, started_at: DateTime<Utc> },
-    Authenticated { device_id: Uuid, last_rssi: i16, last_seen: DateTime<Utc> },
-    Locked,
-}
-
-impl SessionState {
-    pub fn is_authenticated(&self) -> bool {
-        matches!(self, SessionState::Authenticated { .. })
-    }
-    pub fn device_id(&self) -> Option<Uuid> {
-        match self {
-            SessionState::Authenticated { device_id, .. } => Some(*device_id),
-            _ => None,
-        }
-    }
-}
-
-pub struct SessionManager {
-    crypto: Arc<dyn CryptoEngine>,
-    storage: Arc<dyn Storage>,
-    state: Arc<RwLock<SessionState>>,
-}
-
-impl Clone for SessionManager {
-    fn clone(&self) -> Self {
-        Self {
-            crypto: Arc::clone(&self.crypto),
-            storage: Arc::clone(&self.storage),
-            state: Arc::clone(&self.state),
-        }
-    }
-}
-
-impl SessionManager {
-    pub fn new(crypto: Arc<dyn CryptoEngine>, storage: Arc<dyn Storage>) -> Self {
-        Self { crypto, storage, state: Arc::new(RwLock::new(SessionState::Disconnected)) }
-    }
-    pub async fn state(&self) -> SessionState {
-        self.state.read().await.clone()
-    }
-    pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> {
-        self.storage.load_device(device_id).await
-    }
-    pub async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
-        self.storage.list_devices().await
-    }
-    pub async fn load_config(&self) -> Result<Config> {
-        self.storage.load_config().await
-    }
-    pub async fn begin_pairing(&self) -> Result<Challenge> {
-        let challenge = Challenge::generate();
-        *self.state.write().await = SessionState::Pairing { challenge: challenge.clone(), started_at: Utc::now() };
-        info!("pairing started");
-        Ok(challenge)
-    }
-    pub async fn complete_pairing(&self, device_name: String, public_key: Vec<u8>, device_id: Option<String>, response: &Response, baseline_rssi: i16, address: String) -> Result<PairedDevice> {
-        let state = self.state.read().await.clone();
-        let challenge = match state {
-            SessionState::Pairing { challenge, .. } => challenge,
-            other => return Err(WristKeyError::Session(format!("expected Pairing, got {:?}", other))),
-        };
-        self.crypto.verify(&public_key, &challenge.to_bytes(), &response.signature).await?;
-        if !response.user_present {
-            return Err(WristKeyError::Protocol("user presence required".into()));
-        }
-        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address, windows_password: None };
-        self.storage.save_device(&device).await?;
-        *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
-        info!("pairing completed for {}", device.id);
-        Ok(device)
-    }
-    pub async fn begin_unlock(&self, device_id: Uuid) -> Result<Challenge> {
-        let challenge = Challenge::generate();
-        *self.state.write().await = SessionState::Verifying {
-            device_id,
-            challenge: challenge.clone(),
-            started_at: Utc::now(),
-        };
-        info!("unlock verification started for {}", device_id);
-        Ok(challenge)
-    }
-
-    pub async fn verify_unlock(&self, response: &Response) -> Result<()> {
-        let (device_id, challenge) = match self.state.read().await.clone() {
-            SessionState::Verifying { device_id, challenge, .. } => (device_id, challenge),
-            other => return Err(WristKeyError::Session(format!("expected Verifying, got {:?}", other))),
-        };
-        let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
-        self.crypto.verify(&device.public_key, &challenge.to_bytes(), &response.signature).await?;
-        if !response.user_present {
-            return Err(WristKeyError::Protocol("user presence required".into()));
-        }
-        *self.state.write().await = SessionState::Authenticated { device_id, last_rssi: device.baseline_rssi, last_seen: Utc::now() };
-        info!("unlock verified for {}", device_id);
-        Ok(())
-    }
-
-    pub async fn set_device_password(&self, device_id: Uuid, encrypted: Vec<u8>) -> Result<()> {
-        let mut device = self.storage.load_device(device_id).await?
-            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
-        device.windows_password = Some(encrypted);
-        self.storage.save_device(&device).await?;
-        info!("stored encrypted password for device {}", device_id);
-        Ok(())
-    }
-
-    pub async fn get_device_password(&self, device_id: Uuid) -> Result<Option<Vec<u8>>> {
-        let device = self.storage.load_device(device_id).await?
-            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
-        Ok(device.windows_password.clone())
-    }
-    pub async fn update_rssi(&self, rssi: i16) -> Result<bool> {
-        let mut state = self.state.write().await;
-        match *state {
-            SessionState::Authenticated { ref mut last_rssi, ref mut last_seen, device_id } => {
-                *last_rssi = rssi;
-                *last_seen = Utc::now();
-                let config = self.storage.load_config().await?;
-                let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device missing".into()))?;
-                let threshold = device.baseline_rssi - config.rssi_threshold_offset_dbm;
-                Ok(rssi < threshold)
+            match self.check_proximity().await {
+                Ok(ProximityAction::Unlock) => {
+                    self.debounce.lock().unwrap().record_strong();
+                    match self.platform.is_locked().await {
+                        Ok(true) => {
+                            // Cryptographic unlock: connect → challenge → verify
+                            if let Err(e) = self.unlock_with_crypto().await {
+                                warn!("Crypto unlock failed: {}", e);
+                            } else {
+                                info!("Auto-unlocked: watch authenticated");
+                                last_unlocked = Some(Instant::now());
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(e) => warn!("is_locked check failed: {}", e),
+                    }
+                }
+                Ok(ProximityAction::Lock) => {
+                    let should_lock = {
+                        let mut d = self.debounce.lock().unwrap();
+                        d.record_weak()
+                    };
+                    if should_lock {
+                        match self.platform.is_locked().await {
+                            Ok(false) => {
+                                if let Err(e) = self.platform.lock_screen().await {
+                                    warn!("Lock failed: {}", e);
+                                } else {
+                                    info!("Auto-locked: watch out of range (3x debounce)");
+                                    _last_locked = Some(Instant::now());
+                                }
+                            }
+                            Ok(true) => {}
+                            Err(e) => warn!("is_locked check failed: {}", e),
+                        }
+                    }
+                }
+                Ok(ProximityAction::None) => {}
+                Err(e) => warn!("Proximity check failed: {}", e),
             }
-            _ => Ok(false),
+
+            // Auto-lock by timeout
+            if let Ok(config) = self.session.load_config().await {
+                if let Ok(false) = self.platform.is_locked().await {
+                    if let Some(last_seen) = last_unlocked {
+                        if last_seen.elapsed() > Duration::from_secs(config.auto_lock_timeout_sec) {
+                            if let Err(e) = self.platform.lock_screen().await {
+                                warn!("Timeout lock failed: {}", e);
+                            } else {
+                                info!("Auto-locked: timeout {}s", config.auto_lock_timeout_sec);
+                                _last_locked = Some(Instant::now());
+                                last_unlocked = None;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-    /// Update baseline_rssi for a device in persistent storage.
-    /// Used after calibration to save the new threshold on desktop.
-    pub async fn update_baseline_rssi(&self, device_id: Uuid, baseline_rssi: i16) -> Result<()> {
-        let mut device = self.storage.load_device(device_id).await?
-            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
-        device.baseline_rssi = baseline_rssi;
-        self.storage.save_device(&device).await?;
-        info!("Updated baseline_rssi for device {} to {} dBm", device_id, baseline_rssi);
-        Ok(())
+
+    /// Cryptographic unlock: connect → write challenge → read signed response → verify.
+    async fn unlock_with_crypto(&self) -> Result<()> {
+        let devices = self.session.list_devices().await?;
+        if devices.is_empty() {
+            return Err(WristKeyError::Daemon("no paired devices".into()));
+        }
+
+        let device = &devices[0];  // Primary device
+        let info = PeripheralInfo {
+            id: device.address.clone(),
+            name: Some(device.name.clone()),
+            pin: None,
+            device_id: device.device_id.clone(),
+            rssi: None,
+            service_uuids: vec![],
+            raw_manufacturer_data: None,
+        };
+
+        let conn = self.ble.connect(&info).await
+            .map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
+
+        let challenge_char = Uuid::parse_str(CHALLENGE_CHAR)
+            .map_err(|e| WristKeyError::Config(format!("invalid challenge UUID: {}", e)))?;
+        let response_char = Uuid::parse_str(RESPONSE_CHAR)
+            .map_err(|e| WristKeyError::Config(format!("invalid response UUID: {}", e)))?;
+
+        // Subscribe to response notifications
+        let mut rx = self.ble.notify(&conn, response_char).await
+            .map_err(|e| WristKeyError::Ble(format!("notify: {}", e)))?;
+
+        // Begin cryptographic unlock
+        let challenge = self.session.begin_unlock(device.id).await?;
+
+        // Write challenge to watch
+        self.ble.write(&conn, challenge_char, &challenge.to_bytes()).await
+            .map_err(|e| WristKeyError::Ble(format!("write challenge: {}", e)))?;
+        info!("Challenge written ({} bytes)", challenge.to_bytes().len());
+
+        // Wait for signed response (10s timeout)
+        let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                let _ = self.ble.disconnect(&conn).await;
+                return Err(WristKeyError::Daemon("Watch disconnected before responding".into()));
+            }
+            Err(_) => {
+                let _ = self.ble.disconnect(&conn).await;
+                return Err(WristKeyError::Daemon("Timeout waiting for watch response (10s)".into()));
+            }
+        };
+
+        info!("Response received: {} bytes", response_data.len());
+
+        // Parse response: [signature 64][user_present 1][public_key 65] = 130 bytes
+        if response_data.len() != 130 {
+            let _ = self.ble.disconnect(&conn).await;
+            return Err(WristKeyError::Daemon(
+                format!("Invalid response length: {} bytes (expected 130)", response_data.len())
+            ));
+        }
+
+        let signature = response_data[..64].to_vec();
+        let user_present = response_data[64] != 0;
+        let public_key = response_data[65..].to_vec();
+
+        let response = Response {
+            signature,
+            user_present,
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Verify cryptographic response
+        match self.session.verify_unlock(device.id, &response, &public_key).await {
+            Ok(true) => {
+                info!("Signature verified, user_present={}", user_present);
+                let _ = self.ble.disconnect(&conn).await;
+                self.platform.unlock_screen().await?;
+                Ok(())
+            }
+            Ok(false) => {
+                let _ = self.ble.disconnect(&conn).await;
+                Err(WristKeyError::Daemon("Signature verification failed".into()))
+            }
+            Err(e) => {
+                let _ = self.ble.disconnect(&conn).await;
+                Err(e)
+            }
+        }
     }
 
-    pub async fn disconnect(&self) {
-        *self.state.write().await = SessionState::Disconnected;
-        info!("session disconnected");
+    async fn check_proximity(&self) -> Result<ProximityAction> {
+        let devices = self.session.list_devices().await?;
+        if devices.is_empty() {
+            return Ok(ProximityAction::None);
+        }
+
+        let config = self.session.load_config().await?;
+        let service_uuid = Uuid::parse_str(SERVICE_UUID)
+            .map_err(|e| WristKeyError::Config(format!("invalid service UUID: {}", e)))?;
+
+        let mut rx = self.ble.scan(service_uuid).await?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut best_rssi: Option<i16> = None;
+        let mut any_matched = false;
+
+        while Instant::now() < deadline {
+            match timeout(Duration::from_millis(500), rx.recv()).await {
+                Ok(Some(info)) => {
+                    // Multi-level matching: address → device_id fingerprint → name
+                    let matched = devices.iter().find(|d| d.address == info.id)
+                        .or_else(|| {
+                            // Match by device_id fingerprint (SHA-256 of public key from manufacturer data)
+                            if let Some(ref scanned_device_id) = info.device_id {
+                                devices.iter().find(|d| {
+                                    d.device_id.as_ref() == Some(scanned_device_id)
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| {
+                            // Fallback: match by name (case-insensitive)
+                            if let Some(ref name) = info.name {
+                                devices.iter().find(|d| d.name.eq_ignore_ascii_case(name))
+                            } else {
+                                None
+                            }
+                        });
+
+                    if let Some(device) = matched {
+                        any_matched = true;
+                        if let Some(raw_rssi) = info.rssi {
+                            // Use Kalman + Hysteresis from rssi_filter
+                            let threshold = device.baseline_rssi - config.rssi_threshold_offset_dbm;
+                            let mut smoother = wristkey_core::RssiSmoother::new(threshold);
+                            let (should_unlock, _changed) = smoother.update(raw_rssi);
+                            let smoothed = smoother.current_rssi().unwrap_or(raw_rssi);
+
+                            if should_unlock {
+                                info!("Device {} in range: raw={} dBm, smoothed={} dBm (threshold {})",
+                                      device.name, raw_rssi, smoothed, threshold);
+                                return Ok(ProximityAction::Unlock);
+                            }
+                            if best_rssi.map_or(true, |best| smoothed > best) {
+                                best_rssi = Some(smoothed);
+                            }
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+
+        if any_matched && best_rssi.is_some() {
+            return Ok(ProximityAction::Lock);
+        }
+
+        Ok(ProximityAction::Lock)
+    }
+
+    /// Calibrate proximity unlock threshold for a paired device.
+    pub async fn calibrate_proximity(&self, device_id: Uuid) -> Result<i16> {
+        let device = self.session.load_device(device_id).await?
+            .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+
+        info!("Starting proximity calibration for {}", device_id);
+
+        let info = PeripheralInfo {
+            id: device.address.clone(),
+            name: Some(device.name.clone()),
+            pin: None,
+            device_id: device.device_id.clone(),
+            rssi: None,
+            service_uuids: vec![],
+            raw_manufacturer_data: None,
+        };
+
+        let conn = self.ble.connect(&info).await?;
+
+        let config_char = Uuid::parse_str(CONFIG_CHAR)
+            .map_err(|e| WristKeyError::Config(format!("invalid config UUID: {}", e)))?;
+
+        self.ble.write(&conn, config_char, &[0x01]).await?;
+        info!("Sent START_CALIBRATION to watch");
+
+        let mut samples = Vec::new();
+        let mut ticker = interval(Duration::from_millis(500));
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            ticker.tick().await;
+            match self.ble.read_rssi(&conn).await {
+                Ok(rssi) => { info!("RSSI sample: {} dBm", rssi); samples.push(rssi); }
+                Err(e) => warn!("Failed to read RSSI: {}", e),
+            }
+        }
+
+        if samples.is_empty() {
+            let _ = self.ble.write(&conn, config_char, &[0x03]).await;
+            let _ = self.ble.disconnect(&conn).await;
+            return Err(WristKeyError::Ble("No RSSI samples collected".into()));
+        }
+
+        // Use median instead of average (more robust to outliers)
+        samples.sort();
+        let median = samples[samples.len() / 2];
+        let threshold = median.saturating_sub(config.rssi_threshold_offset_dbm).min(-20).max(-90);
+        info!("Calibration: median={} dBm, threshold={} dBm ({} samples)", median, threshold, samples.len());
+
+        // Save baseline to desktop storage
+        self.session.update_baseline_rssi(device_id, threshold).await?;
+        info!("Saved baseline_rssi={} to desktop storage", threshold);
+
+        let rssi_byte = threshold as i8;
+        self.ble.write(&conn, config_char, &[0x02, rssi_byte as u8]).await?;
+        info!("Sent CALIBRATION_RESULT: {} dBm", threshold);
+
+        let _ = self.ble.disconnect(&conn).await;
+        Ok(threshold)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env::temp_dir;
-
-    #[tokio::test]
-    async fn test_challenge_generation() {
-        let c1 = Challenge::generate();
-        let c2 = Challenge::generate();
-        assert_ne!(c1.nonce, c2.nonce);
-    }
-
-    #[tokio::test]
-    async fn test_full_pairing_flow() {
-        let crypto = Arc::new(EcdsaP256Crypto);
-        let storage = Arc::new(MemoryStorage::new());
-        let manager = SessionManager::new(crypto.clone(), storage);
-        let challenge = manager.begin_pairing().await.unwrap();
-        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Test Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
-        assert_eq!(device.name, "Test Watch");
-        assert!(manager.state().await.is_authenticated());
-    }
-
-    #[tokio::test]
-    async fn test_unlock_without_user_present_fails() {
-        let crypto = Arc::new(EcdsaP256Crypto);
-        let storage = Arc::new(MemoryStorage::new());
-        let manager = SessionManager::new(crypto.clone(), storage.clone());
-        let challenge = manager.begin_pairing().await.unwrap();
-        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
-
-        let unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
-        let good_sig = crypto.sign(&priv_key, &unlock_challenge.to_bytes()).await.unwrap();
-        let bad = Response { signature: good_sig, user_present: false, timestamp: Utc::now() };
-        assert!(manager.verify_unlock(&bad).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_unlock_rejects_signature_for_wrong_challenge() {
-        let crypto = Arc::new(EcdsaP256Crypto);
-        let storage = Arc::new(MemoryStorage::new());
-        let manager = SessionManager::new(crypto.clone(), storage.clone());
-        let challenge = manager.begin_pairing().await.unwrap();
-        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
-
-        let _unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
-        let stale = Challenge::generate();
-        let stale_sig = crypto.sign(&priv_key, &stale.to_bytes()).await.unwrap();
-        let bad = Response { signature: stale_sig, user_present: true, timestamp: Utc::now() };
-        assert!(manager.verify_unlock(&bad).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_unlock_succeeds_for_matching_challenge() {
-        let crypto = Arc::new(EcdsaP256Crypto);
-        let storage = Arc::new(MemoryStorage::new());
-        let manager = SessionManager::new(crypto.clone(), storage.clone());
-        let challenge = manager.begin_pairing().await.unwrap();
-        let (priv_key, pub_key) = crypto.generate_keypair().await.unwrap();
-        let sig = crypto.sign(&priv_key, &challenge.to_bytes()).await.unwrap();
-        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
-        let device = manager.complete_pairing("Watch".into(), pub_key, None, &response, -50, "AA:BB:CC:DD:EE:FF".into()).await.unwrap();
-
-        let unlock_challenge = manager.begin_unlock(device.id).await.unwrap();
-        let good_sig = crypto.sign(&priv_key, &unlock_challenge.to_bytes()).await.unwrap();
-        let good = Response { signature: good_sig, user_present: true, timestamp: Utc::now() };
-        assert!(manager.verify_unlock(&good).await.is_ok());
-        assert!(manager.state().await.is_authenticated());
-    }
-
-    
