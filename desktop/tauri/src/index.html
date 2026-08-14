@@ -54,6 +54,7 @@
     padding: 10px; margin-bottom: 8px; font-size: 0.85rem;
   }
   .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .tab-btn.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -63,7 +64,7 @@
     <button class="tab-btn active" data-tab="status">📊 Status</button>
     <button class="tab-btn" data-tab="devices">📱 Devices</button>
     <button class="tab-btn" data-tab="settings">⚙ Settings</button>
-    <button class="tab-btn" id="tab-cp" data-tab="cp" style="display:none">🪟 Windows</button>
+    <button class="tab-btn hidden" data-tab="cp" id="tab-btn-cp">🪟 Windows</button>
   </div>
 
   <!-- Status Tab -->

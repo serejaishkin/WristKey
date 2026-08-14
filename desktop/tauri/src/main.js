@@ -27,10 +27,10 @@ async function refreshStatus() {
     document.getElementById('deviceCount').textContent = status.device_count;
     document.getElementById('daemonToggle').checked = status.daemon_enabled;
 
-    // Windows CP tab visibility
-    const cpTab = document.getElementById('tab-cp');
-    if (cpTab) {
-      cpTab.style.display = 'block';
+    // Windows CP tab visibility — use querySelector to avoid ID collision
+    const cpTabBtn = document.getElementById('tab-btn-cp');
+    if (cpTabBtn) {
+      cpTabBtn.classList.remove('hidden');
     }
     const cpStatus = document.getElementById('cpStatus');
     if (cpStatus) {
