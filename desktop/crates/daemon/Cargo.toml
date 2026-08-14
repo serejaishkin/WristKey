@@ -8,23 +8,12 @@ license = "MIT"
 name = "wristkey_daemon"
 path = "src/lib.rs"
 
-
 [features]
 
 [dependencies]
 wristkey-core = { path = "../core" }
 wristkey-ble = { path = "../ble" }
-wristkey-platform-win = { path = "../platform-win" }
-wristkey-platform-linux = { path = "../platform-linux" }
-wristkey-platform-macos = { path = "../platform-macos" }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-serde = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
-directories = "5"
-futures = "0.3"
-btleplug = "0.11"
-
-hex = "0.4"

@@ -113,6 +113,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var isLocked by remember { mutableStateOf(false) }
     var isPaired by remember { mutableStateOf(false) }
     var deviceName by remember { mutableStateOf("Not connected") }
+    var deviceAddress by remember { mutableStateOf("--") }
     var showForgetDialog by remember { mutableStateOf(false) }
     var isServerRunning by remember { mutableStateOf(false) }
     var currentPin by remember { mutableStateOf("----") }
@@ -122,6 +123,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             delay(1000)
             isPaired = bleService?.isPaired() ?: false
             deviceName = bleService?.getDeviceName() ?: "Not connected"
+            deviceAddress = bleService?.getConnectedDeviceAddress() ?: "--"
             isServerRunning = bleService?.isAdvertising() ?: false
             currentPin = bleService?.getAdvertisePin() ?: "----"
         }
@@ -151,6 +153,16 @@ fun MainScreen(bleService: WristKeyBleService?) {
                 Text(
                     if (isPaired) "🔗 $deviceName" else "⚪ Not paired",
                     style = MaterialTheme.typography.body2,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
+            }
+
+            // FIX: show MAC address of connected device
+            item {
+                Text(
+                    "MAC: $deviceAddress",
+                    style = MaterialTheme.typography.caption3,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )

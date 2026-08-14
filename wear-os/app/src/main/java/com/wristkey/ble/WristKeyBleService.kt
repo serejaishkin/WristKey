@@ -49,7 +49,6 @@ class WristKeyBleService : Service() {
     private var pairedDeviceAddress: String? = null
     private var lastRssi: Int = 0
 
-    // FIX 1: pending user presence for CONFIRM_BUTTON mode
     private val pendingUserPresent = AtomicBoolean(false)
     private val userPresenceTimeoutHandler = Handler(Looper.getMainLooper())
     private var userPresenceRunnable: Runnable? = null
@@ -59,7 +58,6 @@ class WristKeyBleService : Service() {
     private lateinit var settings: WristKeySettings
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Universal WristKey UUIDs — same on all watches (Samsung, Pixel, Fossil, etc.)
     private val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     private val CHALLENGE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
     private val RESPONSE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
@@ -129,7 +127,6 @@ class WristKeyBleService : Service() {
                 BluetoothGattCharacteristic.PERMISSION_WRITE
             )
 
-            // FIX 4: PERMISSION_READ for notify characteristic
             responseCharacteristic = BluetoothGattCharacteristic(
                 RESPONSE_CHAR_UUID,
                 BluetoothGattCharacteristic.PROPERTY_NOTIFY,
@@ -186,14 +183,22 @@ class WristKeyBleService : Service() {
         System.arraycopy("WRST".toByteArray(), 0, manufData, 0, 4)
         System.arraycopy(deviceId, 0, manufData, 4, 4.coerceAtMost(deviceId.size))
 
-        val data = AdvertiseData.Builder()
+        // FIX: split advertisement and scan response to avoid ADVERTISE_FAILED_DATA_TOO_LARGE
+        // Legacy advertisement limit = 31 bytes. 128-bit UUID (16b) + manuf data (8b) + headers = overflow.
+        val advData = AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .addManufacturerData(0xFFFF, "WRST".toByteArray())
+            .build()
+
+        val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .addManufacturerData(0xFFFF, manufData)
             .build()
 
-        bluetoothLeAdvertiser?.startAdvertising(advSettings, data, advertiseCallback)
-        Log.i(TAG, "startAdvertising called")
+        Log.i(TAG, "Starting advertising with scan response (split payload)")
+        bluetoothLeAdvertiser?.startAdvertising(advSettings, advData, scanResponse, advertiseCallback)
+        Log.i(TAG, "startAdvertising called (with scan response)")
     }
 
     private fun stopAdvertising() {
@@ -232,11 +237,11 @@ class WristKeyBleService : Service() {
         override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "Device connected: ${device?.address} name=${device?.name}")
+                    Log.i(TAG, "Device connected: addr=${device?.address} name=${device?.name}")
                     connectedDevice = device
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.i(TAG, "Device disconnected: ${device?.address}")
+                    Log.i(TAG, "Device disconnected: addr=${device?.address}")
                     if (connectedDevice?.address == device?.address) {
                         connectedDevice = null
                     }
@@ -244,12 +249,11 @@ class WristKeyBleService : Service() {
             }
         }
 
-        // FIX 5: onNotificationSent for debugging
         override fun onNotificationSent(device: BluetoothDevice?, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.i(TAG, "onNotificationSent SUCCESS to ${device?.address}")
+                Log.i(TAG, "onNotificationSent SUCCESS to addr=${device?.address}")
             } else {
-                Log.e(TAG, "onNotificationSent FAILED: status=$status to ${device?.address}")
+                Log.e(TAG, "onNotificationSent FAILED: status=$status to addr=${device?.address}")
             }
         }
 
@@ -257,7 +261,7 @@ class WristKeyBleService : Service() {
             device: BluetoothDevice?, requestId: Int, offset: Int,
             characteristic: BluetoothGattCharacteristic?
         ) {
-            Log.i(TAG, "onCharacteristicReadRequest: ${characteristic?.uuid}")
+            Log.i(TAG, "onCharacteristicReadRequest: ${characteristic?.uuid} from addr=${device?.address}")
             if (characteristic?.uuid == CONFIG_CHAR_UUID) {
                 val value = byteArrayOf(0x01, 0x00)
                 bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, value)
@@ -272,7 +276,7 @@ class WristKeyBleService : Service() {
             preparedWrite: Boolean, responseNeeded: Boolean,
             offset: Int, value: ByteArray?
         ) {
-            Log.i(TAG, "onCharacteristicWriteRequest: ${characteristic?.uuid}, ${value?.size} bytes")
+            Log.i(TAG, "onCharacteristicWriteRequest: ${characteristic?.uuid}, ${value?.size} bytes from addr=${device?.address}")
             if (characteristic?.uuid == CHALLENGE_CHAR_UUID) {
                 value?.let { processChallenge(it) }
                 if (responseNeeded) {
@@ -296,7 +300,7 @@ class WristKeyBleService : Service() {
             preparedWrite: Boolean, responseNeeded: Boolean,
             offset: Int, value: ByteArray?
         ) {
-            Log.i(TAG, "onDescriptorWriteRequest: ${descriptor?.uuid}")
+            Log.i(TAG, "onDescriptorWriteRequest: ${descriptor?.uuid} from addr=${device?.address}")
             descriptor?.let {
                 if (it.uuid == CCCD_UUID) {
                     it.value = value
@@ -311,14 +315,12 @@ class WristKeyBleService : Service() {
     private fun processChallenge(challenge: ByteArray) {
         Log.i(TAG, "processChallenge: ${challenge.size} bytes")
 
-        // FIX 3: validate challenge length
         if (challenge.size < 16) {
             Log.e(TAG, "Challenge too short: ${challenge.size} bytes (expected >= 16)")
             return
         }
 
         try {
-            // FIX 1: proper user presence logic
             val userPresent = when (settings.confirmMode) {
                 WristKeySettings.CONFIRM_GESTURE -> motionDetector.isMoving
                 WristKeySettings.CONFIRM_BUTTON -> {
@@ -388,7 +390,7 @@ class WristKeyBleService : Service() {
         val device = connectedDevice ?: return
         responseCharacteristic?.value = data
         val notified = bluetoothGattServer?.notifyCharacteristicChanged(device, responseCharacteristic, false)
-        Log.i(TAG, "notifyCharacteristicChanged: $notified")
+        Log.i(TAG, "notifyCharacteristicChanged to addr=${device.address}: $notified")
     }
 
     private fun vibrate() {
@@ -402,8 +404,6 @@ class WristKeyBleService : Service() {
         }
     }
 
-    // FIX 2: requestUserPresence — called from UI when user presses "Unlock PC" button
-    // Sets pendingUserPresent=true for 10 seconds so next challenge will be accepted
     fun requestUserPresence() {
         Log.i(TAG, "requestUserPresence: user explicitly requested unlock")
         pendingUserPresent.set(true)
@@ -426,7 +426,6 @@ class WristKeyBleService : Service() {
         }
     }
 
-    // Deprecated: kept for compatibility, delegates to requestUserPresence
     fun sendUnlockChallenge() {
         Log.i(TAG, "sendUnlockChallenge deprecated, use requestUserPresence")
         requestUserPresence()
@@ -441,6 +440,7 @@ class WristKeyBleService : Service() {
     fun getLastRssi(): String = if (lastRssi != 0) "$lastRssi" else "--"
     fun isAdvertising(): Boolean = bluetoothLeAdvertiser != null
     fun getAdvertisePin(): String = "----"
+    fun getConnectedDeviceAddress(): String = connectedDevice?.address ?: "--"
 
     fun forgetDevice() {
         pairedDeviceAddress = null
