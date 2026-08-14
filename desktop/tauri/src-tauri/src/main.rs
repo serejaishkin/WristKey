@@ -562,6 +562,15 @@ fn main() {
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
         let platform = create_platform_adapter(session.clone());
 
+    #[cfg(windows)]
+    {
+        // Try to extract/find Credential Provider DLL on startup
+        match wristkey_platform_win::WindowsSecurity::ensure_dll_extracted().await {
+            Ok(path) => info!("Credential Provider DLL ready at: {:?}", path),
+            Err(e) => warn!("Credential Provider DLL not available: {}", e),
+        }
+    }
+
         if let Err(e) = platform.register_as_authenticator().await {
             eprintln!("[WristKey] Failed to register as authenticator: {}", e);
         }
@@ -708,6 +717,15 @@ fn main() {
                     "lock_now" => {
                         info!("tray: Lock Now clicked");
                         let platform = create_platform_adapter(session.clone());
+
+    #[cfg(windows)]
+    {
+        // Try to extract/find Credential Provider DLL on startup
+        match wristkey_platform_win::WindowsSecurity::ensure_dll_extracted().await {
+            Ok(path) => info!("Credential Provider DLL ready at: {:?}", path),
+            Err(e) => warn!("Credential Provider DLL not available: {}", e),
+        }
+    }
                         let _ = std::thread::spawn(move || {
                             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
                             rt.block_on(async { let _ = platform.lock_screen().await; });
