@@ -14,7 +14,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-use wristkey_core::{SessionManager, Config, Response, Storage, SessionState, PlatformSecurity};
+use wristkey_core::{
+    PasswordVault, SessionManager, Config, Response, Storage, SessionState, PlatformSecurity};
 use wristkey_ble::{BtleplugAdapter, BleAdapter, PeripheralInfo};
 
 #[cfg(windows)]
@@ -135,7 +136,10 @@ async fn check_macos_accessibility() -> Result<bool, String> {
 async fn set_windows_password(password: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     info!("set_windows_password called");
     let s = state.lock().await;
-    let encrypted = s.platform.encrypt_password(&password).await
+
+    // Downcast to WindowsSecurity for DPAPI encryption
+    let win_sec = wristkey_platform_win::WindowsSecurity::new();
+    let encrypted = win_sec.encrypt_password(&password).await
         .map_err(|e| { error!("encrypt_password failed: {}", e); e.to_string() })?;
 
     let devices = s.session.list_devices().await
@@ -564,10 +568,14 @@ fn main() {
 
     #[cfg(windows)]
     {
-        // Try to extract/find Credential Provider DLL on startup
-        match wristkey_platform_win::WindowsSecurity::ensure_dll_extracted().await {
-            Ok(path) => info!("Credential Provider DLL ready at: {:?}", path),
-            Err(e) => warn!("Credential Provider DLL not available: {}", e),
+        // Check if Credential Provider DLL exists (sync check)
+        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let dll_path = exe_dir.join("WristKeyCredentialProvider.dll");
+        if dll_path.exists() {
+            info!("Credential Provider DLL found at: {:?}", dll_path);
+        } else {
+            warn!("Credential Provider DLL not found at: {:?}. Run 'Register' in UI.", dll_path);
         }
     }
 
@@ -716,20 +724,13 @@ fn main() {
                     }
                     "lock_now" => {
                         info!("tray: Lock Now clicked");
-                        let platform = create_platform_adapter(session.clone());
-
-    #[cfg(windows)]
-    {
-        // Try to extract/find Credential Provider DLL on startup
-        match wristkey_platform_win::WindowsSecurity::ensure_dll_extracted().await {
-            Ok(path) => info!("Credential Provider DLL ready at: {:?}", path),
-            Err(e) => warn!("Credential Provider DLL not available: {}", e),
-        }
-    }
-                        let _ = std::thread::spawn(move || {
-                            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-                            rt.block_on(async { let _ = platform.lock_screen().await; });
-                        }).join();
+                        let app_state: State<Arc<Mutex<AppState>>> = app.state();
+                        tokio::runtime::Handle::current().block_on(async {
+                            let state = app_state.lock().await;
+                            if let Err(e) = state.platform.lock_screen().await {
+                                warn!("Tray lock failed: {}", e);
+                            }
+                        });
                     }
                     "quit" => {
                         info!("tray: Quit clicked");
