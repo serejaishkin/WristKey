@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
+import androidx.compose.ui.graphics.Color
 import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
 
@@ -122,6 +123,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
     var hasPairingRequest by remember { mutableStateOf(false) }
     var pairingAddress by remember { mutableStateOf("--") }
     var showPairingDialog by remember { mutableStateOf(false) }
+    var pairedCount by remember { mutableStateOf(0) }
 
     // Use rememberUpdatedState so the loop always sees the latest bleService
     val currentService by rememberUpdatedState(bleService)
@@ -136,6 +138,7 @@ fun MainScreen(bleService: WristKeyBleService?) {
             deviceAddress = svc.getConnectedDeviceAddress()
             isServerRunning = svc.isAdvertising()
             currentPin = svc.getAdvertisePin()
+            pairedCount = svc.getPairedDeviceCount()
 
             val requested = svc.pairingRequested.get()
             if (requested && !hasPairingRequest) {
@@ -291,39 +294,44 @@ fun MainScreen(bleService: WristKeyBleService?) {
 
     if (showPairingDialog && hasPairingRequest) {
         Dialog(onDismissRequest = { }) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                backgroundPainter = CardDefaults.cardBackgroundPainter()
             ) {
-                Text("🔗 Pair Request", style = MaterialTheme.typography.title3)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Device: $pairingAddress",
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.body2
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Row {
-                    Button(onClick = {
-                        showPairingDialog = false
-                        hasPairingRequest = false
-                        bleService?.rejectPairing()
-                        Toast.makeText(context, "❌ Pairing rejected", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Text("❌ Cancel")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = {
-                        showPairingDialog = false
-                        hasPairingRequest = false
-                        val ok = bleService?.confirmPairing() ?: false
-                        if (ok) {
-                            Toast.makeText(context, "✅ Paired!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "❌ Pairing failed", Toast.LENGTH_SHORT).show()
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("🔗 Pair Request", style = MaterialTheme.typography.title3)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Device: $pairingAddress",
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.body2
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row {
+                        Button(onClick = {
+                            showPairingDialog = false
+                            hasPairingRequest = false
+                            bleService?.rejectPairing()
+                            Toast.makeText(context, "❌ Pairing rejected", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Text("❌ Cancel")
                         }
-                    }) {
-                        Text("✅ Pair")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(onClick = {
+                            showPairingDialog = false
+                            hasPairingRequest = false
+                            val ok = bleService?.confirmPairing() ?: false
+                            if (ok) {
+                                Toast.makeText(context, "✅ Paired!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "❌ Pairing failed", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Text("✅ Pair")
+                        }
                     }
                 }
             }
@@ -332,25 +340,30 @@ fun MainScreen(bleService: WristKeyBleService?) {
 
     if (showForgetDialog) {
         Dialog(onDismissRequest = { showForgetDialog = false }) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                backgroundPainter = CardDefaults.cardBackgroundPainter()
             ) {
-                Text("Forget PC?", style = MaterialTheme.typography.title3)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("This PC will need to be paired again.", textAlign = TextAlign.Center)
-                Spacer(modifier = Modifier.height(16.dp))
-                Row {
-                    Button(onClick = { showForgetDialog = false }) {
-                        Text("Cancel")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = {
-                        showForgetDialog = false
-                        bleService?.forgetDevice()
-                        Toast.makeText(context, "Device forgotten", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Text("Forget")
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Forget PC?", style = MaterialTheme.typography.title3)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("This PC will need to be paired again.", textAlign = TextAlign.Center)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row {
+                        Button(onClick = { showForgetDialog = false }) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(onClick = {
+                            showForgetDialog = false
+                            bleService?.forgetDevice()
+                            Toast.makeText(context, "Device forgotten", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Text("Forget")
+                        }
                     }
                 }
             }

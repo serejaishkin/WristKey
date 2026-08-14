@@ -84,9 +84,10 @@ class WristKeyBleService : Service() {
         // Load previously paired device address if any
         try {
             pairedDeviceAddress = settings.getPairedDeviceAddress()
-            Log.i(TAG, "Loaded paired device address: $pairedDeviceAddress")
+            val count = settings.pairedDevices.size
+            Log.i(TAG, "Loaded paired device address: $pairedDeviceAddress, paired count: $count")
         } catch (e: Exception) {
-            Log.w(TAG, "getPairedDeviceAddress not available in settings")
+            Log.w(TAG, "getPairedDeviceAddress not available in settings: ${e.message}")
         }
         startForegroundService()
         startGattServer()
@@ -451,10 +452,13 @@ class WristKeyBleService : Service() {
 
         // Mark as paired
         pairedDeviceAddress = pairingDeviceAddress
+        val addr = pairingDeviceAddress ?: ""
         try {
-            settings.savePairedDeviceAddress(pairingDeviceAddress ?: "")
+            settings.savePairedDeviceAddress(addr)
+            settings.addPairedDevice(addr.ifEmpty { "unknown" })
+            Log.i(TAG, "Paired device saved: addr=$addr, total paired=${settings.pairedDevices.size}")
         } catch (e: Exception) {
-            Log.w(TAG, "savePairedDeviceAddress not available")
+            Log.w(TAG, "savePairedDeviceAddress not available: ${e.message}")
         }
 
         // Clear dialog state
@@ -527,13 +531,16 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "requestCalibration: calibration is managed by PC via CONFIG characteristic")
     }
 
-    fun isPaired(): Boolean = pairedDeviceAddress != null
+    fun isPaired(): Boolean = !pairedDeviceAddress.isNullOrEmpty()
     fun getDeviceName(): String = connectedDevice?.name ?: "Not connected"
     fun getLastRssi(): String = if (lastRssi != 0) "$lastRssi" else "--"
     fun isAdvertising(): Boolean = bluetoothLeAdvertiser != null
     fun getAdvertisePin(): String = "----"
     fun getConnectedDeviceAddress(): String = connectedDevice?.address ?: "--"
     fun getPairingDeviceAddress(): String = pairingDeviceAddress ?: "--"
+
+    fun getPairedDeviceCount(): Int = settings.pairedDevices.size
+    fun getPairedDevicesList(): List<String> = settings.pairedDevices.toList()
 
     fun forgetDevice() {
         pairedDeviceAddress = null
