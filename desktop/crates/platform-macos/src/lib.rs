@@ -124,11 +124,17 @@ impl MacOSSecurity {
     }
 
     /// Check if Accessibility permission is granted.
+    /// Note: Runtime check requires ApplicationServices framework (system).
+    /// We skip compile-time check and rely on osascript error handling.
     fn check_accessibility_permission() -> bool {
-        // On macOS 10.9+, check AXIsProcessTrusted
-        unsafe {
-            let trusted = application_services::AXIsProcessTrusted(std::ptr::null());
-            trusted != 0
+        // Try a harmless AppleScript to test if we have permission
+        match std::process::Command::new("osascript")
+            .arg("-e")
+            .arg("tell application "System Events" to return name of first process")
+            .output()
+        {
+            Ok(out) if out.status.success() => true,
+            _ => false,
         }
     }
 }
