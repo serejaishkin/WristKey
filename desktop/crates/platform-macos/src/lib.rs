@@ -1,10 +1,10 @@
 //! macOS platform adapter.
 //!
 //! Lock via AppleScript (Ctrl+Cmd+Q).
-//! Unlock via Accessibility API — types stored password and presses Return.
+//! Unlock via Accessibility API - types stored password and presses Return.
 //! Password is stored in macOS Keychain (secure, encrypted, system-managed).
 //!
-//! Requires: System Settings → Privacy & Security → Accessibility → WristKey (ON)
+//! Requires: System Settings -> Privacy & Security -> Accessibility -> WristKey (ON)
 
 use async_trait::async_trait;
 use wristkey_core::{PlatformSecurity, Result, WristKeyError};
@@ -23,26 +23,22 @@ impl MacOSSecurity {
         Self
     }
 
-    /// Save password to macOS Keychain.
-    /// Called from Settings GUI when user sets macOS password.
     pub fn save_password_to_keychain(password: &str) -> Result<()> {
         let service = "WristKey";
         let account = "macos_unlock_password";
 
-        // Delete old entry if exists
         let _ = Command::new("security")
             .args(["delete-generic-password", "-s", service, "-a", account])
             .output();
 
-        // Add new password
         let output = Command::new("security")
             .args([
                 "add-generic-password",
                 "-s", service,
                 "-a", account,
                 "-w", password,
-                "-U", // Update if exists
-                "-T", "", // Allow any app (WristKey) to access
+                "-U",
+                "-T", "",
             ])
             .output()
             .map_err(|e| WristKeyError::Platform(format!("keychain save failed: {}", e)))?;
@@ -56,14 +52,13 @@ impl MacOSSecurity {
         Ok(())
     }
 
-    /// Load password from macOS Keychain.
     fn load_password_from_keychain() -> Result<Option<String>> {
         let output = Command::new("security")
             .args([
                 "find-generic-password",
                 "-s", "WristKey",
                 "-a", "macos_unlock_password",
-                "-w", // Output only password
+                "-w",
             ])
             .output();
 
@@ -76,11 +71,10 @@ impl MacOSSecurity {
                     Ok(Some(password))
                 }
             }
-            _ => Ok(None), // Password not set yet
+            _ => Ok(None),
         }
     }
 
-    /// Delete password from Keychain.
     pub fn delete_password_from_keychain() -> Result<()> {
         let output = Command::new("security")
             .args([
@@ -97,7 +91,6 @@ impl MacOSSecurity {
         Ok(())
     }
 
-    /// Check if screen is locked using CGSessionCopyCurrentDictionary
     #[cfg(target_os = "macos")]
     fn is_screen_locked() -> bool {
         unsafe {
@@ -123,11 +116,7 @@ impl MacOSSecurity {
         false
     }
 
-    /// Check if Accessibility permission is granted.
-    /// Note: Runtime check requires ApplicationServices framework (system).
-    /// We skip compile-time check and rely on osascript error handling.
     pub fn check_accessibility_permission() -> bool {
-        // Try a harmless AppleScript to test if we have permission
         match std::process::Command::new("osascript")
             .arg("-e")
             .arg("tell application \"System Events\" to return name of first process")
@@ -144,7 +133,7 @@ impl PlatformSecurity for MacOSSecurity {
     async fn lock_screen(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            let script = r#"tell application "System Events" to keystroke "q" using {command down, control down}"#;
+            let script = "tell application \"System Events\" to keystroke \"q\" using {command down, control down}";
             let output = Command::new("osascript")
                 .arg("-e")
                 .arg(script)
@@ -167,39 +156,38 @@ impl PlatformSecurity for MacOSSecurity {
     async fn unlock_screen(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            // Check Accessibility permission first
             if !Self::check_accessibility_permission() {
                 return Err(WristKeyError::Platform(
-                    "macOS unlock requires Accessibility permission.                     Go to System Settings → Privacy & Security → Accessibility → enable WristKey.".into()
+                    "macOS unlock requires Accessibility permission. \
+                    Go to System Settings -> Privacy & Security -> Accessibility -> enable WristKey.".into()
                 ));
             }
 
-            // Check if screen is actually locked
             if !Self::is_screen_locked() {
                 tracing::info!("macOS: screen not locked, nothing to unlock");
                 return Ok(());
             }
 
-            // Load password from Keychain
             let password = Self::load_password_from_keychain()?.ok_or_else(|| {
                 WristKeyError::Platform(
-                    "macOS unlock requires password. Set it in WristKey Settings → macOS Password.".into()
+                    "macOS unlock requires password. Set it in WristKey Settings -> macOS Password.".into()
                 )
             })?;
 
-            // Wake display first (in case it's asleep)
             let _ = Command::new("caffeinate")
                 .args(["-u", "-t", "1"])
                 .spawn();
 
-            // Type password and press Return via Accessibility API
-            let escaped = password.replace("\", "\\").replace(""", "\"");
+            // Escape backslash and double-quote for AppleScript
+            let escaped = password.replace('\\', "\\\\").replace('"', "\\\"");
             let script = format!(
-                r#"tell application "System Events"
-    keystroke "{}"
-    delay 0.1
-    key code 36
-end tell"#,
+                concat!(
+                    "tell application \"System Events\"\n",
+                    "    keystroke \"{}\"\n",
+                    "    delay 0.1\n",
+                    "    key code 36\n",
+                    "end tell"
+                ),
                 escaped
             );
 
@@ -213,7 +201,8 @@ end tell"#,
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if stderr.contains("not allowed to assistive access") {
                     return Err(WristKeyError::Platform(
-                        "macOS unlock failed: Accessibility permission denied.                         Go to System Settings → Privacy & Security → Accessibility → enable WristKey.".into()
+                        "macOS unlock failed: Accessibility permission denied. \
+                        Go to System Settings -> Privacy & Security -> Accessibility -> enable WristKey.".into()
                     ));
                 }
                 return Err(WristKeyError::Platform(format!("macOS unlock failed: {}", stderr)));
@@ -233,7 +222,7 @@ end tell"#,
     }
 
     async fn register_as_authenticator(&self) -> Result<()> {
-        tracing::info!("macOS: WristKey uses Keychain + Accessibility for unlock.             Set password in Settings. Grant Accessibility permission when prompted.");
+        tracing::info!("macOS: WristKey uses Keychain + Accessibility for unlock. Set password in Settings. Grant Accessibility permission when prompted.");
         Ok(())
     }
 }

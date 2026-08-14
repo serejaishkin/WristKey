@@ -75,21 +75,42 @@ struct CalibrateResult {
 
 // --- Commands ---
 
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn set_macos_password(password: String) -> Result<(), String> {
-    wristkey_platform_macos::MacOSSecurity::save_password_to_keychain(&password)
+    MacOSSecurity::save_password_to_keychain(&password)
         .map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn set_macos_password(_password: String) -> Result<(), String> {
+    Err("macOS only".into())
+}
+
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn delete_macos_password() -> Result<(), String> {
-    wristkey_platform_macos::MacOSSecurity::delete_password_from_keychain()
+    MacOSSecurity::delete_password_from_keychain()
         .map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn delete_macos_password() -> Result<(), String> {
+    Err("macOS only".into())
+}
+
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn check_macos_accessibility() -> Result<bool, String> {
-    Ok(wristkey_platform_macos::MacOSSecurity::check_accessibility_permission())
+    Ok(MacOSSecurity::check_accessibility_permission())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn check_macos_accessibility() -> Result<bool, String> {
+    Ok(false)
 }
 
 #[tauri::command]
@@ -100,10 +121,10 @@ async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto,
     let daemon_enabled = s.daemon_enabled.load(Ordering::Relaxed);
     let (state_str, detail) = match session_state {
         SessionState::Disconnected => ("disconnected".into(), "No watch connected".into()),
-        SessionState::Pairing { .. } => ("pairing".into(), "Waiting for watch confirmation…".into()),
-        SessionState::Verifying { .. } => ("verifying".into(), "Checking signature…".into()),
+        SessionState::Pairing { .. } => ("pairing".into(), "Waiting for watch confirmation...".into()),
+        SessionState::Verifying { .. } => ("verifying".into(), "Checking signature...".into()),
         SessionState::Authenticated { device_id, last_rssi, .. } => {
-            ("authenticated".into(), format!("Device: {} • RSSI: {} dBm", device_id, last_rssi))
+            ("authenticated".into(), format!("Device: {} - RSSI: {} dBm", device_id, last_rssi))
         }
         SessionState::Locked => ("locked".into(), "Screen locked".into()),
     };
@@ -162,6 +183,9 @@ async fn pair_device(req: PairRequest, state: State<'_, Arc<Mutex<AppState>>>) -
     let conn = adapter.connect(&info).await.map_err(|e| e.to_string())?;
     let challenge_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567891").unwrap();
     let response_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567892").unwrap();
+
+    // FIX: generate challenge before writing
+    let challenge = s.session.begin_pairing().await.map_err(|e| e.to_string())?;
 
     let mut write_ok = false;
     for _ in 1..=3 {
@@ -232,7 +256,7 @@ async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>)
     let config_char = Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567894").unwrap();
 
     adapter.write(&conn, config_char, &[0x01]).await.map_err(|e| e.to_string())?;
-    info!("Calibration started — hold watch near PC for 10s");
+    info!("Calibration started - hold watch near PC for 10s");
 
     let mut samples = Vec::new();
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
@@ -251,7 +275,6 @@ async fn calibrate_proximity(id: String, state: State<'_, Arc<Mutex<AppState>>>)
         return Err("No RSSI samples collected".into());
     }
 
-    // Use median instead of average for robustness
     samples.sort();
     let median = samples[samples.len() / 2];
     let threshold = median.saturating_add(5).min(-20).max(-90);
@@ -324,7 +347,6 @@ fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
 // --- Main ---
 
 fn main() {
-    // Logs next to the .exe
     let log_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("logs")))
@@ -343,7 +365,7 @@ fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    info!("WristKey started — logs at {:?}", log_path);
+    info!("WristKey started - logs at {:?}", log_path);
     info!("WristKey Tauri v2 starting");
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -414,7 +436,7 @@ fn main() {
                 let ble = match BtleplugAdapter::new().await {
                     Ok(a) => Arc::new(a) as Arc<dyn BleAdapter>,
                     Err(e) => {
-                        warn!("BLE adapter unavailable: {}. Retrying in 5s…", e);
+                        warn!("BLE adapter unavailable: {}. Retrying in 5s...", e);
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -425,7 +447,7 @@ fn main() {
 
                 info!("Daemon loop started");
                 if let Err(e) = daemon.run().await {
-                    warn!("Daemon crashed: {}. Restarting in 5s…", e);
+                    warn!("Daemon crashed: {}. Restarting in 5s...", e);
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
@@ -437,7 +459,7 @@ fn main() {
         .setup(|app| {
             let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
-            let lock_i = MenuItem::with_id(app, "lock_now", "🔒 Lock Now", true, None::<&str>)?;
+            let lock_i = MenuItem::with_id(app, "lock_now", "Lock Now", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
             let menu = Menu::with_items(app, &[
