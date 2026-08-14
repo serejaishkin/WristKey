@@ -1,274 +1,250 @@
-if (!window.__TAURI__?.core?.invoke) {
-  console.error('Tauri API not available. Make sure withGlobalTauri is enabled.');
+/* WristKey Desktop Frontend */
+
+let currentState = 'disconnected';
+let currentDeviceCount = 0;
+let daemonEnabled = false;
+let cpRegistered = false;
+
+async function invoke(cmd, args = {}) {
+  try {
+    return await window.__TAURI__.core.invoke(cmd, args);
+  } catch (e) {
+    console.error(`Invoke ${cmd} failed:`, e);
+    throw e;
+  }
 }
-const invoke = window.__TAURI__?.core?.invoke;
 
-// Navigation
-document.querySelectorAll('.nav-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    // Hide all tabs
-    document.querySelectorAll('.tab').forEach(t => t.classList.add('hidden'));
-    // Show selected tab
-    const tab = document.getElementById('tab-' + btn.dataset.tab);
-    if (tab) tab.classList.remove('hidden');
-    // Update active button
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    // Load devices when switching to devices tab
-    if (btn.dataset.tab === 'devices') {
-      loadDevices();
-    }
-  });
-});
-
-// Status polling
 async function refreshStatus() {
   try {
-    const st = await invoke('get_status');
-    const icon = document.getElementById('statusIcon');
-    const title = document.getElementById('statusTitle');
-    const detail = document.getElementById('statusDetail');
-    const daemonToggle = document.getElementById('daemonToggle');
+    const status = await invoke('get_status');
+    currentState = status.state;
+    currentDeviceCount = status.device_count;
+    daemonEnabled = status.daemon_enabled;
+    cpRegistered = status.cp_registered || false;
 
-    title.textContent = st.state.charAt(0).toUpperCase() + st.state.slice(1);
-    detail.textContent = st.detail;
+    document.getElementById('statusState').textContent = status.detail;
+    document.getElementById('statusDot').className = 'status-dot ' + status.state;
+    document.getElementById('deviceCount').textContent = status.device_count;
+    document.getElementById('daemonToggle').checked = status.daemon_enabled;
 
-    // Credential Provider status (Windows only)
-    const cpNav = document.getElementById('cpNavBtn');
-    if (cpNav) {
-      const cpIcon = document.getElementById('cpStatusIcon');
-      const cpText = document.getElementById('cpStatusText');
-      const cpRegBtn = document.getElementById('cpRegisterBtn');
-      if (st.cp_registered) {
-        if (cpIcon) cpIcon.textContent = '✅';
-        if (cpText) cpText.textContent = 'Registered';
-        if (cpRegBtn) { cpRegBtn.textContent = '✅ Registered'; cpRegBtn.disabled = true; }
-      } else {
-        if (cpIcon) cpIcon.textContent = '❌';
-        if (cpText) cpText.textContent = 'Not registered';
-        if (cpRegBtn) { cpRegBtn.textContent = '📝 Register Credential Provider'; cpRegBtn.disabled = false; }
-      }
+    // Windows CP tab visibility
+    const cpTab = document.getElementById('tab-cp');
+    if (cpTab) {
+      cpTab.style.display = 'block';
     }
-
-    if (st.state === 'locked') {
-      icon.textContent = '🔒';
-      icon.classList.add('locked');
-    } else if (st.state === 'authenticated') {
-      icon.textContent = '🔓';
-      icon.classList.remove('locked');
-    } else {
-      icon.textContent = '⏳';
-      icon.classList.remove('locked');
+    const cpStatus = document.getElementById('cpStatus');
+    if (cpStatus) {
+      cpStatus.textContent = cpRegistered ? '✅ Registered' : '❌ Not registered';
+      cpStatus.className = cpRegistered ? 'status-ok' : 'status-warn';
     }
-
-    if (daemonToggle) daemonToggle.checked = st.daemon_enabled;
+    const cpBtn = document.getElementById('cpRegisterBtn');
+    if (cpBtn) {
+      cpBtn.textContent = cpRegistered ? '🔁 Re-register CP' : '📝 Register Credential Provider';
+    }
   } catch (e) {
-    console.error('Status error:', e);
+    document.getElementById('statusState').textContent = 'Error: ' + e;
   }
 }
-setInterval(refreshStatus, 2000);
-refreshStatus();
 
-// Daemon toggle
-document.getElementById('daemonToggle')?.addEventListener('change', async (e) => {
-  try {
-    await invoke('toggle_daemon', { enabled: e.target.checked });
-  } catch (err) {
-    console.error('Toggle daemon error:', err);
-  }
-});
-
-// Paired devices
-async function loadDevices() {
+async function refreshDevices() {
   try {
     const devices = await invoke('get_paired_devices');
     const list = document.getElementById('pairedList');
-    if (!devices.length) {
-      list.innerHTML = '<p class="muted">No paired devices yet.</p>';
-      return;
+    list.innerHTML = '';
+    if (devices.length === 0) {
+      list.innerHTML = '<div class="empty">No paired devices. Scan to pair.</div>';
+    } else {
+      devices.forEach(d => {
+        const div = document.createElement('div');
+        div.className = 'device-card';
+        div.innerHTML = `<strong>${d.name}</strong><br><small>${d.address} • RSSI baseline: ${d.baseline_rssi} dBm</small><br>
+          <button onclick="forgetDevice('${d.id}')">🗑 Forget</button>
+          <button onclick="calibrateDevice('${d.id}')">📡 Calibrate</button>`;
+        list.appendChild(div);
+      });
     }
-    list.innerHTML = devices.map(d => `
-      <div class="device-row">
-        <div class="device-info">
-          <span class="device-icon">⌚</span>
-          <div>
-            <div class="device-name">${escapeHtml(d.name)}</div>
-            <div class="device-meta">Baseline ${d.baseline_rssi} dBm • ${d.address}</div>
-          </div>
-        </div>
-        <div>
-          <button class="btn btn-primary" style="margin-right:8px" onclick="calibrateDevice('${d.id}', '${escapeHtml(d.name)}')">📏 Calibrate</button>
-          <button class="btn btn-danger" onclick="forgetDevice('${d.id}')">Forget</button>
-        </div>
-      </div>
-    `).join('');
   } catch (e) {
-    console.error('Devices error:', e);
+    console.error('refreshDevices failed:', e);
   }
 }
 
-// Scan
-document.getElementById('scanBtn').addEventListener('click', async () => {
+async function scanDevices() {
   const btn = document.getElementById('scanBtn');
-  const res = document.getElementById('scanResults');
   btn.disabled = true;
-  btn.textContent = '⏳ Scanning…';
-  res.innerHTML = '<p class="muted">Looking for WristKey devices…</p>';
+  btn.textContent = '🔍 Scanning...';
   try {
     const found = await invoke('scan_devices');
-    if (!found.length) {
-      res.innerHTML = '<p class="muted">No devices found. Make sure watch app is open.</p>';
+    const list = document.getElementById('scanList');
+    list.innerHTML = '';
+    if (found.length === 0) {
+      list.innerHTML = '<div class="empty">No devices found. Make sure watch app is open.</div>';
     } else {
-      res.innerHTML = found.map(d => `
-        <div class="device-row" style="background:rgba(59,130,246,0.08)">
-          <div class="device-info">
-            <span class="device-icon">⌚</span>
-            <div>
-              <div class="device-name">${escapeHtml(d.name)}</div>
-              <div class="device-meta">RSSI: ${d.rssi} dBm</div>
-            </div>
-          </div>
-          <button class="btn btn-primary" onclick="pairDevice('${escapeHtml(d.id)}', '${escapeHtml(d.name)}', ${d.rssi})">🔗 Pair</button>
-        </div>
-      `).join('');
+      found.forEach(d => {
+        const div = document.createElement('div');
+        div.className = 'device-card';
+        div.innerHTML = `<strong>${d.name}</strong><br><small>RSSI: ${d.rssi} dBm • ${d.address}</small><br>
+          <button onclick="pairDevice('${d.id}', '${d.name}', ${d.rssi}, '${d.address}')">🔗 Pair</button>`;
+        list.appendChild(div);
+      });
     }
   } catch (e) {
-    res.innerHTML = '<p class="muted">Scan error: ' + escapeHtml(e.toString()) + '</p>';
+    alert('Scan failed: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Scan for New Device';
   }
-  btn.disabled = false;
-  btn.textContent = '🔍 Scan for 30 seconds';
-});
+}
 
-// Settings
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  const cfg = {
-    auto_lock_timeout_sec: parseInt(document.getElementById('timeoutInput').value),
-    rssi_threshold_offset_dbm: parseInt(document.getElementById('rssiOffsetInput').value),
-    challenge_timeout_sec: parseInt(document.getElementById('challengeInput').value),
-  };
+async function pairDevice(id, name, rssi, address) {
   try {
-    await invoke('set_config', { config: cfg });
-    document.getElementById('saveStatus').textContent = '✅ Saved';
-    setTimeout(() => document.getElementById('saveStatus').textContent = '', 2000);
+    await invoke('pair_device', { req: { id, name, rssi, address } });
+    alert('✅ Paired successfully!');
+    await refreshDevices();
+    await refreshStatus();
   } catch (e) {
-    document.getElementById('saveStatus').textContent = '❌ ' + e;
+    alert('❌ Pairing failed: ' + e);
   }
-});
-
-// Lock button
-document.getElementById('lockBtn').addEventListener('click', async () => {
-  try {
-    await invoke('lock_screen');
-  } catch (e) {
-    alert('Lock failed: ' + e);
-  }
-});
-
-// Unlock button
-document.getElementById('unlockBtn')?.addEventListener('click', async () => {
-  try {
-    await invoke('unlock_screen');
-  } catch (e) {
-    alert('Unlock failed: ' + e);
-  }
-});
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 async function forgetDevice(id) {
-  if (!confirm('Remove this device?')) return;
+  if (!confirm('Forget this device?')) return;
   try {
     await invoke('forget_device', { id });
-    loadDevices();
+    await refreshDevices();
+    await refreshStatus();
   } catch (e) {
     alert('Forget failed: ' + e);
   }
 }
 
-async function pairDevice(id, name, rssi) {
-  if (!confirm(`Pair with ${name}?`)) return;
+async function calibrateDevice(id) {
   const btn = event.target;
   btn.disabled = true;
-  btn.textContent = '⏳ Pairing…';
-  try {
-    await invoke('pair_device', { req: { id, name, rssi } });
-    alert('✅ Paired successfully!');
-    loadDevices();
-  } catch (e) {
-    alert('❌ Pair failed: ' + e);
-  }
-  btn.disabled = false;
-  btn.textContent = '🔗 Pair';
-}
-
-async function calibrateDevice(id, name) {
-  if (!confirm(`Calibrate proximity for ${name}?\nHold watch near PC for 10s.`)) return;
-
-  const progressDiv = document.getElementById('calibrateProgress');
-  const progressBar = document.getElementById('calibrateBar');
-  const progressText = document.getElementById('calibrateText');
-  progressDiv.classList.remove('hidden');
-
-  let progress = 0;
-  const interval = setInterval(() => {
-    progress += 10;
-    progressBar.style.width = progress + '%';
-    progressText.textContent = `Calibrating… ${progress}%`;
-    if (progress >= 100) clearInterval(interval);
-  }, 1000);
-
+  btn.textContent = '⏳ Calibrating...';
   try {
     const result = await invoke('calibrate_proximity', { id });
-    clearInterval(interval);
-    progressBar.style.width = '100%';
-    progressText.textContent = `✅ Calibrated! Avg: ${result.avg} dBm, Threshold: ${result.threshold} dBm`;
-    setTimeout(() => progressDiv.classList.add('hidden'), 3000);
-    loadDevices();
+    alert(`📡 Calibration complete!\nMedian: ${result.avg} dBm\nThreshold: ${result.threshold} dBm\nSamples: ${result.samples}`);
   } catch (e) {
-    clearInterval(interval);
-    progressText.textContent = '❌ Calibration failed: ' + e;
-    setTimeout(() => progressDiv.classList.add('hidden'), 3000);
+    alert('Calibration failed: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📡 Calibrate';
   }
 }
 
-// Credential Provider registration
-document.getElementById('cpRegisterBtn')?.addEventListener('click', async () => {
+async function loadConfig() {
+  try {
+    const cfg = await invoke('get_config');
+    document.getElementById('timeoutInput').value = cfg.auto_lock_timeout_sec;
+    document.getElementById('rssiInput').value = cfg.rssi_threshold_offset_dbm;
+    document.getElementById('challengeInput').value = cfg.challenge_timeout_sec;
+    document.getElementById('logFileToggle').checked = cfg.log_to_file;
+    document.getElementById('logConsoleToggle').checked = cfg.log_to_console;
+    document.getElementById('logLevelSelect').value = cfg.log_level;
+  } catch (e) {
+    console.error('loadConfig failed:', e);
+  }
+}
+
+async function saveConfig() {
+  try {
+    const cfg = {
+      auto_lock_timeout_sec: parseInt(document.getElementById('timeoutInput').value),
+      rssi_threshold_offset_dbm: parseInt(document.getElementById('rssiInput').value),
+      challenge_timeout_sec: parseInt(document.getElementById('challengeInput').value),
+      log_to_file: document.getElementById('logFileToggle').checked,
+      log_to_console: document.getElementById('logConsoleToggle').checked,
+      log_level: document.getElementById('logLevelSelect').value,
+    };
+    await invoke('set_config', { config: cfg });
+    alert('💾 Saved!');
+  } catch (e) {
+    alert('❌ Save failed: ' + e);
+  }
+}
+
+async function toggleDaemon() {
+  const enabled = document.getElementById('daemonToggle').checked;
+  try {
+    await invoke('toggle_daemon', { enabled });
+    daemonEnabled = enabled;
+  } catch (e) {
+    alert('Toggle daemon failed: ' + e);
+    document.getElementById('daemonToggle').checked = !enabled;
+  }
+}
+
+async function lockNow() {
+  try {
+    await invoke('lock_screen');
+  } catch (e) {
+    alert('Lock failed: ' + e);
+  }
+}
+
+async function setWindowsPassword() {
+  const pwd = document.getElementById('winPasswordInput').value;
+  if (!pwd) {
+    alert('Enter your Windows password');
+    return;
+  }
+  try {
+    await invoke('set_windows_password', { password: pwd });
+    alert('💾 Windows password encrypted and saved!');
+    document.getElementById('winPasswordInput').value = '';
+  } catch (e) {
+    alert('❌ Failed: ' + e);
+  }
+}
+
+async function registerCP() {
   try {
     await invoke('register_credential_provider');
-    alert('Credential Provider registered! Restart your computer to apply changes.');
-    refreshStatus();
-  } catch (err) {
-    alert('Registration failed: ' + err);
-    console.error('CP register error:', err);
+    alert('✅ Credential Provider registered! Restart PC to apply.');
+    await refreshStatus();
+  } catch (e) {
+    alert('❌ Registration failed: ' + e);
   }
-});
+}
 
-document.getElementById('cpUnregisterBtn')?.addEventListener('click', async () => {
+async function unregisterCP() {
+  if (!confirm('Unregister Credential Provider?')) return;
   try {
     await invoke('unregister_credential_provider');
-    alert('Credential Provider unregistered. Restart your computer to apply changes.');
-    refreshStatus();
-  } catch (err) {
-    alert('Unregister failed: ' + err);
-    console.error('CP unregister error:', err);
+    alert('✅ Unregistered. Restart PC to apply.');
+    await refreshStatus();
+  } catch (e) {
+    alert('❌ Failed: ' + e);
   }
-});
+}
 
-// Set Windows Password
-document.getElementById('setWinPasswordBtn')?.addEventListener('click', async () => {
-  const input = document.getElementById('winPasswordInput');
-  const password = input?.value;
-  if (!password) { alert('Please enter a password'); return; }
-  try {
-    await invoke('set_windows_password', { password });
-    alert('Windows password saved successfully!');
-    input.value = '';
-  } catch (err) {
-    alert('Failed to save password: ' + err);
-    console.error('Set password error:', err);
-  }
+// Tab switching
+function showTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab));
+  });
+
+  document.getElementById('daemonToggle').addEventListener('change', toggleDaemon);
+  document.getElementById('scanBtn').addEventListener('click', scanDevices);
+  document.getElementById('saveConfigBtn').addEventListener('click', saveConfig);
+  document.getElementById('lockNowBtn').addEventListener('click', lockNow);
+
+  const cpBtn = document.getElementById('cpRegisterBtn');
+  if (cpBtn) cpBtn.addEventListener('click', registerCP);
+  const cpUnregBtn = document.getElementById('cpUnregisterBtn');
+  if (cpUnregBtn) cpUnregBtn.addEventListener('click', unregisterCP);
+  const winPwdBtn = document.getElementById('winPasswordBtn');
+  if (winPwdBtn) winPwdBtn.addEventListener('click', setWindowsPassword);
+
+  refreshStatus();
+  refreshDevices();
+  loadConfig();
+  setInterval(refreshStatus, 3000);
 });
