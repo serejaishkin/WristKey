@@ -30,8 +30,9 @@ wristkey-platform-win = { path = "../../crates/platform-win" }
 wristkey-platform-linux = { path = "../../crates/platform-linux" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-wristkey-platform-macos = { path = "../../crates/platform-macos" }
+wristkey-platform-macos = { path = "../../crates/platform-macos", optional = true }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+macos = ["dep:wristkey-platform-macos"]

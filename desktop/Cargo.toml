@@ -5,6 +5,7 @@ members = [
     "crates/ble",
     "crates/platform-win",
     "crates/platform-linux",
+    "crates/platform-macos",
     "crates/daemon",
     "tauri/src-tauri",
 ]
