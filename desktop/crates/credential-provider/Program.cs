@@ -1,7 +1,7 @@
 using System;
 using Microsoft.Win32;
 
-namespace WristKey.CredentialProvider
+namespace WristKeyCredentialProvider
 {
     /// <summary>
     /// Registration helper for the WristKey Credential Provider.
@@ -9,7 +9,7 @@ namespace WristKey.CredentialProvider
     /// </summary>
     class Program
     {
-        private static readonly string Clsid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}";
+        private static readonly string Clsid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
         private static readonly string ProviderName = "WristKeyCredentialProvider";
 
         static void Main(string[] args)
@@ -18,7 +18,7 @@ namespace WristKey.CredentialProvider
             {
                 Register();
                 Console.WriteLine("WristKey Credential Provider registered successfully.");
-                Console.WriteLine("Log off and back on to see the WristKey tile.");
+                Console.WriteLine("Restart your computer to see the WristKey tile.");
             }
             else if (args.Length > 0 && args[0] == "--unregister")
             {
@@ -33,20 +33,22 @@ namespace WristKey.CredentialProvider
 
         static void Register()
         {
+            string dllPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+
             // Register COM class
-            using (var clsidKey = Registry.ClassesRoot.CreateSubKey(@"CLSID\" + Clsid))
+            using (var clsidKey = Registry.ClassesRoot.CreateSubKey(@"CLSID\\" + Clsid))
             {
                 clsidKey.SetValue(null, "WristKey Credential Provider");
                 using (var inprocKey = clsidKey.CreateSubKey("InprocServer32"))
                 {
-                    inprocKey.SetValue(null, System.Reflection.Assembly.GetExecutingAssembly().Location);
+                    inprocKey.SetValue(null, dllPath);
                     inprocKey.SetValue("ThreadingModel", "Apartment");
                 }
             }
 
             // Register as Credential Provider
             using (var cpKey = Registry.LocalMachine.CreateSubKey(
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\" + Clsid))
+                @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\" + Clsid))
             {
                 cpKey.SetValue(null, ProviderName);
             }
@@ -54,9 +56,9 @@ namespace WristKey.CredentialProvider
 
         static void Unregister()
         {
-            Registry.ClassesRoot.DeleteSubKeyTree(@"CLSID\" + Clsid, false);
+            Registry.ClassesRoot.DeleteSubKeyTree(@"CLSID\\" + Clsid, false);
             Registry.LocalMachine.DeleteSubKeyTree(
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\" + Clsid, false);
+                @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\" + Clsid, false);
         }
     }
 }

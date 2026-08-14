@@ -25,3 +25,4 @@ ecdsa = { version = "0.16", features = ["der", "signing", "verifying"] }
 sha2 = "0.10"
 rand = "0.8"
 toml = "0.8"
+winreg = "0.52"

@@ -85,7 +85,7 @@ namespace WristKeyCredentialProvider
         public const int E_FAIL = unchecked((int)0x80004005);
     }
 
-    // ==================== Native Methods ====================
+    // ==================== Native Methods (LSA + Kerberos) ====================
 
     public static class NativeMethods
     {

@@ -33,6 +33,24 @@ async function refreshStatus() {
     title.textContent = st.state.charAt(0).toUpperCase() + st.state.slice(1);
     detail.textContent = st.detail;
 
+    // Credential Provider status (Windows only)
+    const cpNav = document.getElementById('cpNavBtn');
+    if (cpNav && typeof st.cp_registered !== 'undefined') {
+      cpNav.style.display = 'flex';
+      const cpIcon = document.getElementById('cpStatusIcon');
+      const cpText = document.getElementById('cpStatusText');
+      const cpRegBtn = document.getElementById('cpRegisterBtn');
+      if (st.cp_registered) {
+        if (cpIcon) cpIcon.textContent = '✅';
+        if (cpText) cpText.textContent = 'Registered';
+        if (cpRegBtn) { cpRegBtn.textContent = '✅ Registered'; cpRegBtn.disabled = true; }
+      } else {
+        if (cpIcon) cpIcon.textContent = '❌';
+        if (cpText) cpText.textContent = 'Not registered';
+        if (cpRegBtn) { cpRegBtn.textContent = '📝 Register Credential Provider'; cpRegBtn.disabled = false; }
+      }
+    }
+
     if (st.state === 'locked') {
       icon.textContent = '🔒';
       icon.classList.add('locked');
@@ -217,3 +235,41 @@ async function calibrateDevice(id, name) {
     setTimeout(() => progressDiv.classList.add('hidden'), 3000);
   }
 }
+
+// Credential Provider registration
+document.getElementById('cpRegisterBtn')?.addEventListener('click', async () => {
+  try {
+    await invoke('register_credential_provider');
+    alert('Credential Provider registered! Restart your computer to apply changes.');
+    refreshStatus();
+  } catch (err) {
+    alert('Registration failed: ' + err);
+    console.error('CP register error:', err);
+  }
+});
+
+document.getElementById('cpUnregisterBtn')?.addEventListener('click', async () => {
+  try {
+    await invoke('unregister_credential_provider');
+    alert('Credential Provider unregistered. Restart your computer to apply changes.');
+    refreshStatus();
+  } catch (err) {
+    alert('Unregister failed: ' + err);
+    console.error('CP unregister error:', err);
+  }
+});
+
+// Set Windows Password
+document.getElementById('setWinPasswordBtn')?.addEventListener('click', async () => {
+  const input = document.getElementById('winPasswordInput');
+  const password = input?.value;
+  if (!password) { alert('Please enter a password'); return; }
+  try {
+    await invoke('set_windows_password', { password });
+    alert('Windows password saved successfully!');
+    input.value = '';
+  } catch (err) {
+    alert('Failed to save password: ' + err);
+    console.error('Set password error:', err);
+  }
+});

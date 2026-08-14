@@ -54,6 +54,8 @@ struct StatusDto {
     detail: String,
     device_count: usize,
     daemon_enabled: bool,
+    #[cfg(windows)]
+    cp_registered: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -156,6 +158,37 @@ async fn set_windows_password(_password: String, _state: State<'_, Arc<Mutex<App
     Err("Windows only".into())
 }
 
+#[cfg(windows)]
+#[tauri::command]
+async fn register_credential_provider(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    info!("register_credential_provider called");
+    let s = state.lock().await;
+    s.platform.register_as_authenticator().await
+        .map_err(|e| { error!("register_as_authenticator failed: {}", e); e.to_string() })
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn register_credential_provider(_state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    warn!("register_credential_provider called on non-Windows platform");
+    Err("Windows only".into())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+async fn unregister_credential_provider() -> Result<(), String> {
+    info!("unregister_credential_provider called");
+    wristkey_platform_win::WindowsSecurity::unregister_credential_provider()
+        .map_err(|e| { error!("unregister_credential_provider failed: {}", e); e.to_string() })
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn unregister_credential_provider() -> Result<(), String> {
+    warn!("unregister_credential_provider called on non-Windows platform");
+    Err("Windows only".into())
+}
+
 #[tauri::command]
 async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto, String> {
     debug!("get_status called");
@@ -163,6 +196,11 @@ async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto,
     let devices = s.session.list_devices().await.map_err(|e| { error!("list_devices failed: {}", e); e.to_string() })?;
     let session_state = s.session.state().await;
     let daemon_enabled = s.daemon_enabled.load(Ordering::Relaxed);
+    #[cfg(windows)]
+    let cp_registered = wristkey_platform_win::WindowsSecurity::is_credential_provider_registered();
+    #[cfg(not(windows))]
+    let cp_registered = false;
+
     let (state_str, detail) = match session_state {
         SessionState::Disconnected => ("disconnected".into(), "No watch connected".into()),
         SessionState::Pairing { .. } => ("pairing".into(), "Waiting for watch confirmation...".into()),
@@ -173,7 +211,14 @@ async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto,
         SessionState::Locked => ("locked".into(), "Screen locked".into()),
     };
     info!("get_status: state={}, devices={}, daemon={}", state_str, devices.len(), daemon_enabled);
-    Ok(StatusDto { state: state_str, detail, device_count: devices.len(), daemon_enabled })
+    Ok(StatusDto {
+        state: state_str,
+        detail,
+        device_count: devices.len(),
+        daemon_enabled,
+        #[cfg(windows)]
+        cp_registered,
+    })
 }
 
 #[tauri::command]
@@ -693,7 +738,7 @@ fn main() {
             pair_device, forget_device, calibrate_proximity,
             get_config, set_config, lock_screen, unlock_screen,
             toggle_daemon, set_macos_password, delete_macos_password,
-            check_macos_accessibility, set_windows_password
+            check_macos_accessibility, set_windows_password, register_credential_provider, unregister_credential_provider
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

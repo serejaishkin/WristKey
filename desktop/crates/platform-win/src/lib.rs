@@ -4,6 +4,7 @@
 //! - LockWorkStation via user32.dll
 //! - DPAPI password encryption (CryptProtectData / CryptUnprotectData)
 //! - Named pipe server for Credential Provider communication
+//! - Auto-registration of Credential Provider in Windows Registry
 
 use async_trait::async_trait;
 use tokio::net::windows::named_pipe::ServerOptions;
@@ -18,6 +19,10 @@ use tokio::time::{sleep, Duration};
 extern "system" {
     fn LockWorkStation() -> i32;
 }
+
+/// CLSID for WristKey Credential Provider (must match C# GUID)
+pub const CP_CLSID: &str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
+pub const CP_NAME: &str = "WristKey Credential Provider";
 
 pub struct WindowsSecurity {
     session: Option<Arc<SessionManager>>,
@@ -49,6 +54,75 @@ impl WindowsSecurity {
         *self.pipe_password.lock().await = Some(password);
         info!("Unlock password buffered for Credential Provider");
     }
+
+    /// Check if Credential Provider is already registered in registry.
+    pub fn is_credential_provider_registered() -> bool {
+        use winreg::RegKey;
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+
+        let path = format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            CP_CLSID
+        );
+        match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(&path) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Register Credential Provider DLL in Windows Registry.
+    /// Requires Administrator privileges.
+    pub fn register_credential_provider(dll_path: &str) -> Result<()> {
+        use winreg::RegKey;
+        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
+
+        // 1. Register COM CLSID
+        let clsid_path = format!(r"CLSID\{}", CP_CLSID);
+        let (clsid_key, _) = RegKey::predef(HKEY_CLASSES_ROOT)
+            .create_subkey(&clsid_path)
+            .map_err(|e| WristKeyError::Platform(format!("Failed to create CLSID key: {}", e)))?;
+        clsid_key.set_value("", &CP_NAME)
+            .map_err(|e| WristKeyError::Platform(format!("Failed to set CLSID name: {}", e)))?;
+
+        let (inproc, _) = clsid_key.create_subkey("InprocServer32")
+            .map_err(|e| WristKeyError::Platform(format!("Failed to create InprocServer32: {}", e)))?;
+        inproc.set_value("", &dll_path)
+            .map_err(|e| WristKeyError::Platform(format!("Failed to set DLL path: {}", e)))?;
+        inproc.set_value("ThreadingModel", &"Apartment")
+            .map_err(|e| WristKeyError::Platform(format!("Failed to set ThreadingModel: {}", e)))?;
+
+        // 2. Register as Credential Provider
+        let cp_path = format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            CP_CLSID
+        );
+        let (cp_key, _) = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .create_subkey(&cp_path)
+            .map_err(|e| WristKeyError::Platform(format!("Failed to create CP key: {}", e)))?;
+        cp_key.set_value("", &CP_NAME)
+            .map_err(|e| WristKeyError::Platform(format!("Failed to set CP name: {}", e)))?;
+
+        info!("Credential Provider registered: CLSID={}, DLL={}", CP_CLSID, dll_path);
+        Ok(())
+    }
+
+    /// Unregister Credential Provider.
+    pub fn unregister_credential_provider() -> Result<()> {
+        use winreg::RegKey;
+        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
+
+        let clsid_path = format!(r"CLSID\{}", CP_CLSID);
+        let _ = RegKey::predef(HKEY_CLASSES_ROOT).delete_subkey_all(&clsid_path);
+
+        let cp_path = format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            CP_CLSID
+        );
+        let _ = RegKey::predef(HKEY_LOCAL_MACHINE).delete_subkey_all(&cp_path);
+
+        info!("Credential Provider unregistered: CLSID={}", CP_CLSID);
+        Ok(())
+    }
 }
 
 impl Default for WindowsSecurity {
@@ -70,10 +144,6 @@ impl PlatformSecurity for WindowsSecurity {
     }
 
     async fn unlock_screen(&self) -> Result<()> {
-        // On Windows, direct screen unlock from a service is restricted.
-        // Instead, we provide the password via a named pipe to the
-        // WristKey Credential Provider, which runs in the Winlogon process
-        // and can perform the actual unlock.
         if let Some(ref session) = self.session {
             let state = session.state().await;
             if let Some(device_id) = state.device_id() {
@@ -109,15 +179,26 @@ impl PlatformSecurity for WindowsSecurity {
     }
 
     async fn is_locked(&self) -> Result<bool> {
-        // TODO: detect locked state via OpenInputDesktop or WTS API
         warn!("is_locked is a placeholder on Windows — returns false");
         Ok(false)
     }
 
     async fn register_as_authenticator(&self) -> Result<()> {
-        // TODO: auto-register Credential Provider DLL via registry
-        warn!("register_as_authenticator is a placeholder — run register.ps1 as Administrator");
-        Ok(())
+        // Auto-detect DLL path: try exe_dir first, then fallback
+        let dll_path = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("WristKeyCredentialProvider.dll")))
+            .filter(|p| p.exists())
+            .or_else(|| {
+                std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll")
+                    .exists()
+                    .then(|| std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll"))
+            })
+            .ok_or_else(|| WristKeyError::Platform(
+                "WristKeyCredentialProvider.dll not found. Build and copy it first.".into()
+            ))?;
+
+        Self::register_credential_provider(&dll_path.to_string_lossy())
     }
 }
 
@@ -188,10 +269,6 @@ impl PasswordVault for WindowsSecurity {
 }
 
 /// Named pipe server that serves the unlock password to the Windows Credential Provider.
-///
-/// The Credential Provider (running in Winlogon) connects to this pipe when the user
-/// selects the WristKey tile. The daemon writes the decrypted password here after
-/// successful BLE challenge-response.
 struct UnlockPipeServer {
     password: Arc<Mutex<Option<String>>>,
 }

@@ -8,9 +8,12 @@ wristkey-core = { path = "../core" }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "time", "fs"] }
 tracing = { workspace = true }
+winreg = { workspace = true }
 
 [dependencies.windows]
 version = "0.58"
-features = ["Win32_Foundation",
+features = [
+    "Win32_Foundation",
     "Win32_Security_Cryptography",
+    "Win32_System_Threading",
 ]
