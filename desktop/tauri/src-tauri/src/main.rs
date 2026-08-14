@@ -128,6 +128,34 @@ async fn check_macos_accessibility() -> Result<bool, String> {
     Ok(false)
 }
 
+#[cfg(windows)]
+#[tauri::command]
+async fn set_windows_password(password: String, state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    info!("set_windows_password called");
+    let s = state.lock().await;
+    let encrypted = s.platform.encrypt_password(&password).await
+        .map_err(|e| { error!("encrypt_password failed: {}", e); e.to_string() })?;
+
+    let devices = s.session.list_devices().await
+        .map_err(|e| { error!("list_devices failed: {}", e); e.to_string() })?;
+
+    if let Some(device) = devices.first() {
+        s.session.set_device_password(device.id, encrypted).await
+            .map_err(|e| { error!("set_device_password failed: {}", e); e.to_string() })?;
+        info!("Windows password stored for device {}", device.id);
+        Ok(())
+    } else {
+        Err("No paired device found. Pair a watch first.".into())
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn set_windows_password(_password: String, _state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    warn!("set_windows_password called on non-Windows platform");
+    Err("Windows only".into())
+}
+
 #[tauri::command]
 async fn get_status(state: State<'_, Arc<Mutex<AppState>>>) -> Result<StatusDto, String> {
     debug!("get_status called");
@@ -431,9 +459,13 @@ async fn toggle_daemon(enabled: bool, state: State<'_, Arc<Mutex<AppState>>>) ->
 
 // --- Platform adapter ---
 
-fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
+fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecurity> {
     #[cfg(windows)]
-    { Arc::new(WindowsSecurity::new()) }
+    {
+        let mut platform = WindowsSecurity::new();
+        platform.set_session(session);
+        Arc::new(platform)
+    }
     #[cfg(target_os = "linux")]
     { Arc::new(LinuxSecurity::new()) }
     #[cfg(target_os = "macos")]
@@ -483,7 +515,7 @@ fn main() {
 
         let crypto = Arc::new(wristkey_core::EcdsaP256Crypto);
         let session = Arc::new(SessionManager::new(crypto, storage.clone()));
-        let platform = create_platform_adapter();
+        let platform = create_platform_adapter(session.clone());
 
         if let Err(e) = platform.register_as_authenticator().await {
             eprintln!("[WristKey] Failed to register as authenticator: {}", e);
@@ -630,7 +662,7 @@ fn main() {
                     }
                     "lock_now" => {
                         info!("tray: Lock Now clicked");
-                        let platform = create_platform_adapter();
+                        let platform = create_platform_adapter(session.clone());
                         let _ = std::thread::spawn(move || {
                             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
                             rt.block_on(async { let _ = platform.lock_screen().await; });
@@ -661,7 +693,7 @@ fn main() {
             pair_device, forget_device, calibrate_proximity,
             get_config, set_config, lock_screen, unlock_screen,
             toggle_daemon, set_macos_password, delete_macos_password,
-            check_macos_accessibility
+            check_macos_accessibility, set_windows_password
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

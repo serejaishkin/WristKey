@@ -1,24 +1,158 @@
 using System;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
-using System.Runtime.InteropServices;
-using CredProvInterop;
 
 namespace WristKeyCredentialProvider
 {
+    // ==================== COM Interop Interfaces ====================
+
+    [ComImport, Guid("D27C3481-5A1C-4B2E-9BDA-5D9C1D5E0F1A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProvider
+    {
+        [PreserveSig] int SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, uint dwFlags);
+        [PreserveSig] int SetSerialization(ref CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs);
+        [PreserveSig] int Advise(ICredentialProviderEvents pcpe, ulong upAdviseContext);
+        [PreserveSig] int UnAdvise();
+        [PreserveSig] int GetFieldDescriptorCount(out uint pdwCount);
+        [PreserveSig] int GetFieldDescriptorAt(uint dwIndex, out IntPtr ppcpfd);
+        [PreserveSig] int GetCredentialCount(out uint pdwCount, out uint pdwDefault, out int pbAutoLogonWithDefault);
+        [PreserveSig] int GetCredentialAt(uint dwIndex, out ICredentialProviderCredential ppcpc);
+    }
+
+    [ComImport, Guid("C27C8D5E-776A-4A85-8BFD-3F0F4C3B2A1E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProviderCredential
+    {
+        [PreserveSig] int Advise(ICredentialProviderCredentialEvents pcpce);
+        [PreserveSig] int UnAdvise();
+        [PreserveSig] int SetSelected(out int pbAutoLogon);
+        [PreserveSig] int SetDeselected();
+        [PreserveSig] int GetFieldState(uint dwFieldId, out CREDENTIAL_PROVIDER_FIELD_STATE pcpfs, out CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE pcpfis);
+        [PreserveSig] int GetStringValue(uint dwFieldId, out string ppsz);
+        [PreserveSig] int GetBitmapValue(uint dwFieldId, out IntPtr phbmp);
+        [PreserveSig] int GetCheckboxValue(uint dwFieldId, out int pbChecked, out string ppszLabel);
+        [PreserveSig] int GetSubmitButtonValue(uint dwFieldId, out uint pdwAdjacentTo);
+        [PreserveSig] int GetComboBoxValueCount(uint dwFieldId, out uint pcItems, out uint pdwSelectedItem);
+        [PreserveSig] int GetComboBoxValueAt(uint dwFieldId, uint dwItem, out string ppszItem);
+        [PreserveSig] int SetStringValue(uint dwFieldId, string psz);
+        [PreserveSig] int GetSerialization(out CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE pcpgsr,
+            out CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs, out string ppszOptionalStatusText,
+            out int pcpsiOptionalStatusIcon);
+        [PreserveSig] int ReportResult(int ntsStatus, int ntsSubstatus, out string ppszOptionalStatusText, out int pcpsiOptionalStatusIcon);
+    }
+
+    [ComImport, Guid("F1F3D5E7-9B8A-4C2D-E6F0-1A3B5C7D9E0F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProviderEvents
+    {
+        [PreserveSig] int CredentialsChanged(ulong upAdviseContext);
+    }
+
+    [ComImport, Guid("6C793AA0-1B8A-4A7B-8C3B-9B5F3E7A7E1E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProviderCredentialEvents
+    {
+        [PreserveSig] int SetFieldState(IntPtr pcpc, uint dwFieldId, CREDENTIAL_PROVIDER_FIELD_STATE cpfs);
+        [PreserveSig] int SetFieldInteractiveState(IntPtr pcpc, uint dwFieldId, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE cpfis);
+        [PreserveSig] int SetFieldString(IntPtr pcpc, uint dwFieldId, string psz);
+        [PreserveSig] int SetFieldCheckbox(IntPtr pcpc, uint dwFieldId, int bChecked, string pszLabel);
+        [PreserveSig] int SetFieldSubmitButton(IntPtr pcpc, uint dwFieldId, uint dwAdjacentTo);
+        [PreserveSig] int SetFieldBitmap(IntPtr pcpc, uint dwFieldId, IntPtr hbmp);
+    }
+
+    // ==================== Enums and Structs ====================
+
+    public enum CREDENTIAL_PROVIDER_USAGE_SCENARIO { CPUS_LOGON = 1, CPUS_UNLOCK_WORKSTATION = 2 }
+    public enum CREDENTIAL_PROVIDER_FIELD_STATE { CPFS_DISPLAY_IN_SELECTED_TILE = 1 }
+    public enum CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE { CPFIS_NONE = 0 }
+    public enum CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE { CPGSR_NO_CREDENTIAL_NOT_FINISHED = 0, CPGSR_RETURN_CREDENTIAL_FINISHED = 1 }
+    public enum CREDENTIAL_PROVIDER_STATUS_ICON { CPSI_NONE = 0, CPSI_ERROR = 3 }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION
+    {
+        public uint ulAuthenticationPackage;
+        public Guid clsidCredentialProvider;
+        public uint cbSerialization;
+        public IntPtr rgbSerialization;
+        public IntPtr CredentialBlob;
+        public uint CredentialBlobSize;
+    }
+
+    public static class HRESULT
+    {
+        public const int S_OK = 0;
+        public const int E_NOTIMPL = unchecked((int)0x80004001);
+        public const int E_FAIL = unchecked((int)0x80004005);
+    }
+
+    // ==================== Native Methods ====================
+
+    public static class NativeMethods
+    {
+        public const int STATUS_SUCCESS = 0;
+        public const uint KerbWorkstationUnlockLogon = 7;
+
+        [DllImport("secur32.dll", CharSet = CharSet.Auto)]
+        public static extern int LsaConnectUntrusted(out IntPtr LsaHandle);
+
+        [DllImport("secur32.dll", CharSet = CharSet.Auto)]
+        public static extern int LsaLookupAuthenticationPackage(IntPtr LsaHandle, ref LSA_STRING PackageName, out uint AuthenticationPackage);
+
+        [DllImport("secur32.dll")]
+        public static extern int LsaDeregisterLogonProcess(IntPtr LsaHandle);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LSA_STRING
+        {
+            public ushort Length;
+            public ushort MaximumLength;
+            public IntPtr Buffer;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID
+        {
+            public uint LowPart;
+            public int HighPart;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct UNICODE_STRING
+        {
+            public ushort Length;
+            public ushort MaximumLength;
+            public IntPtr Buffer;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KERB_INTERACTIVE_LOGON
+        {
+            public uint MessageType;
+            public UNICODE_STRING UserName;
+            public UNICODE_STRING Domain;
+            public UNICODE_STRING Password;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KERB_INTERACTIVE_UNLOCK_LOGON
+        {
+            public KERB_INTERACTIVE_LOGON Logon;
+            public LUID LogonId;
+        }
+    }
+
+    // ==================== Credential Provider ====================
+
     [ComVisible(true)]
     [Guid("A1B2C3D4-E5F6-7890-ABCD-EF1234567895")]
     [ClassInterface(ClassInterfaceType.None)]
+    [ProgId("WristKey.CredentialProvider")]
     public class WristKeyCredentialProvider : ICredentialProvider
     {
         private ICredentialProviderEvents _events;
-        private string _userName;
-        private string _password;
 
         public int SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, uint dwFlags)
         {
-            // Only show on unlock/workstation unlock
             if (cpus == CREDENTIAL_PROVIDER_USAGE_SCENARIO.CPUS_LOGON ||
                 cpus == CREDENTIAL_PROVIDER_USAGE_SCENARIO.CPUS_UNLOCK_WORKSTATION)
             {
@@ -27,7 +161,7 @@ namespace WristKeyCredentialProvider
             return HRESULT.E_NOTIMPL;
         }
 
-        public int SetUserSid(string pszUserSid) => HRESULT.S_OK;
+        public int SetSerialization(ref CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs) => HRESULT.S_OK;
 
         public int Advise(ICredentialProviderEvents pcpe, ulong upAdviseContext)
         {
@@ -39,7 +173,7 @@ namespace WristKeyCredentialProvider
 
         public int GetFieldDescriptorCount(out uint pdwCount)
         {
-            pdwCount = 2; // Tile + status text
+            pdwCount = 2;
             return HRESULT.S_OK;
         }
 
@@ -70,7 +204,13 @@ namespace WristKeyCredentialProvider
     {
         public int Advise(ICredentialProviderCredentialEvents pcpce) => HRESULT.S_OK;
         public int UnAdvise() => HRESULT.S_OK;
-        public int SetSelected(out int pbAutoLogon) { pbAutoLogon = 0; return HRESULT.S_OK; }
+
+        public int SetSelected(out int pbAutoLogon)
+        {
+            pbAutoLogon = 0;
+            return HRESULT.S_OK;
+        }
+
         public int SetDeselected() => HRESULT.S_OK;
 
         public int GetFieldState(uint dwFieldId, out CREDENTIAL_PROVIDER_FIELD_STATE pcpfs, out CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE pcpfis)
@@ -82,7 +222,7 @@ namespace WristKeyCredentialProvider
 
         public int GetStringValue(uint dwFieldId, out string ppsz)
         {
-            ppsz = dwFieldId == 0 ? "🔓 WristKey Unlock" : "Bring your watch close…";
+            ppsz = dwFieldId == 0 ? "WristKey Unlock" : "Bring your watch close to unlock...";
             return HRESULT.S_OK;
         }
 
@@ -118,20 +258,15 @@ namespace WristKeyCredentialProvider
             return HRESULT.E_NOTIMPL;
         }
 
-        public int Advise(ICredentialProviderCredentialEvents pcpce, out IntPtr phbmp)
-        {
-            phbmp = IntPtr.Zero;
-            return HRESULT.E_NOTIMPL;
-        }
+        public int SetStringValue(uint dwFieldId, string psz) => HRESULT.S_OK;
 
         public int GetSerialization(out CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE pcpgsr,
             out CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION pcpcs, out string ppszOptionalStatusText,
             out int pcpsiOptionalStatusIcon)
         {
-            pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_RETURN_CREDENTIAL_FINISHED;
-            pcpcs = new CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION();
             ppszOptionalStatusText = null;
             pcpsiOptionalStatusIcon = 0;
+            pcpcs = new CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION();
 
             try
             {
@@ -139,24 +274,30 @@ namespace WristKeyCredentialProvider
                 if (string.IsNullOrEmpty(password))
                 {
                     pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_NO_CREDENTIAL_NOT_FINISHED;
-                    return HRESULT.E_FAIL;
+                    return HRESULT.S_OK;
                 }
 
-                // Build KERB_INTERACTIVE_UNLOCK_LOGON
-                byte[] serialized = SerializeLogon("", password);
+                uint authPackage = GetAuthenticationPackage();
+                byte[] serialized = SerializeKerbInteractiveUnlockLogon("", password);
+
+                IntPtr pSerialized = Marshal.AllocCoTaskMem(serialized.Length);
+                Marshal.Copy(serialized, 0, pSerialized, serialized.Length);
+
+                pcpcs.ulAuthenticationPackage = authPackage;
                 pcpcs.clsidCredentialProvider = new Guid("A1B2C3D4-E5F6-7890-ABCD-EF1234567895");
-                pcpcs.rgbSerialization = serialized;
-                pcpcs.ulAuthenticationPackage = GetAuthenticationPackageId();
+                pcpcs.rgbSerialization = pSerialized;
                 pcpcs.cbSerialization = (uint)serialized.Length;
                 pcpcs.CredentialBlobSize = (uint)Encoding.Unicode.GetByteCount(password);
                 pcpcs.CredentialBlob = Marshal.StringToCoTaskMemUni(password);
 
+                pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_RETURN_CREDENTIAL_FINISHED;
                 return HRESULT.S_OK;
             }
             catch (Exception ex)
             {
                 ppszOptionalStatusText = $"WristKey error: {ex.Message}";
                 pcpsiOptionalStatusIcon = (int)CREDENTIAL_PROVIDER_STATUS_ICON.CPSI_ERROR;
+                pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_NO_CREDENTIAL_NOT_FINISHED;
                 return HRESULT.E_FAIL;
             }
         }
@@ -172,7 +313,8 @@ namespace WristKeyCredentialProvider
         {
             try
             {
-                using (var client = new NamedPipeClientStream(".", "WristKeyUnlock", PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
+                using (var client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                    PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(2000);
                     using (var reader = new StreamReader(client, Encoding.UTF8))
@@ -184,50 +326,70 @@ namespace WristKeyCredentialProvider
             catch { return null; }
         }
 
-        private byte[] SerializeLogon(string username, string password)
+        private uint GetAuthenticationPackage()
         {
-            // Simplified — real implementation needs KERB_INTERACTIVE_UNLOCK_LOGON structure
-            return Encoding.Unicode.GetBytes($"{username}\0{password}\0");
+            IntPtr lsaHandle;
+            if (NativeMethods.LsaConnectUntrusted(out lsaHandle) != NativeMethods.STATUS_SUCCESS)
+                return 2;
+
+            var packageName = new NativeMethods.LSA_STRING
+            {
+                Length = (ushort)"Kerberos".Length,
+                MaximumLength = (ushort)("Kerberos".Length + 1),
+                Buffer = Marshal.StringToHGlobalAnsi("Kerberos")
+            };
+
+            uint authPackage;
+            int result = NativeMethods.LsaLookupAuthenticationPackage(lsaHandle, ref packageName, out authPackage);
+
+            Marshal.FreeHGlobal(packageName.Buffer);
+            NativeMethods.LsaDeregisterLogonProcess(lsaHandle);
+
+            return result == NativeMethods.STATUS_SUCCESS ? authPackage : 2;
         }
 
-        private uint GetAuthenticationPackageId()
+        private byte[] SerializeKerbInteractiveUnlockLogon(string username, string password, string domain = "")
         {
-            // Should query LSA for Kerberos package ID
-            return 2; // NTLM/Kerberos placeholder
+            var logon = new NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON
+            {
+                Logon = new NativeMethods.KERB_INTERACTIVE_LOGON
+                {
+                    MessageType = NativeMethods.KerbWorkstationUnlockLogon,
+                }
+            };
+
+            IntPtr pUserName = Marshal.StringToHGlobalUni(username);
+            IntPtr pDomain = Marshal.StringToHGlobalUni(domain);
+            IntPtr pPassword = Marshal.StringToHGlobalUni(password);
+
+            logon.Logon.UserName = new NativeMethods.UNICODE_STRING
+            {
+                Length = (ushort)(username.Length * 2),
+                MaximumLength = (ushort)((username.Length + 1) * 2),
+                Buffer = pUserName
+            };
+
+            logon.Logon.Domain = new NativeMethods.UNICODE_STRING
+            {
+                Length = (ushort)(domain.Length * 2),
+                MaximumLength = (ushort)((domain.Length + 1) * 2),
+                Buffer = pDomain
+            };
+
+            logon.Logon.Password = new NativeMethods.UNICODE_STRING
+            {
+                Length = (ushort)(password.Length * 2),
+                MaximumLength = (ushort)((password.Length + 1) * 2),
+                Buffer = pPassword
+            };
+
+            int size = Marshal.SizeOf(typeof(NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON));
+            IntPtr pLogon = Marshal.AllocCoTaskMem(size);
+            Marshal.StructureToPtr(logon, pLogon, false);
+
+            byte[] result = new byte[size];
+            Marshal.Copy(pLogon, result, 0, size);
+            return result;
         }
-    }
-
-    // COM Interop stubs (simplified — use Lithnet.CredentialProvider or full interop in production)
-    public static class HRESULT
-    {
-        public const int S_OK = 0;
-        public const int E_NOTIMPL = unchecked((int)0x80004001);
-        public const int E_FAIL = unchecked((int)0x80004005);
-    }
-
-    public enum CREDENTIAL_PROVIDER_USAGE_SCENARIO { CPUS_LOGON = 1, CPUS_UNLOCK_WORKSTATION = 2 }
-    public enum CREDENTIAL_PROVIDER_FIELD_STATE { CPFS_DISPLAY_IN_SELECTED_TILE = 1 }
-    public enum CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE { CPFIS_NONE = 0 }
-    public enum CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE { CPGSR_NO_CREDENTIAL_NOT_FINISHED = 0, CPGSR_RETURN_CREDENTIAL_FINISHED = 1 }
-    public enum CREDENTIAL_PROVIDER_STATUS_ICON { CPSI_NONE = 0, CPSI_ERROR = 3 }
-
-    [ComImport, Guid("6C793AA0-1B8A-4A7B-8C3B-9B5F3E7A7E1E")]
-    public interface ICredentialProvider { /* ... */ }
-    [ComImport, Guid("C27C8D5E-776A-4A85-8Bfd-3F0F4C3B2A1E")]
-    public interface ICredentialProviderCredential { /* ... */ }
-    [ComImport, Guid("F1F3D5E7-9B8A-4C2D-E6F0-1A3B5C7D9E0F")]
-    public interface ICredentialProviderEvents { /* ... */ }
-    [ComImport, Guid("A1B2C3D4-E5F6-7890-ABCD-EF1234567896")]
-    public interface ICredentialProviderCredentialEvents { /* ... */ }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION
-    {
-        public uint ulAuthenticationPackage;
-        public Guid clsidCredentialProvider;
-        public uint cbSerialization;
-        public IntPtr rgbSerialization;
-        public IntPtr CredentialBlob;
-        public uint CredentialBlobSize;
     }
 }
