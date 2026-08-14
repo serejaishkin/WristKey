@@ -5,10 +5,10 @@ members = [
     "crates/ble",
     "crates/platform-win",
     "crates/platform-linux",
-    "crates/platform-macos",
     "crates/daemon",
     "tauri/src-tauri",
 ]
+default-members = ["tauri/src-tauri"]
 resolver = "2"
 
 [workspace.dependencies]

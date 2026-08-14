@@ -184,21 +184,57 @@ impl PlatformSecurity for WindowsSecurity {
     }
 
     async fn register_as_authenticator(&self) -> Result<()> {
-        // Auto-detect DLL path: try exe_dir first, then fallback
-        let dll_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("WristKeyCredentialProvider.dll")))
-            .filter(|p| p.exists())
-            .or_else(|| {
-                std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll")
-                    .exists()
-                    .then(|| std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll"))
-            })
-            .ok_or_else(|| WristKeyError::Platform(
-                "WristKeyCredentialProvider.dll not found. Build and copy it first.".into()
-            ))?;
-
+        let dll_path = Self::ensure_dll_extracted().await?;
         Self::register_credential_provider(&dll_path.to_string_lossy())
+    }
+
+    /// Extract embedded DLL next to the executable if not present.
+    /// Returns path to the DLL.
+    pub async fn ensure_dll_extracted() -> Result<std::path::PathBuf> {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let dll_path = exe_dir.join("WristKeyCredentialProvider.dll");
+
+        if dll_path.exists() {
+            info!("Credential Provider DLL already exists: {:?}", dll_path);
+            return Ok(dll_path);
+        }
+
+        // Embedded DLL bytes (placeholder — will be replaced by build script)
+        #[cfg(feature = "embedded_cp")]
+        const DLL_BYTES: &[u8] = include_bytes!("../../credential-provider/WristKeyCredentialProvider.dll");
+        #[cfg(not(feature = "embedded_cp"))]
+        const DLL_BYTES: &[u8] = &[];
+
+        if DLL_BYTES.is_empty() {
+            // Fallback: try to find DLL in credential-provider folder (dev build)
+            let dev_dll = exe_dir
+                .parent().and_then(|p| p.parent()) // go up from tauri/src-tauri/target/release
+                .and_then(|p| p.parent())
+                .map(|p| p.join("crates/credential-provider/WristKeyCredentialProvider.dll"))
+                .filter(|p| p.exists());
+
+            if let Some(dev_path) = dev_dll {
+                info!("Using dev DLL from: {:?}", dev_path);
+                std::fs::copy(&dev_path, &dll_path).map_err(|e| {
+                    WristKeyError::Platform(format!("Failed to copy dev DLL: {}", e))
+                })?;
+                return Ok(dll_path);
+            }
+
+            return Err(WristKeyError::Platform(
+                "WristKeyCredentialProvider.dll not found and not embedded. Build it first.".into()
+            ));
+        }
+
+        std::fs::write(&dll_path, DLL_BYTES).map_err(|e| {
+            WristKeyError::Platform(format!("Failed to extract DLL: {}", e))
+        })?;
+
+        info!("Credential Provider DLL extracted to: {:?}", dll_path);
+        Ok(dll_path)
     }
 }
 
@@ -230,7 +266,7 @@ impl PasswordVault for WindowsSecurity {
 
             let slice = std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize);
             let result = slice.to_vec();
-            let _ = windows::Win32::Security::Cryptography::LocalFree(blob_out.pbData as _);
+            let _ = windows::Win32::Foundation::LocalFree(blob_out.pbData as _);
             Ok(result)
         }
     }
@@ -262,7 +298,7 @@ impl PasswordVault for WindowsSecurity {
             let slice = std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize);
             let result = String::from_utf8(slice.to_vec())
                 .map_err(|e| WristKeyError::Platform(format!("UTF-8 decode: {}", e)))?;
-            let _ = windows::Win32::Security::Cryptography::LocalFree(blob_out.pbData as _);
+            let _ = windows::Win32::Foundation::LocalFree(blob_out.pbData as _);
             Ok(result)
         }
     }
@@ -285,13 +321,14 @@ impl UnlockPipeServer {
                 .create(r"\\.\pipe\WristKeyUnlock");
 
             match server {
-                Ok(server) => {
+                Ok(mut server) => {
                     info!("Named pipe server waiting for Credential Provider...");
                     match server.connect().await {
-                        Ok(mut connected) => {
+                        Ok(()) => {
                             info!("Credential Provider connected to named pipe");
                             if let Some(password) = self.password.lock().await.take() {
-                                if let Err(e) = connected.write_all(password.as_bytes()).await {
+                                use tokio::io::AsyncWriteExt;
+                                if let Err(e) = server.write_all(password.as_bytes()).await {
                                     error!("Failed to write password to pipe: {}", e);
                                 } else {
                                     info!(
@@ -299,10 +336,10 @@ impl UnlockPipeServer {
                                         password.len()
                                     );
                                 }
-                                if let Err(e) = connected.write_all(b"\n").await {
+                                if let Err(e) = server.write_all(b"\n").await {
                                     error!("Failed to write newline: {}", e);
                                 }
-                                if let Err(e) = connected.flush().await {
+                                if let Err(e) = server.flush().await {
                                     error!("Failed to flush pipe: {}", e);
                                 }
                             } else {
