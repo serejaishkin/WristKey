@@ -35,8 +35,7 @@ async function refreshStatus() {
 
     // Credential Provider status (Windows only)
     const cpNav = document.getElementById('cpNavBtn');
-    if (cpNav && typeof st.cp_registered !== 'undefined') {
-      cpNav.style.display = 'flex';
+    if (cpNav) {
       const cpIcon = document.getElementById('cpStatusIcon');
       const cpText = document.getElementById('cpStatusText');
       const cpRegBtn = document.getElementById('cpRegisterBtn');
