@@ -2,12 +2,11 @@
 name = "wristkey-platform-macos"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
 
 [dependencies]
 wristkey-core = { path = "../core" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-core-foundation = "0.9"
-core-graphics = "0.23"
+core-foundation = "0.10"
+core-graphics = "0.25"

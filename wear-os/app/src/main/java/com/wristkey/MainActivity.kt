@@ -15,6 +15,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -294,9 +295,11 @@ fun MainScreen(bleService: WristKeyBleService?) {
 
     if (showPairingDialog && hasPairingRequest) {
         Dialog(onDismissRequest = { }) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                backgroundPainter = CardDefaults.cardBackgroundPainter()
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(8.dp).background(
+                    color = MaterialTheme.colors.surface,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+                )
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -340,9 +343,11 @@ fun MainScreen(bleService: WristKeyBleService?) {
 
     if (showForgetDialog) {
         Dialog(onDismissRequest = { showForgetDialog = false }) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                backgroundPainter = CardDefaults.cardBackgroundPainter()
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(8.dp).background(
+                    color = MaterialTheme.colors.surface,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+                )
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
