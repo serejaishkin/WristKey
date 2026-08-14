@@ -105,13 +105,13 @@ impl Daemon {
 
             match action {
                 ProximityAction::Unlock if is_locked => {
-                    info!("Watch nearby and screen locked → attempting crypto unlock");
+                    info!("Watch nearby and screen locked -> attempting crypto unlock");
                     if let Err(e) = self.unlock_with_crypto(&service_uuid, &devices).await {
                         warn!("Crypto unlock failed: {}", e);
                     }
                 }
                 ProximityAction::Lock if !is_locked && session_state.is_authenticated() => {
-                    info!("Watch far away and screen unlocked → locking");
+                    info!("Watch far away and screen unlocked -> locking");
                     if let Err(e) = self.platform.lock_screen().await {
                         warn!("Lock screen failed: {}", e);
                     }
@@ -137,10 +137,10 @@ impl Daemon {
         while tokio::time::Instant::now() < deadline {
             match timeout(Duration::from_millis(500), rx.recv()).await {
                 Ok(Some(info)) => {
-                    // Match by address or device_id
+                    // FIX: convert Vec<u8> device_id to String for comparison with PeripheralInfo
                     let matched = devices.iter().find(|d| {
                         d.address == info.id
-                            || d.device_id.as_ref() == info.device_id.as_ref()
+                        || d.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()).as_ref() == info.device_id.as_ref()
                     });
 
                     if let Some(device) = matched {
@@ -174,7 +174,7 @@ impl Daemon {
             }
         }
 
-        // No signal found → check debounce for lock
+        // No signal found -> check debounce for lock
         if found_rssi.is_none() {
             let should_lock = self.debounce.lock().await.tick(true);
             if should_lock {
@@ -195,11 +195,12 @@ impl Daemon {
         let device = devices.first()
             .ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
 
+        // FIX: convert Vec<u8> device_id to String for PeripheralInfo
         let info = PeripheralInfo {
             id: device.address.clone(),
             name: Some(device.name.clone()),
             pin: None,
-            device_id: device.device_id.clone(),
+            device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()),
             rssi: None,
             service_uuids: vec![*service_uuid],
             raw_manufacturer_data: None,
@@ -209,7 +210,7 @@ impl Daemon {
         let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
 
-        // Begin unlock → get challenge
+        // Begin unlock -> get challenge
         let challenge = self.session.begin_unlock(device.id).await?;
 
         // Write challenge to watch
@@ -262,7 +263,7 @@ impl Daemon {
         // Verify signature
         self.session.verify_unlock(&response).await?;
 
-        // Success → unlock screen
+        // Success -> unlock screen
         self.platform.unlock_screen().await?;
         info!("Screen unlocked via crypto challenge-response");
 

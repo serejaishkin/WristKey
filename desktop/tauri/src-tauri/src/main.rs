@@ -427,13 +427,21 @@ fn create_platform_adapter() -> Arc<dyn PlatformSecurity> {
 // --- Main ---
 
 fn main() {
-    let log_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("logs")))
+    // Try ProjectDirs first, fallback to exe_dir/logs, then to ./logs
+    let log_dir = directories::ProjectDirs::from("", "", "WristKey")
+        .map(|d| d.data_dir().to_path_buf().join("logs"))
+        .or_else(|| {
+            std::env::current_exe().ok()
+                .and_then(|p| p.parent().map(|d| d.join("logs")))
+        })
         .unwrap_or_else(|| std::path::PathBuf::from("logs"));
-    let _ = std::fs::create_dir_all(&log_dir);
+
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("[WristKey] WARNING: failed to create log dir {:?}: {}", log_dir, e);
+    }
     let log_path = log_dir.join("wristkey.log");
-    println!("[WristKey] Logs: {:?}", log_path);
+    println!("[WristKey] Log directory: {:?}", log_dir);
+    println!("[WristKey] Log file: {:?}", log_path);
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
 
@@ -470,50 +478,43 @@ fn main() {
     let env_filter = EnvFilter::try_new(&config.log_level)
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let mut layers = Vec::new();
-
-    if config.log_to_console {
-        let console_layer = tracing_subscriber::fmt::layer()
+    let console_layer = config.log_to_console.then(|| {
+        println!("[WristKey] Console logging enabled at level: {}", config.log_level);
+        tracing_subscriber::fmt::layer()
             .with_writer(std::io::stdout)
             .with_ansi(true)
             .with_target(true)
             .with_thread_ids(false)
             .with_file(true)
-            .with_line_number(true);
-        layers.push(console_layer.boxed());
-        println!("[WristKey] Console logging enabled at level: {}", config.log_level);
-    }
+            .with_line_number(true)
+    });
 
-    let _file_guard;
-    if config.log_to_file {
+    let (file_layer, _file_guard) = if config.log_to_file {
         let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkey");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-        _file_guard = guard;
-        let file_layer = tracing_subscriber::fmt::layer()
+        println!("[WristKey] File logging enabled: {:?}", log_path);
+        let layer = tracing_subscriber::fmt::layer()
             .with_writer(non_blocking)
             .with_ansi(false)
             .with_target(true)
             .with_thread_ids(false)
             .with_file(true)
             .with_line_number(true);
-        layers.push(file_layer.boxed());
-        println!("[WristKey] File logging enabled: {:?}", log_path);
+        (Some(layer), Some(guard))
     } else {
-        // dummy guard to satisfy type checker
-        struct DummyGuard;
-        impl Drop for DummyGuard { fn drop(&mut self) {} }
-        _file_guard = DummyGuard;
-    }
+        (None, None)
+    };
 
-    if !layers.is_empty() {
-        let registry = tracing_subscriber::registry().with(env_filter);
-        for layer in layers {
-            registry.clone().with(layer).init();
-        }
+    if console_layer.is_none() && file_layer.is_none() {
+        eprintln!("[WristKey] WARNING: both console and file logging disabled!");
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(console_layer)
+            .with(file_layer)
+            .init();
         info!("WristKey started - logs at {:?}", log_path);
         info!("WristKey Tauri v2 starting - log_level={}", config.log_level);
-    } else {
-        eprintln!("[WristKey] WARNING: both console and file logging disabled!");
     }
 
     let app_state = Arc::new(Mutex::new(AppState {
