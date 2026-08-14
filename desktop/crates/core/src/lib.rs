@@ -161,7 +161,7 @@ pub struct PairedDevice {
 }
 
 // FIX: serde(default) allows old configs in DB to deserialize without new fields
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub auto_lock_timeout_sec: u64,
     pub rssi_threshold_offset_dbm: i16,
