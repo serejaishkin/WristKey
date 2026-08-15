@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
-use wristkey_core::{Result, WristKeyError};
+use wristkey_core::Result;
 
 pub struct ConnectionManager {
     connections: Arc<RwLock<HashMap<String, Connection>>>,
