@@ -6,14 +6,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::{interval, timeout, sleep};
-use tracing::{info, warn, debug};
+use tracing::{info, warn, error, debug};
 use uuid::Uuid;
 
 use wristkey_core::{
-    SessionManager, PlatformSecurity, Response,
+    SessionManager, PlatformSecurity, Config, Response, SessionState,
     Result, WristKeyError, RssiSmoother,
 };
-use wristkey_ble::{BleAdapter, PeripheralInfo};
+use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo, Connection};
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
