@@ -13,16 +13,14 @@ use wristkey_ble::{BleAdapter, BtleplugAdapter, MockBleAdapter, PeripheralInfo};
 use wristkey_platform_win::WindowsSecurity;
 #[cfg(target_os = "linux")]
 use wristkey_platform_linux::LinuxSecurity;
+#[cfg(target_os = "macos")]
+use wristkey_platform_macos::MacosSecurity;
 
-// Log directory — set once in main() so get_log_dir can expose it to UI
 static LOG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
-// GATT UUIDs
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
-
-// ─── DTOs ───────────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
 struct StatusDto {
@@ -66,8 +64,6 @@ struct PairRequest {
     address: String,
 }
 
-// ─── State ──────────────────────────────────────────────────────────────────
-
 struct AppState {
     session: Arc<SessionManager>,
     config: Arc<Mutex<Config>>,
@@ -89,13 +85,13 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecu
         linux.set_session(session.clone());
         Arc::new(linux)
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
     {
-        compile_error!("Unsupported platform")
+        let mut mac = MacosSecurity::new();
+        mac.set_session(session.clone());
+        Arc::new(mac)
     }
 }
-
-// ─── Commands (std::result::Result for Tauri v2 compatibility) ─────────────
 
 #[tauri::command]
 async fn get_log_dir() -> Result<String, String> {
@@ -118,8 +114,10 @@ async fn get_status(state: State<'_, Arc<AppState>>) -> Result<StatusDto, String
 
     #[cfg(target_os = "windows")]
     let storage_type = WindowsSecurity::storage_type_description().to_string();
-    #[cfg(not(target_os = "windows"))]
-    let storage_type = "N/A".to_string();
+    #[cfg(target_os = "linux")]
+    let storage_type = LinuxSecurity::storage_type_description().to_string();
+    #[cfg(target_os = "macos")]
+    let storage_type = MacosSecurity::storage_type_description().to_string();
 
     let device_count = devices.len();
     let state_str = if session_state.is_authenticated() {
@@ -170,9 +168,7 @@ async fn scan_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanResultD
 
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
+        if remaining.is_zero() { break; }
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some(info)) => {
                 found.push(ScanResultDto {
@@ -190,14 +186,12 @@ async fn scan_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanResultD
     Ok(found)
 }
 
-// FIX: real BLE pairing with challenge-response exchange
 #[tauri::command]
 async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Result<(), String> {
     let service_uuid = uuid::Uuid::parse_str(SERVICE_UUID).unwrap();
     let challenge_char = uuid::Uuid::parse_str(CHALLENGE_CHAR).unwrap();
     let response_char = uuid::Uuid::parse_str(RESPONSE_CHAR).unwrap();
 
-    // 1. Connect to watch
     let info = PeripheralInfo {
         id: req.address.clone(),
         name: Some(req.name.clone()),
@@ -212,19 +206,15 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
     let conn = state.ble.connect(&info).await.map_err(|e| e.to_string())?;
     info!("Pairing: connected");
 
-    // 2. Begin pairing - generate challenge
     let challenge = state.session.begin_pairing().await.map_err(|e| e.to_string())?;
     info!("Pairing: challenge generated");
 
-    // 3. Write challenge to watch
     state.ble.write(&conn, challenge_char, &challenge.to_bytes()).await.map_err(|e| e.to_string())?;
     info!("Pairing: challenge written");
 
-    // 4. Subscribe to response
     let mut rx = state.ble.notify(&conn, response_char).await.map_err(|e| e.to_string())?;
     info!("Pairing: subscribed to response");
 
-    // 5. Wait for response
     let response_data = match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         rx.recv()
@@ -242,7 +232,6 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
 
     info!("Pairing: received {} bytes response", response_data.len());
 
-    // 6. Parse response: 64 sig + 1 user_present + rest pubkey (for pairing)
     if response_data.len() < 65 {
         let _ = state.ble.disconnect(&conn).await;
         return Err(format!("Invalid response: {} bytes (expected at least 65)", response_data.len()));
@@ -251,7 +240,6 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
     let signature = response_data[..64].to_vec();
     let user_present = response_data[64] != 0;
 
-    // For pairing, watch sends public key after signature + user_present
     let public_key = if response_data.len() > 65 {
         response_data[65..].to_vec()
     } else {
@@ -265,7 +253,6 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
         timestamp: chrono::Utc::now(),
     };
 
-    // 7. Complete pairing
     state.session.complete_pairing(
         req.name,
         public_key,
@@ -276,10 +263,7 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
     ).await.map_err(|e| e.to_string())?;
 
     info!("Pairing: completed successfully");
-
-    // 8. Disconnect
     let _ = state.ble.disconnect(&conn).await;
-
     Ok(())
 }
 
@@ -342,8 +326,6 @@ async fn unlock_screen(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     state.platform.unlock_screen().await.map_err(|e| e.to_string())
 }
 
-// ─── Windows-specific commands ──────────────────────────────────────────────
-
 #[cfg(target_os = "windows")]
 #[tauri::command]
 async fn set_windows_password(state: State<'_, Arc<AppState>>, password: String) -> Result<(), String> {
@@ -392,13 +374,10 @@ async fn unregister_credential_provider() -> Result<(), String> {
     Err("Credential Provider only available on Windows".into())
 }
 
-// ─── Main ───────────────────────────────────────────────────────────────────
-
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     println!("[WristKey] main() started");
 
-    // Resolve log directory early
     let log_dir = directories::ProjectDirs::from("", "", "WristKey")
         .map(|d| d.data_dir().to_path_buf().join("logs"))
         .or_else(|| {
@@ -413,7 +392,6 @@ fn main() {
     let actual_log_path = log_dir.join(format!("wristkey.{}", today));
     println!("[WristKey] log path: {:?}", actual_log_path);
 
-    // Bootstrap log line (before tracing init)
     {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&actual_log_path) {
@@ -433,7 +411,6 @@ fn main() {
         .setup(|app| {
             println!("[WristKey] setup() started");
 
-            // Tray menu
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)
                 .map_err(|e| { println!("[WristKey] MenuItem quit error: {}", e); e })?;
             let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)
@@ -450,7 +427,6 @@ fn main() {
             ]).map_err(|e| { println!("[WristKey] Menu error: {}", e); e })?;
             println!("[WristKey] tray menu created");
 
-            // State initialization
             println!("[WristKey] creating storage...");
             let storage: Arc<dyn wristkey_core::Storage> = match SqliteStorage::open_default() {
                 Ok(s) => Arc::new(s),
@@ -522,7 +498,6 @@ fn main() {
             app.manage(state);
             println!("[WristKey] state managed");
 
-            // Tray icon
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu);
 
@@ -530,7 +505,7 @@ fn main() {
                 tray_builder = tray_builder.icon(icon.clone());
                 println!("[WristKey] tray icon set");
             } else {
-                println!("[WristKey] WARNING: no default window icon, tray will have no icon");
+                println!("[WristKey] WARNING: no default window icon");
             }
 
             let _tray = tray_builder

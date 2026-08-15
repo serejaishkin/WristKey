@@ -1,4 +1,6 @@
-//! WristKey daemon — proximity detection, crypto unlock, and auto-lock.
+//! WristKey daemon -- proximity detection, crypto unlock, and auto-lock.
+//!
+//! Platform-agnostic: all platform-specific code lives in platform-* crates.
 
 pub mod conn_mgr;
 pub use conn_mgr::ConnectionManager;
@@ -6,14 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::{interval, timeout, sleep};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 use uuid::Uuid;
 
 use wristkey_core::{
-    SessionManager, PlatformSecurity, Config, Response, SessionState,
+    SessionManager, PlatformSecurity, Response,
     Result, WristKeyError, RssiSmoother,
 };
-use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo, Connection};
+use wristkey_ble::{BleAdapter, PeripheralInfo};
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
@@ -72,16 +74,16 @@ impl Daemon {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
         let mut ticker = interval(Duration::from_secs(2));
 
-        // FIX: try to silently authenticate with last paired device on startup
+        // Silent reconnect on startup
         let devices = self.session.list_paired_devices().await?;
         if !devices.is_empty() {
             let state = self.session.state().await;
             if !state.is_authenticated() {
-                info!("Daemon started with paired device but not authenticated — attempting silent reconnect");
+                info!("Daemon started with paired device -- attempting silent reconnect");
                 if let Err(e) = self.authenticate_device(&service_uuid, &devices).await {
                     warn!("Silent reconnect failed: {}", e);
                 } else {
-                    info!("Silent reconnect successful — device authenticated");
+                    info!("Silent reconnect successful");
                 }
             }
         }
@@ -102,15 +104,15 @@ impl Daemon {
 
             match action {
                 ProximityAction::Unlock if is_locked => {
-                    info!("Watch nearby and screen locked -> attempting crypto unlock");
+                    info!("Watch nearby and locked -> crypto unlock");
                     if let Err(e) = self.unlock_with_crypto(&service_uuid, &devices).await {
-                        warn!("Crypto unlock failed: {}", e);
+                        warn!("Unlock failed: {}", e);
                     }
                 }
                 ProximityAction::Lock if !is_locked && session_state.is_authenticated() => {
-                    info!("Watch far away and screen unlocked -> locking");
+                    info!("Watch far away and unlocked -> locking");
                     if let Err(e) = self.platform.lock_screen().await {
-                        warn!("Lock screen failed: {}", e);
+                        warn!("Lock failed: {}", e);
                     }
                     self.session.disconnect().await;
                 }
@@ -119,8 +121,6 @@ impl Daemon {
         }
     }
 
-    /// Silent reconnect — authenticate without unlocking screen.
-    /// Used on daemon startup to restore session after app restart.
     async fn authenticate_device(
         &self,
         service_uuid: &Uuid,
@@ -151,12 +151,12 @@ impl Daemon {
                 write_ok = true;
                 break;
             }
-            warn!("Auth challenge write attempt {} failed, retrying...", attempt);
+            warn!("Auth write attempt {} failed", attempt);
             sleep(Duration::from_millis(300)).await;
         }
         if !write_ok {
             let _ = self.ble.disconnect(&conn).await;
-            return Err(WristKeyError::Ble("failed to write auth challenge".into()));
+            return Err(WristKeyError::Ble("auth write failed".into()));
         }
 
         let mut rx = self.ble.notify(&conn, response_char).await?;
@@ -164,14 +164,14 @@ impl Daemon {
             Ok(Some(d)) => d,
             _ => {
                 let _ = self.ble.disconnect(&conn).await;
-                return Err(WristKeyError::Ble("timeout waiting for auth response".into()));
+                return Err(WristKeyError::Ble("auth response timeout".into()));
             }
         };
 
         if response_data.len() < 65 {
             let _ = self.ble.disconnect(&conn).await;
             return Err(WristKeyError::Protocol(format!(
-                "invalid auth response: {} bytes (expected at least 65)", response_data.len()
+                "auth response too short: {} bytes", response_data.len()
             )));
         }
 
@@ -185,7 +185,7 @@ impl Daemon {
         };
 
         self.session.verify_unlock(&response).await?;
-        info!("Silent authenticate successful for {}", device.name);
+        info!("Silent authenticate OK for {}", device.name);
         Ok(())
     }
 
@@ -212,7 +212,7 @@ impl Daemon {
                         if let Some(rssi) = info.rssi {
                             let mut smoother = self.smoother.lock().await;
                             let (should_unlock, changed) = smoother.update(rssi);
-                            debug!("Device {} raw_rssi={} smoothed={:?} should_unlock={}",
+                            debug!("{} raw={} smoothed={:?} unlock={}",
                                 device.name, rssi, smoother.current_rssi(), should_unlock);
                             let threshold = device.baseline_rssi;
                             if smoother.current_rssi().is_none() || changed {
@@ -271,12 +271,12 @@ impl Daemon {
                 write_ok = true;
                 break;
             }
-            warn!("Challenge write attempt {} failed, retrying...", attempt);
+            warn!("Unlock write attempt {} failed", attempt);
             sleep(Duration::from_millis(300)).await;
         }
         if !write_ok {
             let _ = self.ble.disconnect(&conn).await;
-            return Err(WristKeyError::Ble("failed to write challenge after 3 attempts".into()));
+            return Err(WristKeyError::Ble("unlock write failed".into()));
         }
 
         let mut rx = self.ble.notify(&conn, response_char).await?;
@@ -284,14 +284,14 @@ impl Daemon {
             Ok(Some(d)) => d,
             _ => {
                 let _ = self.ble.disconnect(&conn).await;
-                return Err(WristKeyError::Ble("timeout waiting for unlock response".into()));
+                return Err(WristKeyError::Ble("unlock response timeout".into()));
             }
         };
 
         if response_data.len() < 65 {
             let _ = self.ble.disconnect(&conn).await;
             return Err(WristKeyError::Protocol(format!(
-                "invalid response: {} bytes (expected at least 65)", response_data.len()
+                "unlock response too short: {} bytes", response_data.len()
             )));
         }
 
@@ -306,7 +306,7 @@ impl Daemon {
 
         self.session.verify_unlock(&response).await?;
         self.platform.unlock_screen().await?;
-        info!("Screen unlocked via crypto challenge-response");
+        info!("Screen unlocked via crypto");
         Ok(())
     }
 }

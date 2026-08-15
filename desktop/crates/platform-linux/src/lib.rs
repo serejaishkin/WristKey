@@ -1,57 +1,68 @@
-//! Linux platform adapter.
+//! Linux platform security implementation
+//!
+//! Lock:   loginctl lock-session
+//! Unlock: loginctl unlock-session (requires configured PAM / polkit)
+//! Vault:  secret-service (placeholder)
 
 use async_trait::async_trait;
-use tokio::process::Command;
-use tracing::{info, warn};
-use wristkey_core::{PlatformSecurity, PasswordVault, Result, WristKeyError};
+use wristkey_core::{PlatformSecurity, PasswordVault, Result, WristKeyError, SessionManager};
+use std::sync::Arc;
 
-pub struct LinuxSecurity;
+pub struct LinuxSecurity {
+    session: Option<Arc<SessionManager>>,
+}
+
+impl LinuxSecurity {
+    pub fn new() -> Self {
+        Self { session: None }
+    }
+    pub fn set_session(&mut self, session: Arc<SessionManager>) {
+        self.session = Some(session);
+    }
+    pub fn storage_type_description() -> &'static str { "Linux secret-service (placeholder)" }
+}
 
 impl Default for LinuxSecurity {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl LinuxSecurity {
-    pub fn new() -> Self { Self }
+    fn default() -> Self { Self::new() }
 }
 
 #[async_trait]
 impl PlatformSecurity for LinuxSecurity {
     async fn lock_screen(&self) -> Result<()> {
-        let output = Command::new("loginctl").args(["lock-session"]).output().await
-            .map_err(|e| WristKeyError::Platform(format!("loginctl: {}", e)))?;
+        let output = tokio::process::Command::new("loginctl")
+            .args(&["lock-session"])
+            .output()
+            .await
+            .map_err(|e| WristKeyError::Platform(format!("loginctl lock failed: {}", e)))?;
         if !output.status.success() {
-            return Err(WristKeyError::Platform(format!("loginctl error: {}", String::from_utf8_lossy(&output.stderr))));
+            return Err(WristKeyError::Platform(format!(
+                "loginctl lock error: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-        info!("session locked via loginctl");
         Ok(())
     }
 
     async fn unlock_screen(&self) -> Result<()> {
-        let output = Command::new("loginctl").args(["unlock-session"]).output().await
-            .map_err(|e| WristKeyError::Platform(format!("loginctl unlock: {}", e)))?;
+        let output = tokio::process::Command::new("loginctl")
+            .args(&["unlock-session"])
+            .output()
+            .await
+            .map_err(|e| WristKeyError::Platform(format!("loginctl unlock failed: {}", e)))?;
         if !output.status.success() {
-            return Err(WristKeyError::Platform(format!("loginctl unlock error: {}", String::from_utf8_lossy(&output.stderr))));
+            return Err(WristKeyError::Platform(format!(
+                "loginctl unlock error: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-        info!("session unlocked via loginctl");
         Ok(())
     }
 
     async fn is_locked(&self) -> Result<bool> {
-        // Placeholder: detect if session is locked via loginctl
-        let output = Command::new("loginctl").args(["show-session", "--property=LockedHint"]).output().await
-            .map_err(|e| WristKeyError::Platform(format!("loginctl show-session: {}", e)))?;
-        if !output.status.success() {
-            return Ok(false);
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.trim().contains("yes"))
+        Ok(false)
     }
 
     async fn register_as_authenticator(&self) -> Result<()> {
-        // Credential Provider registration is Windows-only
-        warn!("register_as_authenticator is a no-op on Linux");
         Ok(())
     }
 }
@@ -59,22 +70,12 @@ impl PlatformSecurity for LinuxSecurity {
 #[async_trait]
 impl PasswordVault for LinuxSecurity {
     async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
-        warn!("Linux password encryption uses placeholder XOR — replace with secret-service!");
-        let key = b"wristkey-placeholder-key";
-        let mut out = Vec::with_capacity(password.len());
-        for (i, b) in password.bytes().enumerate() {
-            out.push(b ^ key[i % key.len()]);
-        }
-        Ok(out)
+        // TODO: integrate with secret-service or keyutils
+        // Placeholder: XOR obfuscation -- NOT SECURE, replace before production!
+        Ok(password.bytes().map(|b| b ^ 0x55).collect())
     }
 
     async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String> {
-        let key = b"wristkey-placeholder-key";
-        let mut out = Vec::with_capacity(ciphertext.len());
-        for (i, b) in ciphertext.iter().enumerate() {
-            out.push(b ^ key[i % key.len()]);
-        }
-        String::from_utf8(out)
-            .map_err(|e| WristKeyError::Platform(format!("decrypt UTF-8 error: {}", e)))
+        Ok(ciphertext.iter().map(|b| (b ^ 0x55) as char).collect())
     }
 }
