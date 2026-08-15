@@ -330,8 +330,9 @@ async fn unlock_screen(state: State<'_, Arc<AppState>>) -> Result<(), String> {
 #[tauri::command]
 async fn set_windows_password(state: State<'_, Arc<AppState>>, password: String) -> Result<(), String> {
     use wristkey_core::PasswordVault;
-    let win_sec = WindowsSecurity::new();
-    let encrypted = win_sec.encrypt_password(&password).await.map_err(|e| e.to_string())?;
+    use wristkey_platform_win::WindowsVault;
+    let vault = WindowsVault::new();
+    let encrypted = vault.encrypt_password(&password).await.map_err(|e| e.to_string())?;
 
     let devices = state.session.list_paired_devices().await.map_err(|e| e.to_string())?;
     if let Some(device) = devices.first() {
@@ -444,6 +445,13 @@ fn main() {
             println!("[WristKey] creating platform adapter...");
             let platform = create_platform_adapter(session.clone());
             println!("[WristKey] platform adapter created");
+
+            // Start pipe server early (Windows only) -- lazy singleton, safe to call multiple times
+            #[cfg(target_os = "windows")]
+            {
+                WindowsSecurity::start_pipe_server();
+                println!("[WristKey] pipe server started");
+            }
 
             println!("[WristKey] creating BLE adapter...");
             let ble: Arc<dyn BleAdapter> = match tauri::async_runtime::block_on(BtleplugAdapter::new()) {

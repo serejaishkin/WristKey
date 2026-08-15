@@ -5,8 +5,7 @@
 //!   2. Software Provider (CNG) -- software-backed, if TPM unavailable
 //!   3. DPAPI -- ultimate fallback, always works, no key management
 //!
-//! Named pipe starts in background thread (never panics on startup).
-//! Credential Provider is an optional concern, not a hard dependency.
+//! Named pipe server is a lazy singleton -- started once on first unlock_screen().
 
 use async_trait::async_trait;
 use tokio::net::windows::named_pipe::ServerOptions;
@@ -15,6 +14,7 @@ use wristkey_core::{PlatformSecurity, PasswordVault, Result, WristKeyError, Sess
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
+use std::sync::{Once, OnceLock};
 
 #[link(name = "user32")]
 extern "system" {
@@ -23,6 +23,32 @@ extern "system" {
 
 pub const CP_CLSID: &str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
 pub const CP_NAME: &str = "WristKey Credential Provider";
+
+// ------------------------------------------------------------------------------
+// Lazy singleton pipe password buffer + server
+// ------------------------------------------------------------------------------
+
+static PIPE_PASSWORD: OnceLock<Arc<Mutex<Option<String>>>> = OnceLock::new();
+static PIPE_SERVER_STARTED: Once = Once::new();
+
+fn get_pipe_password() -> Arc<Mutex<Option<String>>> {
+    PIPE_PASSWORD.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+}
+
+fn start_pipe_server_impl() {
+    let password = get_pipe_password();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        match rt {
+            Ok(rt) => rt.block_on(async move {
+                UnlockPipeServer::new(password).run().await;
+            }),
+            Err(e) => error!("Pipe server runtime failed: {}", e),
+        }
+    });
+}
 
 // ------------------------------------------------------------------------------
 // Vault Backend Selection
@@ -52,18 +78,22 @@ impl VaultBackend {
     fn probe_tpm() -> bool {
         use windows::Win32::Security::Cryptography::{
             NCryptOpenStorageProvider, NCryptCreatePersistedKey, NCryptFreeObject,
+            NCRYPT_PROV_HANDLE, NCRYPT_KEY_HANDLE, CERT_KEY_SPEC, NCRYPT_FLAGS,
         };
         use windows::core::PCWSTR;
 
         unsafe {
-            let mut provider = std::ptr::null_mut();
+            let mut provider = NCRYPT_PROV_HANDLE(0);
             let tpm_provider: Vec<u16> = "Microsoft Platform Crypto Provider\0".encode_utf16().collect();
             if NCryptOpenStorageProvider(&mut provider, PCWSTR(tpm_provider.as_ptr()), 0).is_err() {
                 return false;
             }
-            let mut key = std::ptr::null_mut();
+            let mut key = NCRYPT_KEY_HANDLE(0);
             let aes: Vec<u16> = "AES\0".encode_utf16().collect();
-            let result = NCryptCreatePersistedKey(provider, &mut key, PCWSTR(aes.as_ptr()), PCWSTR::null(), 0, 0);
+            let result = NCryptCreatePersistedKey(
+                provider, &mut key, PCWSTR(aes.as_ptr()), PCWSTR::null(),
+                CERT_KEY_SPEC(0), NCRYPT_FLAGS(0),
+            );
             let _ = NCryptFreeObject(provider);
             result.is_ok()
         }
@@ -72,18 +102,22 @@ impl VaultBackend {
     fn probe_software_provider() -> bool {
         use windows::Win32::Security::Cryptography::{
             NCryptOpenStorageProvider, NCryptCreatePersistedKey, NCryptFreeObject,
+            NCRYPT_PROV_HANDLE, NCRYPT_KEY_HANDLE, CERT_KEY_SPEC, NCRYPT_FLAGS,
         };
         use windows::core::PCWSTR;
 
         unsafe {
-            let mut provider = std::ptr::null_mut();
+            let mut provider = NCRYPT_PROV_HANDLE(0);
             let sw_provider: Vec<u16> = "Microsoft Software Key Storage Provider\0".encode_utf16().collect();
             if NCryptOpenStorageProvider(&mut provider, PCWSTR(sw_provider.as_ptr()), 0).is_err() {
                 return false;
             }
-            let mut key = std::ptr::null_mut();
+            let mut key = NCRYPT_KEY_HANDLE(0);
             let aes: Vec<u16> = "AES\0".encode_utf16().collect();
-            let result = NCryptCreatePersistedKey(provider, &mut key, PCWSTR(aes.as_ptr()), PCWSTR::null(), 0, 0);
+            let result = NCryptCreatePersistedKey(
+                provider, &mut key, PCWSTR(aes.as_ptr()), PCWSTR::null(),
+                CERT_KEY_SPEC(0), NCRYPT_FLAGS(0),
+            );
             let _ = NCryptFreeObject(provider);
             result.is_ok()
         }
@@ -99,7 +133,7 @@ impl VaultBackend {
 }
 
 // ------------------------------------------------------------------------------
-// WindowsVault -- implements PasswordVault with auto-fallback
+// WindowsVault -- public, no pipe, reusable
 // ------------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -111,7 +145,6 @@ impl WindowsVault {
     pub fn new() -> Self {
         Self { backend: VaultBackend::detect() }
     }
-
     pub fn backend_description(&self) -> &'static str {
         self.backend.description()
     }
@@ -124,12 +157,8 @@ impl Default for WindowsVault {
 #[async_trait]
 impl PasswordVault for WindowsVault {
     async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
-        // CNG backends use DPAPI under the hood for simplicity & reliability.
-        // The backend marker tells us *where* keys live, but encryption uses DPAPI
-        // to avoid CNG AES padding complexities (NCRYPT_PAD_PKCS1_FLAG issues).
         self.dpapi_encrypt(password).await
     }
-
     async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String> {
         self.dpapi_decrypt(ciphertext).await
     }
@@ -153,9 +182,7 @@ impl WindowsVault {
 
         unsafe {
             CryptProtectData(
-                &mut data_in,
-                PCWSTR::null(),
-                None, None, None,
+                &mut data_in, PCWSTR::null(), None, None, None,
                 CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN,
                 &mut data_out,
             ).map_err(|e| WristKeyError::Platform(format!("CryptProtectData failed: {:?}", e)))?;
@@ -164,18 +191,15 @@ impl WindowsVault {
         let encrypted = unsafe {
             std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize).to_vec()
         };
-
         unsafe {
-            let _ = LocalFree(HLOCAL(data_out.pbData as isize));
+            let _ = LocalFree(HLOCAL(data_out.pbData as *mut std::ffi::c_void));
         }
-
         Ok(encrypted)
     }
 
     async fn dpapi_decrypt(&self, ciphertext: &[u8]) -> Result<String> {
         use windows::Win32::Security::Cryptography::{
-            CryptUnprotectData, CRYPT_INTEGER_BLOB,
-            CRYPTPROTECT_UI_FORBIDDEN,
+            CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
         };
         use windows::Win32::Foundation::{LocalFree, HLOCAL};
 
@@ -187,19 +211,16 @@ impl WindowsVault {
 
         unsafe {
             CryptUnprotectData(
-                &mut data_in,
-                None, None, None, None,
-                CRYPTPROTECT_UI_FORBIDDEN,
-                &mut data_out,
+                &mut data_in, None, None, None, None,
+                CRYPTPROTECT_UI_FORBIDDEN, &mut data_out,
             ).map_err(|e| WristKeyError::Platform(format!("CryptUnprotectData failed: {:?}", e)))?;
         }
 
         let decrypted = unsafe {
             std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize).to_vec()
         };
-
         unsafe {
-            let _ = LocalFree(HLOCAL(data_out.pbData as isize));
+            let _ = LocalFree(HLOCAL(data_out.pbData as *mut std::ffi::c_void));
         }
 
         String::from_utf8(decrypted)
@@ -208,45 +229,26 @@ impl WindowsVault {
 }
 
 // ------------------------------------------------------------------------------
-// WindowsSecurity -- PlatformSecurity + PasswordVault facade
+// WindowsSecurity -- PlatformSecurity facade, lazy pipe
 // ------------------------------------------------------------------------------
 
 pub struct WindowsSecurity {
     session: Option<Arc<SessionManager>>,
     vault: WindowsVault,
-    pipe_password: Arc<Mutex<Option<String>>>,
-    _pipe_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl WindowsSecurity {
     pub fn new() -> Self {
-        let vault = WindowsVault::new();
-        let pipe_password = Arc::new(Mutex::new(None));
-        let password_clone = pipe_password.clone();
-
-        // Lazy pipe server: runs in background, never panics on startup
-        let pipe_handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            match rt {
-                Ok(rt) => rt.block_on(async move {
-                    UnlockPipeServer::new(password_clone).run().await;
-                }),
-                Err(e) => error!("Pipe server runtime failed: {}", e),
-            }
-        });
-
-        Self {
-            session: None,
-            vault,
-            pipe_password,
-            _pipe_handle: Some(pipe_handle),
-        }
+        Self { session: None, vault: WindowsVault::new() }
     }
 
     pub fn set_session(&mut self, session: Arc<SessionManager>) {
         self.session = Some(session);
+    }
+
+    /// Start the named pipe server (safe to call multiple times -- only starts once).
+    pub fn start_pipe_server() {
+        PIPE_SERVER_STARTED.call_once(start_pipe_server_impl);
     }
 
     pub fn storage_type_description() -> &'static str {
@@ -257,7 +259,7 @@ impl WindowsSecurity {
         self.vault.backend_description()
     }
 
-    // --- Credential Provider (optional concern) ---
+    // --- Credential Provider (optional) ---
 
     pub fn is_credential_provider_registered() -> bool {
         use winreg::RegKey;
@@ -319,16 +321,12 @@ impl WindowsSecurity {
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let dll_path = exe_dir.join("WristKeyCredentialProvider.dll");
-
-        if dll_path.exists() {
-            return Ok(dll_path);
-        }
+        if dll_path.exists() { return Ok(dll_path); }
         let dev_dll = exe_dir
             .parent().and_then(|p| p.parent())
             .and_then(|p| p.parent())
             .map(|p| p.join("crates/credential-provider/WristKeyCredentialProvider.dll"))
             .filter(|p| p.exists());
-
         if let Some(dev_path) = dev_dll {
             std::fs::copy(&dev_path, &dll_path).map_err(|e| {
                 WristKeyError::Platform(format!("copy DLL: {}", e))
@@ -356,6 +354,8 @@ impl PlatformSecurity for WindowsSecurity {
     }
 
     async fn unlock_screen(&self) -> Result<()> {
+        Self::start_pipe_server(); // lazy start
+        let pipe_password = get_pipe_password();
         if let Some(ref session) = self.session {
             let state = session.state().await;
             if let Some(device_id) = state.device_id() {
@@ -363,7 +363,7 @@ impl PlatformSecurity for WindowsSecurity {
                     Ok(Some(encrypted)) => {
                         match self.vault.decrypt_password(&encrypted).await {
                             Ok(password) => {
-                                *self.pipe_password.lock().await = Some(password);
+                                *pipe_password.lock().await = Some(password);
                                 info!("Password buffered for Credential Provider");
                             }
                             Err(e) => warn!("Decrypt failed: {}", e),
@@ -398,7 +398,7 @@ impl PasswordVault for WindowsSecurity {
 }
 
 // ------------------------------------------------------------------------------
-// Named Pipe Server (Credential Provider communication)
+// Named Pipe Server
 // ------------------------------------------------------------------------------
 
 struct UnlockPipeServer {
@@ -428,12 +428,16 @@ impl UnlockPipeServer {
                                 info!("Password sent to Credential Provider");
                             }
                         }
-                        Err(e) => error!("Pipe connect error: {}", e),
+                        Err(e) => {
+                            // Only log at debug level to avoid spam
+                            tracing::debug!("Pipe connect: {}", e);
+                        }
                     }
                 }
                 Err(e) => {
-                    error!("Pipe create error: {}", e);
-                    sleep(Duration::from_secs(1)).await;
+                    // Access denied usually means pipe already exists from previous instance
+                    tracing::debug!("Pipe create: {} (will retry)", e);
+                    sleep(Duration::from_secs(5)).await;
                 }
             }
         }

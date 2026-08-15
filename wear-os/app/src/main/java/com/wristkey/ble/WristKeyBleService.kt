@@ -39,6 +39,7 @@ class WristKeyBleService : Service() {
         private const val CHANNEL_ID = "wristkey_ble_channel"
         private const val PREFS_NAME = "WristKeyPrefs"
         private const val PREFS_PAIRED_ADDRESS = "paired_device_address"
+        private const val PREFS_PAIRED_NAME = "paired_device_name"
 
         val SERVICE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
@@ -83,8 +84,9 @@ class WristKeyBleService : Service() {
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
         pairedDeviceAddress = prefs.getString(PREFS_PAIRED_ADDRESS, null)
+        pairedDeviceName = prefs.getString(PREFS_PAIRED_NAME, null)
         if (pairedDeviceAddress != null) {
-            Log.i(TAG, "Restored paired device address: $pairedDeviceAddress")
+            Log.i(TAG, "Restored paired device: $pairedDeviceName ($pairedDeviceAddress)")
         }
 
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
@@ -144,6 +146,18 @@ class WristKeyBleService : Service() {
 
     fun getPairedDeviceAddress(): String? = pairedDeviceAddress
 
+    fun getPairedDeviceName(): String? = pairedDeviceName
+
+    fun setPairedDevice(address: String, name: String) {
+        pairedDeviceAddress = address
+        pairedDeviceName = name
+        prefs.edit()
+            .putString(PREFS_PAIRED_ADDRESS, address)
+            .putString(PREFS_PAIRED_NAME, name)
+            .apply()
+        Log.i(TAG, "Paired device saved: $name ($address)")
+    }
+
     fun setPairedDeviceAddress(address: String) {
         pairedDeviceAddress = address
         prefs.edit().putString(PREFS_PAIRED_ADDRESS, address).apply()
@@ -152,8 +166,19 @@ class WristKeyBleService : Service() {
 
     fun clearPairedDevice() {
         pairedDeviceAddress = null
-        prefs.edit().remove(PREFS_PAIRED_ADDRESS).apply()
-        Log.i(TAG, "Paired device address cleared")
+        pairedDeviceName = null
+        prefs.edit()
+            .remove(PREFS_PAIRED_ADDRESS)
+            .remove(PREFS_PAIRED_NAME)
+            .apply()
+        Log.i(TAG, "Paired device cleared")
+    }
+
+    fun forgetDevice() {
+        clearPairedDevice()
+        stopGattServer()
+        resetPin()
+        Log.i(TAG, "Device forgotten, restarting advertising")
     }
 
     fun isPaired(): Boolean = pairedDeviceAddress != null
@@ -254,6 +279,15 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "GATT server started")
     }
 
+    private fun stopGattServer() {
+        gattServer?.close()
+        gattServer = null
+        challengeCharacteristic = null
+        responseCharacteristic = null
+        configCharacteristic = null
+        Log.i(TAG, "GATT server stopped")
+    }
+
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
             when (newState) {
@@ -325,8 +359,7 @@ class WristKeyBleService : Service() {
             Log.i(TAG, "Pairing confirmed -- response sent (${response.size} bytes)")
 
             pairingDeviceAddress?.let { addr ->
-                setPairedDeviceAddress(addr)
-                pairedDeviceName = "PC"
+                setPairedDevice(addr, "PC")
             }
 
             _pairingRequested.set(false)
@@ -372,7 +405,7 @@ class WristKeyBleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopAdvertising()
-        gattServer?.close()
+        stopGattServer()
         unregisterReceiver(bluetoothStateReceiver)
     }
 }
