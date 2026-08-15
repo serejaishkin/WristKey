@@ -23,6 +23,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelUuid
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
@@ -56,6 +57,7 @@ class WristKeyBleService : Service() {
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
     private var configCharacteristic: BluetoothGattCharacteristic? = null
     private var currentChallenge: ByteArray? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val keyStoreManager = KeyStoreManager()
     private val _pairingRequested = AtomicBoolean(false)
@@ -98,6 +100,12 @@ class WristKeyBleService : Service() {
             return
         }
 
+        // Acquire partial wake lock to keep CPU alive when screen is off
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WristKey::BleWakeLock")
+        wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes timeout, renew in onStartCommand if needed
+        Log.i(TAG, "WakeLock acquired")
+
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
@@ -113,6 +121,13 @@ class WristKeyBleService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Renew wake lock if needed
+        wakeLock?.let {
+            if (!it.isHeld) {
+                it.acquire(10 * 60 * 1000L)
+                Log.i(TAG, "WakeLock renewed")
+            }
+        }
         return START_STICKY
     }
 
@@ -407,5 +422,11 @@ class WristKeyBleService : Service() {
         stopAdvertising()
         stopGattServer()
         unregisterReceiver(bluetoothStateReceiver)
+        wakeLock?.let {
+            if (it.isHeld) {
+                it.release()
+                Log.i(TAG, "WakeLock released")
+            }
+        }
     }
 }
