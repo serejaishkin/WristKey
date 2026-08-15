@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-p256 = { version = "0.13", features = ["ecdsa"] }
-ecdsa = { version = "0.16", features = ["der"] }
-sha2 = "0.10"
-thiserror = "1"
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.21"

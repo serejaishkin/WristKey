@@ -1,66 +1,32 @@
-//! macOS platform security implementation
-//!
-//! Lock:   CGSessionCopyCurrentDictionary / osascript
-//! Unlock: Placeholder (macOS secure unlock requires Touch ID / password dialog)
-//! Vault:  Keychain Services (placeholder)
+use wristkey_core::KeyProtector;
+use security_framework::os::macos::keychain::SecKeychain;
 
-use async_trait::async_trait;
-use wristkey_core::{PlatformSecurity, PasswordVault, Result, WristKeyError, SessionManager};
-use std::sync::Arc;
+const SERVICE: &str = "com.wristkey.pairing";
+const ACCOUNT: &str = "pairing_key";
 
-pub struct MacosSecurity;
+/// macOS Keychain protector. Stores the raw pairingKey in the login keychain.
+/// JSON field `pairing_key_enc` is ignored (can be empty string).
+pub struct MacosKeyProtector;
 
-impl MacosSecurity {
-    pub fn new() -> Self { Self }
-    pub fn set_session(&mut self, _session: Arc<SessionManager>) {}
-    pub fn storage_type_description() -> &'static str { "macOS Keychain (placeholder)" }
-}
+impl KeyProtector for MacosKeyProtector {
+    fn protect(&self, key: &[u8]) -> Vec<u8> {
+        // Remove old entry if exists
+        let _ = SecKeychain::default()
+            .and_then(|kc| kc.find_generic_password(SERVICE, ACCOUNT))
+            .and_then(|(_, item)| item.delete());
 
-impl Default for MacosSecurity {
-    fn default() -> Self { Self::new() }
-}
-
-#[async_trait]
-impl PlatformSecurity for MacosSecurity {
-    async fn lock_screen(&self) -> Result<()> {
-        let output = tokio::process::Command::new("osascript")
-            .args(&["-e", "tell application \"System Events\" to keystroke \"q\" using {control down, command down}"])
-            .output()
-            .await
-            .map_err(|e| WristKeyError::Platform(format!("macOS lock failed: {}", e)))?;
-        if !output.status.success() {
-            return Err(WristKeyError::Platform(format!(
-                "macOS lock script failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(())
+        let _ = SecKeychain::default()
+            .and_then(|kc| kc.add_generic_password(SERVICE, ACCOUNT, key));
+        vec![] // marker — real data lives in Keychain
     }
 
-    async fn unlock_screen(&self) -> Result<()> {
-        // macOS does not allow programmatic unlock without user interaction.
-        // Touch ID / Apple Watch unlock is handled by the OS.
-        Ok(())
-    }
-
-    async fn is_locked(&self) -> Result<bool> {
-        Ok(false)
-    }
-
-    async fn register_as_authenticator(&self) -> Result<()> {
-        Ok(())
+    fn unprotect(&self, _data: &[u8]) -> Option<Vec<u8>> {
+        let keychain = SecKeychain::default().ok()?;
+        let (password, _) = keychain.find_generic_password(SERVICE, ACCOUNT).ok()?;
+        Some(password.as_ref().to_vec())
     }
 }
 
-#[async_trait]
-impl PasswordVault for MacosSecurity {
-    async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
-        // TODO: replace with Keychain Services (Security.framework)
-        // Placeholder: XOR obfuscation -- NOT SECURE, replace before production!
-        Ok(password.bytes().map(|b| b ^ 0xAA).collect())
-    }
-
-    async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String> {
-        Ok(ciphertext.iter().map(|b| (b ^ 0xAA) as char).collect())
-    }
+pub fn create_protector() -> MacosKeyProtector {
+    MacosKeyProtector
 }

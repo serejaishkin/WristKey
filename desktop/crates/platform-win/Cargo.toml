@@ -1,21 +1,12 @@
 [package]
-name = "wristkey-platform-win"
+name = "platform-win"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 wristkey-core = { path = "../core" }
-async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros", "net"] }
-tracing = { workspace = true }
-winreg = { workspace = true }
-
-[dependencies.windows]
-version = "0.58"
-features = [
+windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
-    "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_UI_WindowsAndMessaging",
-]
+    "Win32_System_Memory",
+] }

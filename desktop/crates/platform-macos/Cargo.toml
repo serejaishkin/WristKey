@@ -1,16 +1,8 @@
 [package]
-name = "wristkey-platform-macos"
+name = "platform-macos"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 wristkey-core = { path = "../core" }
-async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros"] }
-tracing = { workspace = true }
-
-[dependencies.core-foundation]
-version = "0.10"
-
-[dependencies.core-graphics]
-version = "0.25"
+security-framework = "2.11"
