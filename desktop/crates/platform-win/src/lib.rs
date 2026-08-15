@@ -227,7 +227,7 @@ impl PasswordVault for WindowsSecurity {
             CryptProtectData, CRYPT_INTEGER_BLOB,
             CRYPTPROTECT_LOCAL_MACHINE, CRYPTPROTECT_UI_FORBIDDEN,
         };
-        use windows::Win32::System::Memory::LocalFree;
+        use windows::Win32::Foundation::LocalFree;
         use windows::core::PCWSTR;
 
         let data = password.as_bytes();
@@ -266,7 +266,7 @@ impl PasswordVault for WindowsSecurity {
             CryptUnprotectData, CRYPT_INTEGER_BLOB,
             CRYPTPROTECT_UI_FORBIDDEN,
         };
-        use windows::Win32::System::Memory::LocalFree;
+        use windows::Win32::Foundation::LocalFree;
 
         let mut data_in = CRYPT_INTEGER_BLOB {
             cbData: ciphertext.len() as u32,

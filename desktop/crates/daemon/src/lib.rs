@@ -26,7 +26,6 @@ pub enum ProximityAction {
     None,
 }
 
-/// Debounce counter — requires N consecutive weak readings before locking.
 pub struct DebounceCounter {
     threshold: usize,
     count: usize,
@@ -36,22 +35,11 @@ impl DebounceCounter {
     pub fn new(threshold: usize) -> Self {
         Self { threshold, count: 0 }
     }
-
-    /// Call with `true` if signal is weak (should lock), `false` if strong.
-    /// Returns `true` when threshold reached.
     pub fn tick(&mut self, weak: bool) -> bool {
-        if weak {
-            self.count += 1;
-            self.count >= self.threshold
-        } else {
-            self.count = 0;
-            false
-        }
+        if weak { self.count += 1; self.count >= self.threshold }
+        else { self.count = 0; false }
     }
-
-    pub fn reset(&mut self) {
-        self.count = 0;
-    }
+    pub fn reset(&mut self) { self.count = 0; }
 }
 
 pub struct Daemon {
@@ -70,21 +58,33 @@ impl Daemon {
         platform: Arc<dyn PlatformSecurity>,
         conn_mgr: Arc<ConnectionManager>,
     ) -> Self {
-        let baseline = -60i16; // default, updated after first calibration
         Self {
             session,
             ble,
             platform,
             conn_mgr,
-            smoother: Mutex::new(RssiSmoother::new(baseline)),
+            smoother: Mutex::new(RssiSmoother::new(-60i16)),
             debounce: Mutex::new(DebounceCounter::new(3)),
         }
     }
 
-    /// Main daemon loop.
     pub async fn run(&self) -> Result<()> {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
         let mut ticker = interval(Duration::from_secs(2));
+
+        // FIX: try to silently authenticate with last paired device on startup
+        let devices = self.session.list_paired_devices().await?;
+        if !devices.is_empty() {
+            let state = self.session.state().await;
+            if !state.is_authenticated() {
+                info!("Daemon started with paired device but not authenticated — attempting silent reconnect");
+                if let Err(e) = self.authenticate_device(&service_uuid, &devices).await {
+                    warn!("Silent reconnect failed: {}", e);
+                } else {
+                    info!("Silent reconnect successful — device authenticated");
+                }
+            }
+        }
 
         loop {
             ticker.tick().await;
@@ -119,7 +119,76 @@ impl Daemon {
         }
     }
 
-    /// Scan for paired watch, apply RSSI smoothing + hysteresis + debounce.
+    /// Silent reconnect — authenticate without unlocking screen.
+    /// Used on daemon startup to restore session after app restart.
+    async fn authenticate_device(
+        &self,
+        service_uuid: &Uuid,
+        devices: &[wristkey_core::PairedDevice],
+    ) -> Result<()> {
+        let device = devices.first()
+            .ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
+
+        let info = PeripheralInfo {
+            id: device.address.clone(),
+            name: Some(device.name.clone()),
+            pin: None,
+            device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()),
+            rssi: None,
+            service_uuids: vec![*service_uuid],
+            raw_manufacturer_data: None,
+        };
+
+        let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
+        let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
+        let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
+
+        let challenge = self.session.begin_unlock(device.id).await?;
+
+        let mut write_ok = false;
+        for attempt in 1..=3 {
+            if self.ble.write(&conn, challenge_char, &challenge.to_bytes()).await.is_ok() {
+                write_ok = true;
+                break;
+            }
+            warn!("Auth challenge write attempt {} failed, retrying...", attempt);
+            sleep(Duration::from_millis(300)).await;
+        }
+        if !write_ok {
+            let _ = self.ble.disconnect(&conn).await;
+            return Err(WristKeyError::Ble("failed to write auth challenge".into()));
+        }
+
+        let mut rx = self.ble.notify(&conn, response_char).await?;
+        let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
+            Ok(Some(d)) => d,
+            _ => {
+                let _ = self.ble.disconnect(&conn).await;
+                return Err(WristKeyError::Ble("timeout waiting for auth response".into()));
+            }
+        };
+
+        if response_data.len() < 65 {
+            let _ = self.ble.disconnect(&conn).await;
+            return Err(WristKeyError::Protocol(format!(
+                "invalid auth response: {} bytes (expected at least 65)", response_data.len()
+            )));
+        }
+
+        let signature = response_data[..64].to_vec();
+        let user_present = response_data[64] != 0;
+
+        let response = Response {
+            signature,
+            user_present,
+            timestamp: chrono::Utc::now(),
+        };
+
+        self.session.verify_unlock(&response).await?;
+        info!("Silent authenticate successful for {}", device.name);
+        Ok(())
+    }
+
     async fn check_proximity(
         &self,
         service_uuid: &Uuid,
@@ -132,34 +201,26 @@ impl Daemon {
 
         while tokio::time::Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
+            if remaining.is_zero() { break; }
             match timeout(remaining, rx.recv()).await {
                 Ok(Some(info)) => {
                     let matched = devices.iter().find(|d| {
                         d.address == info.id
                         || d.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()).as_ref() == info.device_id.as_ref()
                     });
-
                     if let Some(device) = matched {
                         if let Some(rssi) = info.rssi {
                             let mut smoother = self.smoother.lock().await;
                             let (should_unlock, changed) = smoother.update(rssi);
-                            debug!(
-                                "Device {} raw_rssi={} smoothed={:?} should_unlock={} changed={}",
-                                device.name, rssi, smoother.current_rssi(), should_unlock, changed
-                            );
-
+                            debug!("Device {} raw_rssi={} smoothed={:?} should_unlock={}",
+                                device.name, rssi, smoother.current_rssi(), should_unlock);
                             let threshold = device.baseline_rssi;
                             if smoother.current_rssi().is_none() || changed {
                                 drop(smoother);
                                 let mut s = self.smoother.lock().await;
                                 *s = RssiSmoother::new(threshold);
                             }
-
                             found_rssi = Some(rssi);
-
                             if should_unlock {
                                 self.debounce.lock().await.reset();
                                 let _ = self.ble.stop_scan().await;
@@ -172,20 +233,14 @@ impl Daemon {
                 Err(_) => break,
             }
         }
-
         let _ = self.ble.stop_scan().await;
-
         if found_rssi.is_none() {
             let should_lock = self.debounce.lock().await.tick(true);
-            if should_lock {
-                return Ok(ProximityAction::Lock);
-            }
+            if should_lock { return Ok(ProximityAction::Lock); }
         }
-
         Ok(ProximityAction::None)
     }
 
-    /// Perform cryptographic unlock via BLE challenge-response.
     async fn unlock_with_crypto(
         &self,
         service_uuid: &Uuid,
@@ -225,13 +280,7 @@ impl Daemon {
         }
 
         let mut rx = self.ble.notify(&conn, response_char).await?;
-
-        // FIX: expect 65 bytes (64 sig + 1 user_present), not 130
-        // Public key is already stored in PairedDevice from pairing
-        let response_data = match timeout(
-            Duration::from_secs(10),
-            rx.recv()
-        ).await {
+        let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some(d)) => d,
             _ => {
                 let _ = self.ble.disconnect(&conn).await;
@@ -258,7 +307,6 @@ impl Daemon {
         self.session.verify_unlock(&response).await?;
         self.platform.unlock_screen().await?;
         info!("Screen unlocked via crypto challenge-response");
-
         Ok(())
     }
 }
