@@ -80,7 +80,7 @@ Unlock only needs the first 65 bytes (signature + flag); pairing needs all 130 (
 - Primary advertisement: just manufacturer data (0xFFFF) containing the 4-digit PIN as ASCII — small, always fits.
 - Scan response: service UUID + manufacturer data (PIN + 4-byte device_id fingerprint, 8 bytes total).
 
-PIN is shown to the person during pairing (desktop GUI) purely as a visual sanity check ("is this really the watch I'm holding") — it is **not** cryptographic; the real security is the ECDSA challenge-response. If you ever see manufacturer data replaced with a static marker like `"WRST"` instead of an actual random PIN — that's a regression, the desktop still parses `manufacturer_data[..4]` as an ASCII PIN string and will display garbage.
+PIN is shown to the person during pairing (desktop GUI) purely as a visual sanity check ("is this really the watch I'm holding") — it is **not cryptographic**; the real security is the ECDSA challenge-response. If you ever see manufacturer data replaced with a static marker like `"WRST"` instead of an actual random PIN — that's a regression, the desktop still parses `manufacturer_data[..4]` as an ASCII PIN string and will display garbage.
 
 `device_id` fingerprint = first 4 bytes of SHA-256(public key), used by the desktop to re-identify a paired device across BLE address rotation, independent of whether custom advertising is even working (see 3.1 below).
 
@@ -201,3 +201,203 @@ cd wear-os && ./gradlew assembleDebug
 # перепроверь ОБЕ стороны (Kotlin отправку и Rust парсинг) одновременно,
 # это самое частое место рассинхронизации за весь проект.
 ```
+
+---
+
+## 6. История проекта и накопленный контекст сессий
+
+> **ВАЖНО:** этот раздел является append-only журналом. Не переписывай старые записи и
+> не удаляй их ради "актуальности". Если новая сессия меняет архитектуру или
+> исправляет старое решение, добавь новую запись с датой и явно укажи, что именно
+> стало неактуальным. Полная исходная переписка хранится в чат-документах из архива
+> `2.4.zip`; этот раздел содержит инженерный конспект, который должен переживать
+> обрезание контекста чата.
+
+### 6.1 2026-08-07 — переход от v0.1 к рабочему desktop-продукту
+
+- Исходная архитектура: Rust workspace с `core`, `crypto`, `ble`, платформенными
+  модулями, daemon и Wear OS приложением.
+- Началась доводка system tray, GUI, pairing и Windows unlock.
+- В ранних сессиях использовался `sled`; позднее это решение признано источником
+  межпроцессных блокировок и заменено на SQLite.
+- В ранних версиях GUI/daemon существовало несколько отдельных бинарей и
+  `eframe/egui`. Это исторический этап. Финальная архитектура перешла на Tauri.
+
+### 6.2 2026-08-08 — BLE advertising и обнаружение
+
+- Desktop первоначально ожидал `manufacturer_data` с ключом `0xFFFF`.
+- На Wear OS advertising не укладывался в legacy BLE лимит 31 байт:
+  service UUID + PIN + `device_id` приводили к `ADVERTISE_FAILED_DATA_TOO_LARGE`.
+- Advertising был разделён на primary packet и scan response.
+- PIN и короткий fingerprint `device_id` должны использоваться для визуальной
+  идентификации и повторного обнаружения, но PIN не является криптографическим
+  фактором.
+- Появилась важная реальность Samsung Galaxy Watch: часы могут не отдавать
+  кастомный advertising приложения. Поэтому нельзя считать отсутствие
+  `0xFFFF`/PIN доказательством, что часов рядом нет.
+
+### 6.3 2026-08-09 — pairing, motion gate и protocol fixes
+
+- Обнаружена критичная ошибка `verify_unlock`: desktop генерировал новый
+  challenge вместо проверки того, который реально был отправлен часам.
+  Исправлено через состояние `SessionState::Verifying`.
+- Исправлен порядок pairing response:
+  `signature[64] || user_present[1] || public_key[65]`.
+- Исправлен формат публичного ключа: Android должен передавать raw SEC1
+  `0x04 || X || Y`, а не X.509 DER.
+- `device_id` вынесен в отдельный стабильный fingerprint на основе SHA-256
+  публичного ключа, чтобы не зависеть от BLE MAC.
+- Motion gate оказался чувствителен к задержке между нажатием/движением и
+  приходом challenge. Для диагностики временно рассматривалось увеличение окна
+  активности; отключать motion gate насовсем нельзя.
+- Обнаружено, что `device_id` нельзя извлекать из несуществующего диапазона
+  response payload — pairing должен получать его из advertising/стабильного
+  идентификатора.
+
+### 6.4 2026-08-10 — Samsung, MAC randomization и pairing UI
+
+- Samsung Galaxy Watch в скане показывали системный Accessory Service
+  (`fd50`) и manufacturer ID `0x0075`, тогда как кастомный WristKey service
+  иногда не был виден.
+- Было ошибочно предложено заменить универсальные WristKey UUID на Samsung
+  UUID. Это решение **отменено**: протокол WristKey должен оставаться
+  универсальным для разных Wear OS часов.
+- Правильная стратегия: использовать Samsung-сигналы только как fallback
+  обнаружения, но после подключения искать именно кастомный WristKey GATT
+  service. Нельзя превращать Samsung `fd50` в основной протокол WristKey.
+- В GUI убран ложный PIN `----`, если устройство его не advertising-ит.
+- Добавлены отображение MAC, pairing dialog/fallback, кнопки Pair/Reject и
+  сохранение адреса.
+- BLE Privacy приводит к смене MAC. Поэтому MAC нельзя считать постоянным
+  идентификатором paired device; приоритет — `device_id`, затем другие
+  устойчивые признаки.
+- Был добавлен BLE bonding как вспомогательный механизм, но он не заменяет
+  криптографическое challenge-response.
+
+### 6.5 2026-08-11/12 — Windows, storage locking и Credential Provider
+
+- Выявлена проблема `pairing database still in use`: два процесса
+  (`wristkeyd` и GUI) одновременно открывали `sled` DB.
+- Сначала применялся workaround с остановкой daemon перед GUI.
+- Архитектурное решение — один основной desktop-процесс + SQLite, чтобы GUI,
+  daemon и Tauri могли совместно работать с одной БД без sled lock.
+- Начата интеграция Windows Credential Provider из
+  `WristKeyCredentialProvider.cs`.
+- Windows platform получил named pipe для связи с Credential Provider и
+  хранилище пароля через Windows CNG/TPM/software fallback.
+- Важно: Credential Provider требует тестирования на реальной Windows; обычная
+  сборка Rust не доказывает работоспособность Winlogon COM-интеграции.
+
+### 6.6 2026-08-13 — универсальное обнаружение и отказ от широкого RSSI fallback
+
+- Широкий fallback вида "любой BLE девайс с RSSI > -80" оказался плохим:
+  в список попадали Midea, наушники, телефоны и другие устройства.
+- Этот подход считать регрессом. RSSI сам по себе не является доказательством,
+  что устройство — WristKey.
+- Для Samsung fallback использовались Accessory Service `fd50` и manufacturer
+  ID `0x0075`, но только для **обнаружения кандидата**, не для протокола.
+- При подключении desktop должен проверять наличие WristKey custom GATT service.
+  Если custom service отсутствует — сообщать об этом явно, а не подменять
+  протокол Samsung-сервисом.
+- Обнаружена проблема с пустыми/неожидаемыми Android logcat: сначала необходимо
+  проверять `adb devices` и правильный tag `WristKeyBleService`, а затем искать
+  crash/fatal в общем logcat.
+
+### 6.7 2026-08-14 — pairing фактически заработал
+
+- В одной из рабочих конфигураций pairing был успешно выполнен.
+- Подтверждение из логов часов:
+  `Pairing request -> showing dialog`,
+  `confirmPairing -> response built (user_present=true)`,
+  `notifyCharacteristicChanged SUCCESS`.
+- Это важная контрольная точка: криптографическая/прикладная pairing-схема
+  может работать на реальном устройстве. Если новая архитектура перестала
+  pairing-ить, сначала сравнивать её с этой рабочей точкой, а не заново
+  перепридумывать протокол.
+- После pairing следующим этапом должен быть проверен реальный unlock PC и
+  затем Windows Credential Provider.
+
+### 6.8 2026-08-15 — финальный переход на Tauri + SQLite и текущий блокер
+
+- Desktop GUI окончательно закреплён на **Tauri v2**. Старый `eframe/egui`
+  GUI больше не является рабочей точкой входа.
+- Storage окончательно переведён на **SQLite** (`SqliteStorage`). Старый sled
+  больше не должен возвращаться только ради совместимости со старым кодом.
+- В Tauri был обнаружен crash:
+  `there is no reactor running, must be called from the context of a Tokio 1.x runtime`
+  из `tokio::spawn` внутри `setup()`.
+- Исправление: запуск фоновой async-задачи через отдельный
+  `std::thread::spawn` + собственный Tokio runtime.
+- После этого приложение стартует нормально. Зафиксированный лог:
+  - Tauri setup проходит;
+  - tray создаётся;
+  - storage/crypto/session/platform создаются;
+  - Windows named pipe server запускается;
+  - daemon auto-start проходит;
+  - `wristkey_ble: BLE adapter ready`.
+- **Текущий блокер на 2026-08-15:** приложение запускается, но часы не появляются
+  в поиске. Последний лог заканчивается на `BLE adapter ready` без событий
+  обнаружения.
+- Следующая диагностика должна начинаться с текущего
+  `desktop/crates/ble/src/lib.rs` и пути вызова scan из Tauri, а не с переписывания
+  Wear OS протокола.
+- Отдельно проверить, что Tauri UI действительно вызывает scan API и получает
+  результат, а daemon не только инициализирует BLE adapter.
+- Затем проверить фильтр обнаружения: он не должен быть слишком узким для
+  Samsung, но и не должен возвращать весь BLE мусор.
+- После восстановления scan необходимо отдельно проверить:
+  1. обнаружение Galaxy Watch;
+  2. обнаружение не-Samsung Wear OS часов;
+  3. `discover_services()` после подключения;
+  4. pairing;
+  5. unlock;
+  6. lock on departure;
+  7. Credential Provider.
+
+### 6.9 Источники истории
+
+История этой секции собрана из переданных чат-документов, включая:
+
+- `WristKey Monorepo Setup.docx`
+- `Ошибка Ble.docx`
+- `WristKey.docx`
+- `Ошибка сборки APK.docx`
+- `WristKey配对失败.docx`
+- `WristKey配对错误.docx`
+- `Проблема BLE Advertising.docx`
+- `WristKey Build Failure.docx`
+- `Проверка репозитория.docx`
+- `Продолжить проект WristKey.docx`
+- `Репо-реш.docx`
+- `Метод не найден.docx`
+- `WristKey сборка.docx`
+- `WristKey завершение.docx`
+- `fix claud.docx`
+- `fix claud2.docx`
+- `продолжить.docx`
+- и остальные документы из переданного архива `2.4.zip`.
+
+Для следующего AI-сессии **не требуется загружать все эти документы заново**:
+`AI_HANDOFF.md` должен содержать инженерно значимый итог. Если в новой сессии
+появится новый чат-архив, его не надо использовать для перезаписи этого раздела:
+нужно добавить новый подраздел с датой.
+
+---
+
+## 7. Правило сохранения истории — append-only
+
+1. **Никогда не переписывать существующую историю `AI_HANDOFF.md`.**
+2. Новая сессия = новый подраздел с датой в разделе 6.
+3. Исправление старого решения не удаляет старую запись: добавить запись
+   `ОТМЕНЕНО` / `ЗАМЕНЕНО` и указать новое решение.
+4. Текущую архитектуру держать в разделах 0–5, а историю решений — в разделе 6.
+5. Ссылки на старые чат-документы сохранять как индекс источников, но не тащить
+   в handoff полный текст переписки.
+6. После каждой рабочей сессии обновлять как минимум:
+   - текущий блокер;
+   - что реально проверено;
+   - что только предположено;
+   - какие решения отменены;
+   - следующий конкретный диагностический шаг.
+7. Не считать "собралось" доказательством работоспособности BLE/unlock.
+   Контрольные точки должны подтверждаться реальными логами устройства/ПК.
