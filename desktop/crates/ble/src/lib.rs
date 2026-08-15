@@ -89,7 +89,7 @@ fn is_likely_watch(name: &Option<String>, services: &[Uuid], target_uuid: Uuid) 
     if let Some(n) = name {
         let lower = n.to_lowercase();
         lower.contains("watch") || lower.contains("galaxy") || lower.contains("wristkey")
-            || lower.contains("gear") || lower.contains("active") || lower.contains("sm-r")
+        || lower.contains("gear") || lower.contains("active") || lower.contains("sm-r")
     } else {
         false
     }
@@ -104,6 +104,9 @@ impl BleAdapter for BtleplugAdapter {
     async fn scan(&self, service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> {
         let (tx, rx) = mpsc::channel(32);
         let filter = ScanFilter::default();
+
+        // FIX: stop any previous scan before starting a new one
+        let _ = self.adapter.stop_scan().await;
 
         self.adapter.start_scan(filter).await
             .map_err(|e| WristKeyError::Ble(format!("scan: {}", e)))?;

@@ -132,11 +132,14 @@ impl Daemon {
     ) -> Result<ProximityAction> {
         let mut rx = self.ble.scan(*service_uuid).await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-
         let mut found_rssi: Option<i16> = None;
 
         while tokio::time::Instant::now() < deadline {
-            match timeout(Duration::from_millis(500), rx.recv()).await {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match timeout(remaining, rx.recv()).await {
                 Ok(Some(info)) => {
                     // FIX: convert Vec<u8> device_id to String for comparison with PeripheralInfo
                     let matched = devices.iter().find(|d| {
@@ -166,14 +169,19 @@ impl Daemon {
 
                             if should_unlock {
                                 self.debounce.lock().await.reset();
+                                let _ = self.ble.stop_scan().await;
                                 return Ok(ProximityAction::Unlock);
                             }
                         }
                     }
                 }
-                _ => break,
+                Ok(None) => break, // channel closed
+                Err(_) => break,   // deadline reached
             }
         }
+
+        // FIX: always stop scan when done
+        let _ = self.ble.stop_scan().await;
 
         // No signal found -> check debounce for lock
         if found_rssi.is_none() {

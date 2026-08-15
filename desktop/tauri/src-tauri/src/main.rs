@@ -5,9 +5,9 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tracing::{info, warn, error};
 
-use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, MemoryStorage};
+use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, MemoryStorage, PlatformSecurity};
 use wristkey_daemon::{Daemon, ConnectionManager};
-use wristkey_ble::BtleplugAdapter;
+use wristkey_ble::{BleAdapter, BtleplugAdapter, MockBleAdapter};
 
 #[cfg(target_os = "windows")]
 use wristkey_platform_win::WindowsSecurity;
@@ -67,10 +67,11 @@ struct AppState {
     session: Arc<SessionManager>,
     config: Arc<Mutex<Config>>,
     daemon: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    platform: Arc<dyn wristkey_core::PlatformSecurity>,
+    platform: Arc<dyn PlatformSecurity>,
+    ble: Arc<dyn BleAdapter>,
 }
 
-fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn wristkey_core::PlatformSecurity> {
+fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecurity> {
     #[cfg(target_os = "windows")]
     {
         let mut win = WindowsSecurity::new();
@@ -157,10 +158,31 @@ async fn get_paired_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<Devic
 
 #[tauri::command]
 async fn scan_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanResultDto>, String> {
-    let found = state.session.scan_ble().await.map_err(|e| e.to_string())?;
-    Ok(found.into_iter().map(|(id, name, rssi, address)| ScanResultDto {
-        id, name, rssi, address,
-    }).collect())
+    let service_uuid = uuid::Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567890").unwrap();
+    let mut rx = state.ble.scan(service_uuid).await.map_err(|e| e.to_string())?;
+    let mut found = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(info)) => {
+                found.push(ScanResultDto {
+                    id: info.id.clone(),
+                    name: info.name.unwrap_or_else(|| "Unknown".to_string()),
+                    rssi: info.rssi.unwrap_or(-100) as i32,
+                    address: info.id,
+                });
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+    let _ = state.ble.stop_scan().await;
+    Ok(found)
 }
 
 #[tauri::command]
@@ -198,7 +220,7 @@ async fn toggle_daemon(state: State<'_, Arc<AppState>>, enabled: bool) -> Result
     if enabled && daemon_guard.is_none() {
         let session = Arc::clone(&state.session);
         let platform = Arc::clone(&state.platform);
-        let ble = Arc::new(BtleplugAdapter::new().await.map_err(|e| e.to_string())?);
+        let ble = Arc::clone(&state.ble);
         let conn_mgr = Arc::new(ConnectionManager::new());
         let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
         let handle = tokio::spawn(async move {
@@ -354,11 +376,24 @@ fn main() {
             let platform = create_platform_adapter(session.clone());
             println!("[WristKey] platform adapter created");
 
+            println!("[WristKey] creating BLE adapter...");
+            let ble: Arc<dyn BleAdapter> = match tauri::async_runtime::block_on(BtleplugAdapter::new()) {
+                Ok(adapter) => {
+                    println!("[WristKey] BLE adapter ready");
+                    Arc::new(adapter)
+                }
+                Err(e) => {
+                    println!("[WristKey] BLE adapter failed ({}), using mock", e);
+                    Arc::new(MockBleAdapter::new())
+                }
+            };
+
             let state = Arc::new(AppState {
                 session: session.clone(),
                 config: Arc::new(Mutex::new(Config::default())),
                 daemon: Arc::new(Mutex::new(None)),
                 platform: platform.clone(),
+                ble: ble.clone(),
             });
             println!("[WristKey] AppState created");
 
@@ -377,25 +412,17 @@ fn main() {
                     if daemon_guard.is_none() {
                         let session = Arc::clone(&state_for_daemon.session);
                         let platform = Arc::clone(&state_for_daemon.platform);
-                        match BtleplugAdapter::new().await {
-                            Ok(ble_adapter) => {
-                                let ble = Arc::new(ble_adapter);
-                                let conn_mgr = Arc::new(ConnectionManager::new());
-                                let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
-                                let handle = tokio::spawn(async move {
-                                    if let Err(e) = daemon.run().await {
-                                        error!("Daemon error: {}", e);
-                                    }
-                                });
-                                *daemon_guard = Some(handle);
-                                info!("Daemon auto-started on app launch");
-                                println!("[WristKey] daemon auto-started");
+                        let ble = Arc::clone(&state_for_daemon.ble);
+                        let conn_mgr = Arc::new(ConnectionManager::new());
+                        let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
+                        let handle = tokio::spawn(async move {
+                            if let Err(e) = daemon.run().await {
+                                error!("Daemon error: {}", e);
                             }
-                            Err(e) => {
-                                error!("Failed to create BLE adapter for daemon: {}", e);
-                                println!("[WristKey] BLE adapter failed: {}", e);
-                            }
-                        }
+                        });
+                        *daemon_guard = Some(handle);
+                        info!("Daemon auto-started on app launch");
+                        println!("[WristKey] daemon auto-started");
                     }
                 });
             });
