@@ -27,7 +27,7 @@ async function refreshStatus() {
     document.getElementById('deviceCount').textContent = status.device_count;
     document.getElementById('daemonToggle').checked = status.daemon_enabled;
 
-    // Windows CP tab visibility — use querySelector to avoid ID collision
+    // Windows CP tab visibility
     const cpTabBtn = document.getElementById('tab-btn-cp');
     if (cpTabBtn) {
       cpTabBtn.classList.remove('hidden');
@@ -40,6 +40,16 @@ async function refreshStatus() {
     const cpBtn = document.getElementById('cpRegisterBtn');
     if (cpBtn) {
       cpBtn.textContent = cpRegistered ? '🔁 Re-register CP' : '📝 Register Credential Provider';
+    }
+    // Storage type badge
+    const storageType = document.getElementById('storageType');
+    if (storageType && status.storage_type) {
+      storageType.textContent = status.storage_type;
+      if (status.storage_type.includes('TPM')) {
+        storageType.innerHTML = '<span class="tpm-badge">🔒 TPM 2.0</span>';
+      } else if (status.storage_type.includes('Software')) {
+        storageType.innerHTML = '<span class="tpm-badge software">💻 Software</span>';
+      }
     }
   } catch (e) {
     document.getElementById('statusState').textContent = 'Error: ' + e;

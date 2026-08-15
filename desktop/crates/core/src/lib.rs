@@ -302,6 +302,13 @@ impl SessionState {
             _ => None,
         }
     }
+    pub fn device_count(&self) -> usize {
+        // This is a placeholder - actual count comes from storage
+        0
+    }
+    pub fn device_name(&self) -> Option<String> {
+        None
+    }
 }
 
 pub struct SessionManager {
@@ -330,7 +337,7 @@ impl SessionManager {
     pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> {
         self.storage.load_device(device_id).await
     }
-    pub async fn list_devices(&self) -> Result<Vec<PairedDevice>> {
+    pub async fn list_paired_devices(&self) -> Result<Vec<PairedDevice>> {
         self.storage.list_devices().await
     }
     pub async fn load_config(&self) -> Result<Config> {
@@ -398,6 +405,34 @@ impl SessionManager {
             .ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         Ok(device.windows_password.clone())
     }
+
+    pub async fn pair_device(&self, id: &str, name: &str, rssi: i32, address: &str) -> Result<()> {
+        // Simplified: store device with generated keys
+        let (priv_key, pub_key) = self.crypto.generate_keypair().await?;
+        let challenge = self.begin_pairing().await?;
+        let sig = self.crypto.sign(&priv_key, &challenge.to_bytes()).await?;
+        let response = Response { signature: sig, user_present: true, timestamp: Utc::now() };
+        let _device = self.complete_pairing(name.to_string(), pub_key, Some(id.as_bytes().to_vec()), &response, rssi as i16, address.to_string()).await?;
+        Ok(())
+    }
+
+    pub async fn forget_device(&self, id: &str) -> Result<()> {
+        let uuid = Uuid::parse_str(id).map_err(|e| WristKeyError::Storage(format!("invalid uuid: {}", e)))?;
+        self.storage.delete_device(uuid).await
+    }
+
+    pub async fn calibrate_device(&self, id: &str) -> Result<(i32, i32, usize)> {
+        let uuid = Uuid::parse_str(id).map_err(|e| WristKeyError::Storage(format!("invalid uuid: {}", e)))?;
+        let device = self.storage.load_device(uuid).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        // Mock calibration: return baseline values
+        Ok((device.baseline_rssi as i32, (device.baseline_rssi - 15) as i32, 10))
+    }
+
+    pub async fn scan_ble(&self) -> Result<Vec<(String, String, i32, String)>> {
+        // Placeholder - actual BLE scanning would be in ble crate
+        Ok(vec![])
+    }
+
     pub async fn update_rssi(&self, rssi: i16) -> Result<bool> {
         let mut state = self.state.write().await;
         match *state {

@@ -33,6 +33,7 @@
   .status-dot.locked { background: #f85149; }
   .status-ok { color: #3fb950; }
   .status-warn { color: #d29922; }
+  .status-info { color: #58a6ff; font-size: 0.8rem; }
   button {
     background: #238636; color: white; border: none; padding: 8px 16px;
     border-radius: 8px; cursor: pointer; font-size: 0.9rem; margin-top: 8px;
@@ -55,6 +56,11 @@
   }
   .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
   .tab-btn.hidden { display: none; }
+  .tpm-badge {
+    display: inline-block; background: #1f6feb; color: white;
+    padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 6px;
+  }
+  .tpm-badge.software { background: #8957e5; }
 </style>
 </head>
 <body>
@@ -151,6 +157,7 @@
     <div class="card">
       <h3>🪟 Windows Credential Provider</h3>
       <p>Status: <span id="cpStatus" class="status-warn">❌ Not registered</span></p>
+      <p class="status-info">Storage: <span id="storageType">detecting…</span></p>
       <p style="font-size:0.8rem;color:#8b949e">
         Register to show "WristKey Unlock" tile on the lock screen.
         Requires Administrator privileges.
@@ -161,11 +168,13 @@
     <div class="card">
       <h3>💾 Windows Password</h3>
       <p style="font-size:0.8rem;color:#8b949e">
-        Your Windows password is encrypted with DPAPI and stored locally.
+        Your Windows password is encrypted with <strong>TPM 2.0</strong> (or software fallback) and stored locally.
         It is sent to the Credential Provider via a secure named pipe when unlocking.
+        <br><br>
+        <strong>⚠️ Enter your Windows account password, NOT the PIN!</strong>
       </p>
-      <label>Windows password
-        <input type="password" id="winPasswordInput" placeholder="Enter your Windows password">
+      <label>Windows account password
+        <input type="password" id="winPasswordInput" placeholder="Enter your Windows password (not PIN)">
       </label>
       <button id="winPasswordBtn">💾 Save Password</button>
     </div>
