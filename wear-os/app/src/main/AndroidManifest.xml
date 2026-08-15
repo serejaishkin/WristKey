@@ -49,6 +49,11 @@
             android:exported="false"
             android:theme="@android:style/Theme.DeviceDefault" />
 
+        <activity
+            android:name=".ui.UnlockActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault" />
+
         <service
             android:name=".ble.WristKeyBleService"
             android:enabled="true"

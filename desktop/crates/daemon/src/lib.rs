@@ -1,6 +1,4 @@
 //! WristKey daemon -- proximity detection, crypto unlock, and auto-lock.
-//!
-//! Platform-agnostic: all platform-specific code lives in platform-* crates.
 
 pub mod conn_mgr;
 pub use conn_mgr::ConnectionManager;
@@ -74,7 +72,6 @@ impl Daemon {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
         let mut ticker = interval(Duration::from_secs(2));
 
-        // Silent reconnect on startup
         let devices = self.session.list_paired_devices().await?;
         if !devices.is_empty() {
             let state = self.session.state().await;
@@ -308,5 +305,72 @@ impl Daemon {
         self.platform.unlock_screen().await?;
         info!("Screen unlocked via crypto");
         Ok(())
+    }
+}
+
+// ============================================================
+// Named Pipe Server (Windows) for Credential Provider
+// ============================================================
+#[cfg(windows)]
+pub mod pipe_server {
+    use tokio::net::windows::named_pipe::{ServerOptions, NamedPipeServer};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::time::Duration;
+    use tracing::{info, error};
+
+    pub async fn run() {
+        let pipe_name = r"\\.\pipe\WristKeyUnlock";
+        loop {
+            let server = match ServerOptions::new().create(pipe_name) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("Pipe create error: {}", e);
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            if let Err(e) = server.connect().await {
+                error!("Pipe connect error: {}", e);
+                continue;
+            }
+            info!("Pipe client connected");
+            tokio::spawn(handle_client(server));
+        }
+    }
+
+    async fn handle_client(mut server: NamedPipeServer) {
+        let mut buf = vec![0u8; 4096];
+        let n = match server.read(&mut buf).await {
+            Ok(0) | Err(_) => return,
+            Ok(n) => n,
+        };
+        let request: serde_json::Value = match serde_json::from_slice(&buf[..n]) {
+            Ok(v) => v,
+            Err(e) => {
+                let resp = serde_json::json!({"status":"error","message":e.to_string()});
+                let _ = server.write_all(resp.to_string().as_bytes()).await;
+                return;
+            }
+        };
+        let action = request.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let response = match action {
+            "unlock" => {
+                // TODO: real BLE unlock flow
+                // For now return stub password for testing
+                serde_json::json!({"status":"success","password":"test_password"})
+            }
+            _ => serde_json::json!({"status":"error","message":"unknown action"}),
+        };
+        let _ = server.write_all(response.to_string().as_bytes()).await;
+        info!("Pipe response sent: {}", response);
+    }
+}
+
+#[cfg(not(windows))]
+pub mod pipe_server {
+    use tracing::info;
+    pub async fn run() {
+        info!("Named pipe server not supported on this platform");
+        std::future::pending::<()>().await;
     }
 }

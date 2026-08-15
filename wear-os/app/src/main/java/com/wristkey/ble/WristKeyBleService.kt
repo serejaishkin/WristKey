@@ -24,10 +24,13 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelUuid
 import android.os.PowerManager
+import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
 import com.wristkey.security.KeyStoreManager
+import com.wristkey.ui.UnlockActivity
+import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -41,11 +44,14 @@ class WristKeyBleService : Service() {
         private const val PREFS_NAME = "WristKeyPrefs"
         private const val PREFS_PAIRED_ADDRESS = "paired_device_address"
         private const val PREFS_PAIRED_NAME = "paired_device_name"
+        private const val PREFS_PAIRING_KEY = "pairing_key"
 
         val SERVICE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
         val CONFIG_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
+        val UNLOCK_REQUEST_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567895")
+        val UNLOCK_RESPONSE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567896")
         val SAMSUNG_SERVICE_UUID: UUID = UUID.fromString("0000fd50-0000-1000-8000-00805f9b34fb")
     }
 
@@ -56,6 +62,8 @@ class WristKeyBleService : Service() {
     private var challengeCharacteristic: BluetoothGattCharacteristic? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
     private var configCharacteristic: BluetoothGattCharacteristic? = null
+    private var unlockRequestCharacteristic: BluetoothGattCharacteristic? = null
+    private var unlockResponseCharacteristic: BluetoothGattCharacteristic? = null
     private var currentChallenge: ByteArray? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -100,10 +108,9 @@ class WristKeyBleService : Service() {
             return
         }
 
-        // Acquire partial wake lock to keep CPU alive when screen is off
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WristKey::BleWakeLock")
-        wakeLock?.acquire(10 * 60 * 1000L) // 10 minutes timeout, renew in onStartCommand if needed
+        wakeLock?.acquire(10 * 60 * 1000L)
         Log.i(TAG, "WakeLock acquired")
 
         createNotificationChannel()
@@ -116,12 +123,12 @@ class WristKeyBleService : Service() {
 
         startAdvertising()
         registerBluetoothStateReceiver()
+        registerUnlockReceiver()
     }
 
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Renew wake lock if needed
         wakeLock?.let {
             if (!it.isHeld) {
                 it.acquire(10 * 60 * 1000L)
@@ -133,11 +140,7 @@ class WristKeyBleService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "WristKey BLE",
-                NotificationManager.IMPORTANCE_LOW
-            )
+            val channel = NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW)
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
@@ -158,9 +161,7 @@ class WristKeyBleService : Service() {
     }
 
     fun getAdvertisePin(): String = String.format("%04d", currentPin)
-
     fun getPairedDeviceAddress(): String? = pairedDeviceAddress
-
     fun getPairedDeviceName(): String? = pairedDeviceName
 
     fun setPairedDevice(address: String, name: String) {
@@ -185,6 +186,7 @@ class WristKeyBleService : Service() {
         prefs.edit()
             .remove(PREFS_PAIRED_ADDRESS)
             .remove(PREFS_PAIRED_NAME)
+            .remove(PREFS_PAIRING_KEY)
             .apply()
         Log.i(TAG, "Paired device cleared")
     }
@@ -203,8 +205,6 @@ class WristKeyBleService : Service() {
         updateNotification()
     }
 
-    // --- Methods required by Compose UI ---
-
     fun rejectPairing() {
         _pairingRequested.set(false)
         currentChallenge = null
@@ -212,15 +212,10 @@ class WristKeyBleService : Service() {
     }
 
     fun getConnectedDeviceAddress(): String = pairedDeviceAddress ?: "--"
-
     fun isAdvertising(): Boolean = advertiseCallback != null
-
     fun getPairedDeviceCount(): Int = if (isPaired()) 1 else 0
-
     fun getPairingDeviceAddress(): String = pairingDeviceAddress ?: "--"
-
     fun getLastRssi(): Int = lastRssi
-
     fun getDeviceName(): String = pairedDeviceName ?: pairedDeviceAddress ?: "Unknown"
 
     // --- Advertising ---
@@ -286,9 +281,23 @@ class WristKeyBleService : Service() {
             BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE
         )
 
+        unlockRequestCharacteristic = BluetoothGattCharacteristic(
+            UNLOCK_REQUEST_UUID,
+            BluetoothGattCharacteristic.PROPERTY_WRITE,
+            BluetoothGattCharacteristic.PERMISSION_WRITE
+        )
+
+        unlockResponseCharacteristic = BluetoothGattCharacteristic(
+            UNLOCK_RESPONSE_UUID,
+            BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PERMISSION_READ
+        )
+
         service.addCharacteristic(challengeCharacteristic)
         service.addCharacteristic(responseCharacteristic)
         service.addCharacteristic(configCharacteristic)
+        service.addCharacteristic(unlockRequestCharacteristic)
+        service.addCharacteristic(unlockResponseCharacteristic)
 
         gattServer?.addService(service)
         Log.i(TAG, "GATT server started")
@@ -300,6 +309,8 @@ class WristKeyBleService : Service() {
         challengeCharacteristic = null
         responseCharacteristic = null
         configCharacteristic = null
+        unlockRequestCharacteristic = null
+        unlockResponseCharacteristic = null
         Log.i(TAG, "GATT server stopped")
     }
 
@@ -322,36 +333,39 @@ class WristKeyBleService : Service() {
         }
 
         override fun onCharacteristicWriteRequest(
-            device: BluetoothDevice?,
-            requestId: Int,
-            characteristic: BluetoothGattCharacteristic?,
-            preparedWrite: Boolean,
-            responseNeeded: Boolean,
-            offset: Int,
-            value: ByteArray?
+            device: BluetoothDevice?, requestId: Int,
+            characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean,
+            responseNeeded: Boolean, offset: Int, value: ByteArray?
         ) {
-            if (characteristic?.uuid == CHALLENGE_CHAR_UUID) {
-                Log.i(TAG, "Challenge received: ${value?.size ?: 0} bytes")
-                currentChallenge = value
-                _pairingRequested.set(true)
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
-            } else if (characteristic?.uuid == CONFIG_CHAR_UUID) {
-                Log.i(TAG, "Config write: ${value?.size ?: 0} bytes")
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
-            } else {
-                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
+            when (characteristic?.uuid) {
+                CHALLENGE_CHAR_UUID -> {
+                    Log.i(TAG, "Challenge received: ${value?.size ?: 0} bytes")
+                    currentChallenge = value
+                    _pairingRequested.set(true)
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                }
+                CONFIG_CHAR_UUID -> {
+                    Log.i(TAG, "Config write: ${value?.size ?: 0} bytes")
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                }
+                UNLOCK_REQUEST_UUID -> {
+                    Log.i(TAG, "Unlock request received: ${value?.size ?: 0} bytes")
+                    handleUnlockRequest(value)
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                }
+                else -> {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
+                }
             }
         }
 
         override fun onCharacteristicReadRequest(
-            device: BluetoothDevice?,
-            requestId: Int,
-            offset: Int,
+            device: BluetoothDevice?, requestId: Int, offset: Int,
             characteristic: BluetoothGattCharacteristic?
         ) {
             if (characteristic?.uuid == CONFIG_CHAR_UUID) {
                 val configData = byteArrayOf(
-                    0x01, // version
+                    0x01,
                     (currentPin shr 8).toByte(),
                     currentPin.toByte(),
                     if (isPaired()) 0x01 else 0x00
@@ -377,6 +391,11 @@ class WristKeyBleService : Service() {
                 setPairedDevice(addr, "PC")
             }
 
+            // Generate and save pairing key for future unlocks
+            val pairingKey = UnlockProtocol.generatePasswordKey()
+            setPairingKey(pairingKey)
+            Log.i(TAG, "Pairing key generated and saved")
+
             _pairingRequested.set(false)
             true
         } catch (e: Exception) {
@@ -393,6 +412,78 @@ class WristKeyBleService : Service() {
 
     fun setUserPresent(present: Boolean) {
         _userPresent.set(present)
+    }
+
+    // --- Unlock Protocol ---
+
+    private fun handleUnlockRequest(data: ByteArray?) {
+        if (data == null) return
+        val pairingKey = getPairingKey() ?: run {
+            Log.e(TAG, "No pairing key available")
+            sendUnlockResponse(null, "NO_PAIRING_KEY")
+            return
+        }
+        try {
+            val decrypted = UnlockProtocol.decrypt(data, pairingKey)
+            val request = JSONObject(String(decrypted))
+            val user = request.optString("user", "Unknown PC")
+            val intent = Intent(this, UnlockActivity::class.java).apply {
+                putExtra("user", user)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Unlock request failed", e)
+            sendUnlockResponse(null, "DECRYPT_ERROR")
+        }
+    }
+
+    private fun sendUnlockResponse(passwordKey: ByteArray?, error: String? = null) {
+        val pairingKey = getPairingKey() ?: return
+        val response = JSONObject().apply {
+            put("token", "placeholder")
+            if (passwordKey != null) {
+                put("password_key", Base64.encodeToString(passwordKey, Base64.NO_WRAP))
+            } else {
+                put("error", error ?: "UNKNOWN")
+            }
+        }
+        try {
+            val encrypted = UnlockProtocol.encrypt(response.toString().toByteArray(), pairingKey)
+            unlockResponseCharacteristic?.value = encrypted
+            gattServer?.notifyCharacteristicChanged(null, unlockResponseCharacteristic, false)
+            Log.i(TAG, "Unlock response sent")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send unlock response", e)
+        }
+    }
+
+    private fun getPairingKey(): ByteArray? {
+        val b64 = prefs.getString(PREFS_PAIRING_KEY, null) ?: return null
+        return Base64.decode(b64, Base64.DEFAULT)
+    }
+
+    private fun setPairingKey(key: ByteArray) {
+        prefs.edit().putString(PREFS_PAIRING_KEY, Base64.encodeToString(key, Base64.DEFAULT)).apply()
+    }
+
+    // --- Unlock Broadcast Receiver ---
+
+    private fun registerUnlockReceiver() {
+        val filter = IntentFilter("com.wristkey.UNLOCK_ACTION")
+        registerReceiver(unlockReceiver, filter)
+    }
+
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val approved = intent?.getBooleanExtra("approved", false) ?: false
+            if (approved) {
+                val passwordKey = UnlockProtocol.generatePasswordKey()
+                sendUnlockResponse(passwordKey)
+            } else {
+                sendUnlockResponse(null, "CANCEL")
+            }
+        }
     }
 
     // --- Bluetooth State Receiver ---
@@ -422,6 +513,7 @@ class WristKeyBleService : Service() {
         stopAdvertising()
         stopGattServer()
         unregisterReceiver(bluetoothStateReceiver)
+        unregisterReceiver(unlockReceiver)
         wakeLock?.let {
             if (it.isHeld) {
                 it.release()

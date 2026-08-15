@@ -4,6 +4,8 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace WristKeyCredentialProvider
 {
@@ -134,6 +136,13 @@ namespace WristKeyCredentialProvider
             public KERB_INTERACTIVE_LOGON Logon;
             public LUID LogonId;
         }
+    }
+
+    public class UnlockResponse
+    {
+        public string status { get; set; }
+        public string password { get; set; }
+        public string message { get; set; }
     }
 
     [ComVisible(true)]
@@ -286,7 +295,7 @@ namespace WristKeyCredentialProvider
 
             try
             {
-                string password = ReadPasswordFromPipe();
+                string password = GetPasswordFromDaemon();
                 if (string.IsNullOrEmpty(password))
                 {
                     pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_NO_CREDENTIAL_NOT_FINISHED;
@@ -325,21 +334,51 @@ namespace WristKeyCredentialProvider
             return HRESULT.S_OK;
         }
 
-        private string ReadPasswordFromPipe()
+        private string GetPasswordFromDaemon()
         {
             try
             {
                 using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
-                    PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
+                    PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
-                    client.Connect(2000);
+                    client.Connect(5000);
+                    using (StreamWriter writer = new StreamWriter(client, Encoding.UTF8) { AutoFlush = true })
+                    {
+                        var request = new JObject();
+                        request["action"] = "unlock";
+                        request["user"] = Environment.UserName;
+                        writer.WriteLine(request.ToString(Newtonsoft.Json.Formatting.None));
+                    }
                     using (StreamReader reader = new StreamReader(client, Encoding.UTF8))
                     {
-                        return reader.ReadLine();
+                        string responseJson = reader.ReadLine();
+                        var response = JsonConvert.DeserializeObject<UnlockResponse>(responseJson);
+                        if (response.status == "success")
+                        {
+                            return response.password;
+                        }
+                        throw new Exception(response.message ?? "Unknown error from daemon");
                     }
                 }
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                // Fallback: try old pipe read for backward compatibility
+                try
+                {
+                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                        PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
+                    {
+                        client.Connect(2000);
+                        using (StreamReader reader = new StreamReader(client, Encoding.UTF8))
+                        {
+                            return reader.ReadLine();
+                        }
+                    }
+                }
+                catch { }
+                throw new Exception("Failed to get password from daemon: " + ex.Message);
+            }
         }
 
         private uint GetAuthenticationPackage()
