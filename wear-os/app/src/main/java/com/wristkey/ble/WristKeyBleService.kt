@@ -48,6 +48,10 @@ class WristKeyBleService : Service() {
     private var connectedDevice: BluetoothDevice? = null
     private var pairedDeviceAddress: String? = null
     private var lastRssi: Int = 0
+    /** Shown to the person during pairing so they can visually confirm the
+     * PC's GUI is talking to the watch they're actually holding, not some
+     * other nearby device. Regenerated each time advertising (re)starts. */
+    private var currentPin: String = (1000..9999).random().toString()
 
     // Pairing dialog state
     private var pendingChallenge: ByteArray? = null
@@ -81,7 +85,6 @@ class WristKeyBleService : Service() {
         securityManager = SecurityManager()
         motionDetector = MotionDetector(this)
         settings = WristKeySettings(this)
-        // Load previously paired device address if any
         try {
             pairedDeviceAddress = settings.getPairedDeviceAddress()
             val count = settings.pairedDevices.size
@@ -192,13 +195,14 @@ class WristKeyBleService : Service() {
             .build()
 
         val deviceId = securityManager.getDeviceId()
+        val pinBytes = currentPin.toByteArray(Charsets.UTF_8) // always exactly 4 ASCII digits
         val manufData = ByteArray(8)
-        System.arraycopy("WRST".toByteArray(), 0, manufData, 0, 4)
+        System.arraycopy(pinBytes, 0, manufData, 0, 4)
         System.arraycopy(deviceId, 0, manufData, 4, 4.coerceAtMost(deviceId.size))
 
         val advData = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
-            .addManufacturerData(0xFFFF, "WRST".toByteArray())
+            .addManufacturerData(0xFFFF, pinBytes)
             .build()
 
         val scanResponse = AdvertiseData.Builder()
@@ -207,7 +211,7 @@ class WristKeyBleService : Service() {
             .addManufacturerData(0xFFFF, manufData)
             .build()
 
-        Log.i(TAG, "Starting advertising with scan response (split payload)")
+        Log.i(TAG, "Starting advertising with scan response (split payload), PIN=$currentPin")
         bluetoothLeAdvertiser?.startAdvertising(advSettings, advData, scanResponse, advertiseCallback)
         Log.i(TAG, "startAdvertising called (with scan response)")
     }
@@ -255,7 +259,6 @@ class WristKeyBleService : Service() {
                     Log.i(TAG, "Device disconnected: addr=${device?.address}")
                     if (connectedDevice?.address == device?.address) {
                         connectedDevice = null
-                        // Clear pending pairing if device disconnected
                         if (pairingRequested.getAndSet(false)) {
                             pendingChallenge = null
                             pairingDeviceAddress = null
@@ -304,24 +307,20 @@ class WristKeyBleService : Service() {
                     return
                 }
 
-                // Always send write response first (required for PROPERTY_WRITE)
                 if (responseNeeded) {
                     bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                     Log.i(TAG, "Challenge write acknowledged to addr=${device?.address}")
                 }
 
-                // Check if this is a pairing request (no paired device yet)
                 if (pairedDeviceAddress == null) {
                     Log.i(TAG, "Pairing request from addr=${device?.address} - showing dialog")
                     pendingChallenge = challenge
                     pairingDeviceAddress = device?.address
                     pairingRequested.set(true)
-                    // Vibrate to notify user
                     if (settings.vibrateEnabled) {
                         vibrate()
                     }
                 } else {
-                    // Already paired - process normally
                     processChallenge(challenge)
                 }
             } else if (characteristic?.uuid == CONFIG_CHAR_UUID) {
@@ -441,7 +440,6 @@ class WristKeyBleService : Service() {
         }
     }
 
-    // Called from UI when user presses "Pair" in the pairing dialog
     fun confirmPairing(): Boolean {
         val challenge = pendingChallenge
         if (challenge == null) {
@@ -450,7 +448,6 @@ class WristKeyBleService : Service() {
         }
         Log.i(TAG, "confirmPairing: processing pending challenge from addr=$pairingDeviceAddress")
 
-        // Mark as paired
         pairedDeviceAddress = pairingDeviceAddress
         val addr = pairingDeviceAddress ?: ""
         try {
@@ -461,17 +458,15 @@ class WristKeyBleService : Service() {
             Log.w(TAG, "savePairedDeviceAddress not available: ${e.message}")
         }
 
-        // Clear dialog state
         pendingChallenge = null
         pairingRequested.set(false)
 
-        // Process the challenge with user_present=true (explicit user confirmation)
         try {
             val signature = securityManager.sign(challenge)
             val publicKey = securityManager.getPublicKey()
             val response = ByteArray(130)
             System.arraycopy(signature, 0, response, 0, 64)
-            response[64] = 1  // user_present = true (explicitly confirmed)
+            response[64] = 1
             System.arraycopy(publicKey, 0, response, 65, 65)
             Log.i(TAG, "Pairing response built: ${response.size} bytes (user_present=true)")
             sendResponse(response)
@@ -485,7 +480,6 @@ class WristKeyBleService : Service() {
         }
     }
 
-    // Called from UI when user presses "Cancel" in the pairing dialog
     fun rejectPairing() {
         Log.i(TAG, "rejectPairing: user cancelled pairing request from addr=$pairingDeviceAddress")
         pendingChallenge = null
@@ -535,9 +529,19 @@ class WristKeyBleService : Service() {
     fun getDeviceName(): String = connectedDevice?.name ?: "Not connected"
     fun getLastRssi(): String = if (lastRssi != 0) "$lastRssi" else "--"
     fun isAdvertising(): Boolean = bluetoothLeAdvertiser != null
-    fun getAdvertisePin(): String = "----"
+    // FIX: return real PIN instead of static "----"
+    fun getAdvertisePin(): String = currentPin
     fun getConnectedDeviceAddress(): String = connectedDevice?.address ?: "--"
     fun getPairingDeviceAddress(): String = pairingDeviceAddress ?: "--"
+
+    // FIX: return paired device info for UI
+    fun getPairedDeviceName(): String {
+        return if (pairedDeviceAddress.isNullOrEmpty()) {
+            "Not paired"
+        } else {
+            settings.pairedDevices.lastOrNull() ?: "Paired PC"
+        }
+    }
 
     fun getPairedDeviceCount(): Int = settings.pairedDevices.size
     fun getPairedDevicesList(): List<String> = settings.pairedDevices.toList()

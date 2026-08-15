@@ -63,7 +63,7 @@ impl WindowsSecurity {
         use winreg::enums::HKEY_LOCAL_MACHINE;
 
         let path = format!(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
             CP_CLSID
         );
         match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(&path) {
@@ -79,7 +79,7 @@ impl WindowsSecurity {
         use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
 
         // 1. Register COM CLSID
-        let clsid_path = format!(r"CLSID\{}", CP_CLSID);
+        let clsid_path = format!(r"CLSID\\{}", CP_CLSID);
         let (clsid_key, _) = RegKey::predef(HKEY_CLASSES_ROOT)
             .create_subkey(&clsid_path)
             .map_err(|e| WristKeyError::Platform(format!("Failed to create CLSID key: {}", e)))?;
@@ -95,7 +95,7 @@ impl WindowsSecurity {
 
         // 2. Register as Credential Provider
         let cp_path = format!(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
             CP_CLSID
         );
         let (cp_key, _) = RegKey::predef(HKEY_LOCAL_MACHINE)
@@ -113,11 +113,11 @@ impl WindowsSecurity {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
 
-        let clsid_path = format!(r"CLSID\{}", CP_CLSID);
+        let clsid_path = format!(r"CLSID\\{}", CP_CLSID);
         let _ = RegKey::predef(HKEY_CLASSES_ROOT).delete_subkey_all(&clsid_path);
 
         let cp_path = format!(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
             CP_CLSID
         );
         let _ = RegKey::predef(HKEY_LOCAL_MACHINE).delete_subkey_all(&cp_path);
@@ -164,9 +164,9 @@ impl WindowsSecurity {
         use windows::Win32::Security::Cryptography::{
             NCryptOpenStorageProvider, NCRYPT_PROV_HANDLE,
         };
-        use windows::Win32::Foundation::ERROR_SUCCESS;
         use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
 
         let provider_name: Vec<u16> = OsStr::new("Microsoft Platform Crypto Provider")
             .encode_wide()
@@ -177,10 +177,10 @@ impl WindowsSecurity {
         unsafe {
             let result = NCryptOpenStorageProvider(
                 &mut handle,
-                windows::core::PCWSTR(provider_name.as_ptr()),
+                PCWSTR(provider_name.as_ptr()),
                 0,
             );
-            result == ERROR_SUCCESS.0
+            result.is_ok()
         }
     }
 
@@ -266,14 +266,14 @@ impl PlatformSecurity for WindowsSecurity {
 impl PasswordVault for WindowsSecurity {
     async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
         use windows::Win32::Security::Cryptography::*;
-        use windows::Win32::Foundation::{ERROR_SUCCESS, LocalFree, HLOCAL};
-        use std::ffi::OsStr;
+                use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
 
         let password_bytes = password.as_bytes();
 
         // 1. Determine provider: TPM if available, else software
-        let (provider_name, key_usage) = if WindowsSecurity::is_tpm_available() {
+        let (provider_name, _key_usage) = if WindowsSecurity::is_tpm_available() {
             info!("Using TPM 2.0 (Microsoft Platform Crypto Provider) for password encryption");
             ("Microsoft Platform Crypto Provider", NCRYPT_ALLOW_DECRYPT_FLAG)
         } else {
@@ -294,9 +294,9 @@ impl PasswordVault for WindowsSecurity {
                 PCWSTR(provider_name_wide.as_ptr()),
                 0,
             );
-            if result != ERROR_SUCCESS.0 {
+            if result.is_err() {
                 return Err(WristKeyError::Platform(
-                    format!("NCryptOpenStorageProvider failed: 0x{:X}", result)
+                    format!("NCryptOpenStorageProvider failed: {:?}", result)
                 ));
             }
         }
@@ -309,13 +309,14 @@ impl PasswordVault for WindowsSecurity {
 
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
         let key_exists = unsafe {
-            NCryptOpenKey(
+            let result = NCryptOpenKey(
                 prov_handle,
                 &mut key_handle,
                 PCWSTR(key_name_wide.as_ptr()),
-                0,
-                0,
-            ) == ERROR_SUCCESS.0
+                CERT_KEY_SPEC(0),
+                NCRYPT_FLAGS(0),
+            );
+            result.is_ok()
         };
 
         if !key_exists {
@@ -326,13 +327,13 @@ impl PasswordVault for WindowsSecurity {
                     &mut key_handle,
                     BCRYPT_AES_ALGORITHM,
                     PCWSTR(key_name_wide.as_ptr()),
-                    0,
-                    0,
+                    CERT_KEY_SPEC(0),
+                    NCRYPT_FLAGS(0),
                 );
-                if result != ERROR_SUCCESS.0 {
-                    NCryptFreeObject(prov_handle);
+                if result.is_err() {
+                    let _ = NCryptFreeObject(prov_handle);
                     return Err(WristKeyError::Platform(
-                        format!("NCryptCreatePersistedKey failed: 0x{:X}", result)
+                        format!("NCryptCreatePersistedKey failed: {:?}", result)
                     ));
                 }
 
@@ -342,23 +343,23 @@ impl PasswordVault for WindowsSecurity {
                     key_handle,
                     NCRYPT_LENGTH_PROPERTY,
                     &key_length.to_le_bytes(),
-                    0,
+                    NCRYPT_FLAGS(0),
                 );
-                if result != ERROR_SUCCESS.0 {
-                    NCryptFreeObject(key_handle);
-                    NCryptFreeObject(prov_handle);
+                if result.is_err() {
+                    let _ = NCryptFreeObject(key_handle);
+                    let _ = NCryptFreeObject(prov_handle);
                     return Err(WristKeyError::Platform(
-                        format!("NCryptSetProperty(LENGTH) failed: 0x{:X}", result)
+                        format!("NCryptSetProperty(LENGTH) failed: {:?}", result)
                     ));
                 }
 
                 // Finalize the key
-                let result = NCryptFinalizeKey(key_handle, 0);
-                if result != ERROR_SUCCESS.0 {
-                    NCryptFreeObject(key_handle);
-                    NCryptFreeObject(prov_handle);
+                let result = NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0));
+                if result.is_err() {
+                    let _ = NCryptFreeObject(key_handle);
+                    let _ = NCryptFreeObject(prov_handle);
                     return Err(WristKeyError::Platform(
-                        format!("NCryptFinalizeKey failed: 0x{:X}", result)
+                        format!("NCryptFinalizeKey failed: {:?}", result)
                     ));
                 }
             }
@@ -374,11 +375,11 @@ impl PasswordVault for WindowsSecurity {
                 &mut iv,
                 BCRYPT_USE_SYSTEM_PREFERRED_RNG,
             );
-            if result != ERROR_SUCCESS.0 {
-                NCryptFreeObject(key_handle);
-                NCryptFreeObject(prov_handle);
+            if result.is_err() {
+                let _ = NCryptFreeObject(key_handle);
+                let _ = NCryptFreeObject(prov_handle);
                 return Err(WristKeyError::Platform(
-                    format!("BCryptGenRandom failed: 0x{:X}", result)
+                    format!("BCryptGenRandom failed: {:?}", result)
                 ));
             }
         }
@@ -392,29 +393,28 @@ impl PasswordVault for WindowsSecurity {
             let result = NCryptEncrypt(
                 key_handle,
                 Some(plaintext),
-                Some(&iv),
+                Some(iv.as_ptr() as *const std::ffi::c_void),
                 None,
                 &mut encrypted_len,
-                NCRYPT_PAD_PKCS1_FLAG, // Use PKCS1 padding for compatibility
+                NCRYPT_PAD_PKCS1_FLAG,
             );
-            if result != ERROR_SUCCESS.0 && result != ERROR_SUCCESS.0 + 1 {
-                // ERROR_SUCCESS + 1 = NTE_BUFFER_TOO_SMALL (expected)
-            }
+            // NTE_BUFFER_TOO_SMALL expected, ignore
+            let _ = result;
 
             let mut encrypted = vec![0u8; encrypted_len as usize];
             let result = NCryptEncrypt(
                 key_handle,
                 Some(plaintext),
-                Some(&iv),
+                Some(iv.as_ptr() as *const std::ffi::c_void),
                 Some(&mut encrypted),
                 &mut encrypted_len,
                 NCRYPT_PAD_PKCS1_FLAG,
             );
-            if result != ERROR_SUCCESS.0 {
-                NCryptFreeObject(key_handle);
-                NCryptFreeObject(prov_handle);
+            if result.is_err() {
+                let _ = NCryptFreeObject(key_handle);
+                let _ = NCryptFreeObject(prov_handle);
                 return Err(WristKeyError::Platform(
-                    format!("NCryptEncrypt failed: 0x{:X}", result)
+                    format!("NCryptEncrypt failed: {:?}", result)
                 ));
             }
             encrypted.truncate(encrypted_len as usize);
@@ -426,8 +426,8 @@ impl PasswordVault for WindowsSecurity {
             output.extend_from_slice(&encrypted);
 
             // Cleanup
-            NCryptFreeObject(key_handle);
-            NCryptFreeObject(prov_handle);
+            let _ = NCryptFreeObject(key_handle);
+            let _ = NCryptFreeObject(prov_handle);
 
             info!("Password encrypted with {} ({} bytes)", provider_name, output.len());
             Ok(output)
@@ -436,9 +436,9 @@ impl PasswordVault for WindowsSecurity {
 
     async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String> {
         use windows::Win32::Security::Cryptography::*;
-        use windows::Win32::Foundation::ERROR_SUCCESS;
-        use std::ffi::OsStr;
+                use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
 
         if ciphertext.len() < 14 {
             return Err(WristKeyError::Platform("Ciphertext too short".into()));
@@ -470,9 +470,9 @@ impl PasswordVault for WindowsSecurity {
                 PCWSTR(provider_name_wide.as_ptr()),
                 0,
             );
-            if result != ERROR_SUCCESS.0 {
+            if result.is_err() {
                 return Err(WristKeyError::Platform(
-                    format!("NCryptOpenStorageProvider failed: 0x{:X}", result)
+                    format!("NCryptOpenStorageProvider failed: {:?}", result)
                 ));
             }
         }
@@ -489,13 +489,13 @@ impl PasswordVault for WindowsSecurity {
                 prov_handle,
                 &mut key_handle,
                 PCWSTR(key_name_wide.as_ptr()),
-                0,
-                0,
+                CERT_KEY_SPEC(0),
+                NCRYPT_FLAGS(0),
             );
-            if result != ERROR_SUCCESS.0 {
-                NCryptFreeObject(prov_handle);
+            if result.is_err() {
+                let _ = NCryptFreeObject(prov_handle);
                 return Err(WristKeyError::Platform(
-                    format!("NCryptOpenKey failed: 0x{:X} — key not found. Did you set the password first?", result)
+                    format!("NCryptOpenKey failed: {:?} — key not found. Did you set the password first?", result)
                 ));
             }
 
@@ -504,7 +504,7 @@ impl PasswordVault for WindowsSecurity {
             let _result = NCryptDecrypt(
                 key_handle,
                 Some(encrypted),
-                Some(iv),
+                Some(iv.as_ptr() as *const std::ffi::c_void),
                 None,
                 &mut decrypted_len,
                 NCRYPT_PAD_PKCS1_FLAG,
@@ -514,22 +514,22 @@ impl PasswordVault for WindowsSecurity {
             let result = NCryptDecrypt(
                 key_handle,
                 Some(encrypted),
-                Some(iv),
+                Some(iv.as_ptr() as *const std::ffi::c_void),
                 Some(&mut decrypted),
                 &mut decrypted_len,
                 NCRYPT_PAD_PKCS1_FLAG,
             );
-            if result != ERROR_SUCCESS.0 {
-                NCryptFreeObject(key_handle);
-                NCryptFreeObject(prov_handle);
+            if result.is_err() {
+                let _ = NCryptFreeObject(key_handle);
+                let _ = NCryptFreeObject(prov_handle);
                 return Err(WristKeyError::Platform(
-                    format!("NCryptDecrypt failed: 0x{:X}", result)
+                    format!("NCryptDecrypt failed: {:?}", result)
                 ));
             }
             decrypted.truncate(decrypted_len as usize);
 
-            NCryptFreeObject(key_handle);
-            NCryptFreeObject(prov_handle);
+            let _ = NCryptFreeObject(key_handle);
+            let _ = NCryptFreeObject(prov_handle);
 
             let password = String::from_utf8(decrypted)
                 .map_err(|e| WristKeyError::Platform(format!("UTF-8 decode: {}", e)))?;

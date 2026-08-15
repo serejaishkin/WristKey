@@ -5,181 +5,295 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WristKey</title>
 <style>
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0f0f23; color: #e0e0ff; min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f0f23; color: #e0e0e0;
+    min-height: 100vh; display: flex; flex-direction: column;
   }
-  .container { max-width: 480px; margin: 0 auto; padding: 16px; }
-  h1 { text-align: center; margin: 8px 0 16px; font-size: 1.5rem; color: #7ee787; }
-  .tabs { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 8px; }
+  .header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 16px 20px; border-bottom: 1px solid #2a2a4a;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .header h1 { font-size: 20px; color: #00d4aa; }
+  .status-bar {
+    display: flex; align-items: center; gap: 12px; font-size: 13px;
+  }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+  }
+  .status-dot.disconnected { background: #ff4757; }
+  .status-dot.pairing { background: #ffa502; }
+  .status-dot.authenticated { background: #2ed573; }
+  .status-dot.locked { background: #ff4757; }
+  .status-dot.verifying { background: #ffa502; }
+  .storage-badge {
+    background: #2a2a4a; border: 1px solid #3a3a6a;
+    border-radius: 4px; padding: 2px 8px; font-size: 11px;
+    color: #00d4aa; font-family: monospace;
+  }
+  .tabs {
+    display: flex; background: #1a1a2e; border-bottom: 1px solid #2a2a4a;
+  }
   .tab-btn {
-    background: #1a1a2e; border: 1px solid #30363d; color: #8b949e;
-    padding: 8px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap;
-    font-size: 0.85rem;
+    flex: 1; padding: 14px; background: none; border: none;
+    color: #888; cursor: pointer; font-size: 14px; font-weight: 500;
+    transition: all 0.2s; border-bottom: 2px solid transparent;
   }
-  .tab-btn.active { background: #238636; color: white; border-color: #238636; }
-  .tab-content { display: none; }
+  .tab-btn:hover { color: #ccc; background: #252545; }
+  .tab-btn.active { color: #00d4aa; border-bottom-color: #00d4aa; background: #1e1e3a; }
+  .tab-btn.hidden { display: none; }
+  .tab-content {
+    display: none; flex: 1; padding: 20px; overflow-y: auto;
+  }
   .tab-content.active { display: block; }
+  .section { margin-bottom: 24px; }
+  .section h3 { font-size: 14px; color: #00d4aa; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
   .card {
-    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
     padding: 16px; margin-bottom: 12px;
   }
-  .card h3 { margin: 0 0 12px; font-size: 1rem; color: #58a6ff; }
-  .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
-  .status-dot.authenticated { background: #3fb950; }
-  .status-dot.disconnected { background: #8b949e; }
-  .status-dot.pairing { background: #d29922; }
-  .status-dot.locked { background: #f85149; }
-  .status-ok { color: #3fb950; }
-  .status-warn { color: #d29922; }
-  .status-info { color: #58a6ff; font-size: 0.8rem; }
-  button {
-    background: #238636; color: white; border: none; padding: 8px 16px;
-    border-radius: 8px; cursor: pointer; font-size: 0.9rem; margin-top: 8px;
-  }
-  button:hover { background: #2ea043; }
-  button:disabled { background: #484f58; cursor: not-allowed; }
-  .chip {
-    display: inline-block; background: #21262d; border: 1px solid #30363d;
-    padding: 4px 10px; border-radius: 16px; font-size: 0.8rem; margin: 2px;
-  }
-  input[type="number"], input[type="password"], select {
-    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
-    padding: 8px; border-radius: 6px; width: 100%; margin-top: 4px;
-  }
-  label { display: block; margin-top: 10px; font-size: 0.85rem; color: #8b949e; }
-  .empty { color: #8b949e; font-style: italic; padding: 12px 0; }
   .device-card {
-    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
-    padding: 10px; margin-bottom: 8px; font-size: 0.85rem;
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    padding: 14px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;
   }
-  .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-  .tab-btn.hidden { display: none; }
-  .tpm-badge {
-    display: inline-block; background: #1f6feb; color: white;
-    padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 6px;
+  .device-info h4 { color: #fff; font-size: 15px; margin-bottom: 4px; }
+  .device-info p { color: #888; font-size: 12px; }
+  .btn {
+    background: linear-gradient(135deg, #00d4aa 0%, #00a884 100%);
+    color: #0f0f23; border: none; padding: 10px 18px; border-radius: 8px;
+    cursor: pointer; font-size: 13px; font-weight: 600; transition: transform 0.1s;
   }
-  .tpm-badge.software { background: #8957e5; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-secondary {
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #3a3a6a;
+  }
+  .btn-secondary:hover { background: #353560; }
+  .btn-danger { background: linear-gradient(135deg, #ff4757 0%, #cc3848 100%); color: white; }
+  .input-group { margin-bottom: 12px; }
+  .input-group label { display: block; font-size: 12px; color: #aaa; margin-bottom: 6px; }
+  .input-group input, .input-group select {
+    width: 100%; padding: 10px 12px; background: #0f0f23;
+    border: 1px solid #2a2a4a; border-radius: 6px; color: #e0e0e0;
+    font-size: 14px;
+  }
+  .input-group input:focus, .input-group select:focus {
+    outline: none; border-color: #00d4aa;
+  }
+  .toggle-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid #2a2a4a;
+  }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-switch {
+    position: relative; width: 44px; height: 24px;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background: #2a2a4a; border-radius: 24px; transition: 0.3s;
+  }
+  .toggle-slider:before {
+    position: absolute; content: ""; height: 18px; width: 18px;
+    left: 3px; bottom: 3px; background: #888; border-radius: 50%; transition: 0.3s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background: #00d4aa; }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); background: #fff; }
+  .empty-state { text-align: center; color: #666; padding: 40px 20px; }
+  .status-ok { color: #2ed573; }
+  .status-warn { color: #ffa502; }
+  .log-path {
+    font-family: monospace; font-size: 12px; color: #888;
+    background: #0f0f23; padding: 8px; border-radius: 4px;
+    border: 1px solid #2a2a4a; word-break: break-all;
+  }
+  .copy-btn {
+    background: #2a2a4a; border: 1px solid #3a3a6a; color: #ccc;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;
+    margin-top: 6px;
+  }
+  .copy-btn:hover { background: #353560; }
+  .hint { font-size: 12px; color: #666; margin-top: 6px; }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>⌚ WristKey</h1>
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="status">📊 Status</button>
-    <button class="tab-btn" data-tab="devices">📱 Devices</button>
-    <button class="tab-btn" data-tab="settings">⚙ Settings</button>
-    <button class="tab-btn hidden" data-tab="cp" id="tab-btn-cp">🪟 Windows</button>
-  </div>
 
-  <!-- Status Tab -->
-  <div id="tab-status" class="tab-content active">
-    <div class="card">
-      <h3>Status</h3>
-      <p><span id="statusDot" class="status-dot disconnected"></span><span id="statusState">⏳ Loading…</span></p>
-      <p>Paired devices: <span id="deviceCount" class="chip">0</span></p>
-      <div class="toggle-row">
-        <span>Auto-lock daemon</span>
-        <input type="checkbox" id="daemonToggle">
-      </div>
-      <button id="lockNowBtn">🔒 Lock Now</button>
-    </div>
-    <div class="card">
-      <h3>Signal</h3>
-      <p>Checking connection…</p>
-      <p>RSSI: <strong>-- dBm</strong></p>
-    </div>
+<div class="header">
+  <h1>🔐 WristKey</h1>
+  <div class="status-bar">
+    <span id="storageType" class="storage-badge">detecting…</span>
+    <span id="statusDot" class="status-dot disconnected"></span>
+    <span id="statusState">Disconnected</span>
+    <span style="color:#666">|</span>
+    <span>Devices: <strong id="deviceCount">0</strong></span>
   </div>
+</div>
 
-  <!-- Devices Tab -->
-  <div id="tab-devices" class="tab-content">
-    <div class="card">
-      <h3>Paired Devices</h3>
-      <div id="pairedList"><div class="empty">Loading…</div></div>
-    </div>
-    <div class="card">
-      <h3>Scan for New Device</h3>
-      <p class="empty">Open the WristKey app on your watch and keep it nearby.</p>
-      <button id="scanBtn">🔍 Scan for New Device</button>
-      <div id="scanList" style="margin-top:12px"></div>
-    </div>
-    <div class="card">
-      <h3>Calibration</h3>
-      <p class="empty">Hold watch near PC…</p>
-    </div>
-  </div>
+<div class="tabs">
+  <button class="tab-btn active" data-tab="devices" id="tab-btn-devices">📱 Devices</button>
+  <button class="tab-btn" data-tab="settings" id="tab-btn-settings">⚙ Settings</button>
+  <button class="tab-btn" data-tab="cp" id="tab-btn-cp">🪟 Windows</button>
+</div>
 
-  <!-- Settings Tab -->
-  <div id="tab-settings" class="tab-content">
+<!-- DEVICES TAB -->
+<div class="tab-content active" id="tab-devices">
+  <div class="section">
+    <h3>Scan for New Device</h3>
     <div class="card">
-      <h3>Sync</h3>
-      <label>Challenge freshness window (sec)
-        <input type="number" id="challengeInput" value="10" min="5" max="60">
-      </label>
-      <p style="font-size:0.8rem;color:#8b949e">How long a challenge/response is considered valid.</p>
-    </div>
-    <div class="card">
-      <h3>Unlock</h3>
-      <label>Auto-lock timeout (sec)
-        <input type="number" id="timeoutInput" value="30" min="5" max="300">
-      </label>
-      <label>RSSI drop threshold (dB below baseline)
-        <input type="number" id="rssiInput" value="15" min="5" max="50">
-      </label>
-      <p style="font-size:0.8rem;color:#8b949e">How far the signal must drop before the PC locks.</p>
-    </div>
-    <div class="card">
-      <h3>Logging</h3>
-      <div class="toggle-row">
-        <span>Log to file</span>
-        <input type="checkbox" id="logFileToggle" checked>
-      </div>
-      <div class="toggle-row">
-        <span>Log to console</span>
-        <input type="checkbox" id="logConsoleToggle" checked>
-      </div>
-      <label>Log level
-        <select id="logLevelSelect">
-          <option value="trace">trace</option>
-          <option value="debug">debug</option>
-          <option value="info" selected>info</option>
-          <option value="warn">warn</option>
-          <option value="error">error</option>
-        </select>
-      </label>
-      <button id="saveConfigBtn">💾 Save</button>
-    </div>
-  </div>
-
-  <!-- Windows CP Tab -->
-  <div id="tab-cp" class="tab-content">
-    <div class="card">
-      <h3>🪟 Windows Credential Provider</h3>
-      <p>Status: <span id="cpStatus" class="status-warn">❌ Not registered</span></p>
-      <p class="status-info">Storage: <span id="storageType">detecting…</span></p>
-      <p style="font-size:0.8rem;color:#8b949e">
-        Register to show "WristKey Unlock" tile on the lock screen.
-        Requires Administrator privileges.
+      <p style="margin-bottom:12px;color:#aaa;font-size:13px;">
+        Open the WristKey app on your watch and keep it nearby.
       </p>
-      <button id="cpRegisterBtn">📝 Register Credential Provider</button>
-      <button id="cpUnregisterBtn" style="background:#da3633;margin-left:8px">🗑 Unregister</button>
+      <button class="btn" id="scanBtn">🔍 Scan for New Device</button>
+      <div id="scanList" style="margin-top:12px;"></div>
     </div>
+  </div>
+
+  <div class="section">
+    <h3>Paired Devices</h3>
+    <div id="pairedList">
+      <div class="empty-state">No paired devices. Scan to pair.</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Daemon Control</h3>
     <div class="card">
-      <h3>💾 Windows Password</h3>
-      <p style="font-size:0.8rem;color:#8b949e">
-        Your Windows password is encrypted with <strong>TPM 2.0</strong> (or software fallback) and stored locally.
-        It is sent to the Credential Provider via a secure named pipe when unlocking.
-        <br><br>
-        <strong>⚠️ Enter your Windows account password, NOT the PIN!</strong>
-      </p>
-      <label>Windows account password
-        <input type="password" id="winPasswordInput" placeholder="Enter your Windows password (not PIN)">
-      </label>
-      <button id="winPasswordBtn">💾 Save Password</button>
+      <div class="toggle-row">
+        <div>
+          <strong>Auto-lock / Auto-unlock</strong>
+          <p class="hint">Lock when watch leaves, unlock when returns</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="daemonToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <button class="btn btn-secondary" id="lockNowBtn" style="margin-top:10px;width:100%;">🔒 Lock Now</button>
     </div>
   </div>
 </div>
+
+<!-- SETTINGS TAB -->
+<div class="tab-content" id="tab-settings">
+  <div class="section">
+    <h3>Calibration</h3>
+    <div class="card">
+      <p style="color:#aaa;font-size:13px;margin-bottom:10px;">
+        Hold watch near PC during calibration.
+      </p>
+      <div id="calibrateList"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Sync</h3>
+    <div class="card">
+      <div class="input-group">
+        <label>Challenge freshness window (sec)</label>
+        <input type="number" id="challengeInput" value="10" min="5" max="60">
+        <p class="hint">How long a challenge/response is considered valid.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Unlock</h3>
+    <div class="card">
+      <div class="input-group">
+        <label>Auto-lock timeout (sec)</label>
+        <input type="number" id="timeoutInput" value="30" min="5" max="300">
+      </div>
+      <div class="input-group">
+        <label>RSSI drop threshold (dB below baseline)</label>
+        <input type="number" id="rssiInput" value="15" min="5" max="50">
+        <p class="hint">How far the signal must drop before the PC locks.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Logging</h3>
+    <div class="card">
+      <div class="toggle-row">
+        <div><strong>Log to file</strong></div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="logFileToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div><strong>Log to console</strong></div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="logConsoleToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="input-group" style="margin-top:10px;">
+        <label>Log level</label>
+        <select id="logLevelSelect">
+          <option value="error">error</option>
+          <option value="warn">warn</option>
+          <option value="info" selected>info</option>
+          <option value="debug">debug</option>
+          <option value="trace">trace</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Diagnostics</h3>
+    <div class="card">
+      <div class="input-group">
+        <label>Log folder</label>
+        <div id="logDirPath" class="log-path">Loading…</div>
+        <button class="copy-btn" id="copyLogDirBtn">📋 Copy path</button>
+        <p class="hint">Today's log file is named <code>wristkey.YYYY-MM-DD</code> inside this folder (not <code>wristkey.log</code>).</p>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn" id="saveConfigBtn" style="width:100%;">💾 Save Settings</button>
+</div>
+
+<!-- WINDOWS CP TAB -->
+<div class="tab-content" id="tab-cp">
+  <div class="section">
+    <h3>🪟 Windows Credential Provider</h3>
+    <div class="card">
+      <p style="margin-bottom:10px;">
+        Status: <strong id="cpStatus" class="status-warn">❌ Not registered</strong>
+      </p>
+      <p style="color:#aaa;font-size:13px;margin-bottom:14px;">
+        Register to show "WristKey Unlock" tile on the lock screen.
+        Requires Administrator privileges.
+      </p>
+      <button class="btn" id="cpRegisterBtn">📝 Register Credential Provider</button>
+      <button class="btn btn-danger" id="cpUnregisterBtn" style="margin-left:8px;">🗑 Unregister</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>💾 Windows Password</h3>
+    <div class="card">
+      <p style="color:#aaa;font-size:13px;margin-bottom:10px;">
+        Your Windows password is encrypted with <strong>TPM 2.0</strong> (or software fallback) and stored locally.
+        It is sent to the Credential Provider via a secure named pipe when unlocking.
+      </p>
+      <p style="color:#ffa502;font-size:12px;margin-bottom:10px;">
+        <strong>⚠️ Enter your Windows account password, NOT the PIN!</strong>
+      </p>
+      <div class="input-group">
+        <label>Windows account password</label>
+        <input type="password" id="winPasswordInput" placeholder="Enter password…">
+      </div>
+      <button class="btn" id="winPasswordBtn" style="margin-top:6px;">💾 Save Password</button>
+    </div>
+  </div>
+</div>
+
 <script src="main.js"></script>
 </body>
 </html>

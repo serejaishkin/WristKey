@@ -9,12 +9,14 @@ use wristkey_ble::BtleplugAdapter;
 
 #[cfg(target_os = "windows")]
 use wristkey_platform_win::WindowsSecurity;
-
 #[cfg(target_os = "linux")]
 use wristkey_platform_linux::LinuxSecurity;
 
 #[cfg(target_os = "windows")]
 use wristkey_core::PasswordVault;
+
+// Log directory — set once in main() so get_log_dir can expose it to UI
+static LOG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 // ─── DTOs ───────────────────────────────────────────────────────────────────
 
@@ -59,16 +61,16 @@ struct PairRequest {
     address: String,
 }
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// ─── State ──────────────────────────────────────────────────────────────────
 
 struct AppState {
     session: Arc<SessionManager>,
     config: Arc<Mutex<Config>>,
     daemon: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    platform: Arc<dyn wristkey_core::PlatformSecurity + Send + Sync>,
+    platform: Arc<dyn wristkey_core::PlatformSecurity>,
 }
 
-fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn wristkey_core::PlatformSecurity + Send + Sync> {
+fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn wristkey_core::PlatformSecurity> {
     #[cfg(target_os = "windows")]
     {
         let mut win = WindowsSecurity::new();
@@ -87,7 +89,14 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn wristkey_cor
     }
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────────
+// ─── Commands ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn get_log_dir() -> Result<String> {
+    LOG_DIR.get()
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| WristKeyError::Platform("log directory not initialized".into()))
+}
 
 #[tauri::command]
 async fn get_status(state: tauri::State<'_, Arc<AppState>>) -> Result<StatusDto> {
@@ -149,10 +158,7 @@ async fn get_paired_devices(state: tauri::State<'_, Arc<AppState>>) -> Result<Ve
 async fn scan_devices(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<ScanResultDto>> {
     let found = state.session.scan_ble().await?;
     Ok(found.into_iter().map(|(id, name, rssi, address)| ScanResultDto {
-        id,
-        name,
-        rssi,
-        address,
+        id, name, rssi, address,
     }).collect())
 }
 
@@ -171,11 +177,7 @@ async fn forget_device(state: tauri::State<'_, Arc<AppState>>, id: String) -> Re
 #[tauri::command]
 async fn calibrate_proximity(state: tauri::State<'_, Arc<AppState>>, id: String) -> Result<CalibrationResultDto> {
     let (avg, threshold, samples) = state.session.calibrate_device(&id).await?;
-    Ok(CalibrationResultDto {
-        avg,
-        threshold,
-        samples,
-    })
+    Ok(CalibrationResultDto { avg, threshold, samples })
 }
 
 #[tauri::command]
@@ -229,7 +231,12 @@ async fn lock_screen(state: tauri::State<'_, Arc<AppState>>) -> Result<()> {
     state.platform.lock_screen().await
 }
 
-// ─── Windows-specific commands ────────────────────────────────────────────────
+#[tauri::command]
+async fn unlock_screen(state: tauri::State<'_, Arc<AppState>>) -> Result<()> {
+    state.platform.unlock_screen().await
+}
+
+// ─── Windows-specific commands ──────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
 #[tauri::command]
@@ -278,12 +285,36 @@ async fn unregister_credential_provider() -> Result<()> {
     Err(WristKeyError::Platform("Credential Provider only available on Windows".into()))
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main ───────────────────────────────────────────────────────────────────
 
 fn main() {
+    // Resolve log directory early
+    let log_dir = directories::ProjectDirs::from("", "", "WristKey")
+        .map(|d| d.data_dir().to_path_buf().join("logs"))
+        .or_else(|| {
+            std::env::current_exe().ok()
+                .and_then(|p| p.parent().map(|d| d.join("logs")))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("logs"));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let _ = LOG_DIR.set(log_dir.clone());
+
+    let today = chrono::Local::now().format("%Y-%m-%d");
+    let actual_log_path = log_dir.join(format!("wristkey.{}", today));
+
+    // Bootstrap log line (before tracing init)
+    {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&actual_log_path) {
+            let _ = writeln!(f, "[{}] [WristKey] ---- process starting (pid {}) ----",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), std::process::id());
+        }
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .init();
+    info!("WristKey started - logs at {:?}", actual_log_path);
 
     let quit = CustomMenuItem::new("quit".to_string(), "Quit");
     let show = CustomMenuItem::new("show".to_string(), "Show");
@@ -312,7 +343,7 @@ fn main() {
                     window.set_focus().unwrap();
                 }
                 _ => {}
-            },
+            }
             _ => {}
         })
         .setup(|app| {
@@ -342,6 +373,34 @@ fn main() {
                 platform: platform.clone(),
             });
 
+            // FIX: auto-start daemon so auto-unlock works immediately
+            let state_for_daemon = state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let mut daemon_guard = state_for_daemon.daemon.lock().await;
+                if daemon_guard.is_none() {
+                    let session = Arc::clone(&state_for_daemon.session);
+                    let platform = Arc::clone(&state_for_daemon.platform);
+                    match BtleplugAdapter::new().await {
+                        Ok(ble_adapter) => {
+                            let ble = Arc::new(ble_adapter);
+                            let conn_mgr = Arc::new(ConnectionManager::new());
+                            let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
+                            let handle = tokio::spawn(async move {
+                                if let Err(e) = daemon.run().await {
+                                    error!("Daemon error: {}", e);
+                                }
+                            });
+                            *daemon_guard = Some(handle);
+                            info!("Daemon auto-started on app launch");
+                        }
+                        Err(e) => {
+                            error!("Failed to create BLE adapter for daemon: {}", e);
+                        }
+                    }
+                }
+            });
+
             app.manage(state);
             Ok(())
         })
@@ -356,9 +415,11 @@ fn main() {
             set_config,
             toggle_daemon,
             lock_screen,
+            unlock_screen,
             set_windows_password,
             register_credential_provider,
             unregister_credential_provider,
+            get_log_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

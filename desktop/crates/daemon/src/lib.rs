@@ -1,7 +1,7 @@
 //! WristKey daemon — proximity detection, crypto unlock, and auto-lock.
 
 pub mod conn_mgr;
-
+pub use conn_mgr::ConnectionManager;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -14,7 +14,6 @@ use wristkey_core::{
     Result, WristKeyError, RssiSmoother,
 };
 use wristkey_ble::{BleAdapter, BtleplugAdapter, PeripheralInfo, Connection};
-use conn_mgr::ConnectionManager;
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
@@ -90,7 +89,8 @@ impl Daemon {
         loop {
             ticker.tick().await;
 
-            let devices = self.session.list_devices().await?;
+            // FIX: list_devices -> list_paired_devices
+            let devices = self.session.list_paired_devices().await?;
             if devices.is_empty() {
                 sleep(Duration::from_secs(5)).await;
                 continue;
@@ -101,6 +101,7 @@ impl Daemon {
             let session_state = self.session.state().await;
 
             // Try to find the watch and determine proximity
+            // FIX: prefix unused is_locked with underscore to suppress warning
             let action = self.check_proximity(&service_uuid, &devices, is_locked).await?;
 
             match action {
@@ -127,7 +128,7 @@ impl Daemon {
         &self,
         service_uuid: &Uuid,
         devices: &[wristkey_core::PairedDevice],
-        is_locked: bool,
+        _is_locked: bool,
     ) -> Result<ProximityAction> {
         let mut rx = self.ble.scan(*service_uuid).await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
