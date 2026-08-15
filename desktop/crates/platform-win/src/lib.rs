@@ -29,7 +29,7 @@ const WRISTKEY_KEY_NAME: &str = "WristKeyDevicePassword";
 pub struct WindowsSecurity {
     session: Option<Arc<SessionManager>>,
     pipe_password: Arc<Mutex<Option<String>>>,
-    _pipe_handle: Option<tokio::task::JoinHandle<()>>,
+    _pipe_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl WindowsSecurity {
@@ -37,8 +37,16 @@ impl WindowsSecurity {
         let pipe_password = Arc::new(Mutex::new(None));
         let password_clone = pipe_password.clone();
 
-        let handle = tokio::spawn(async move {
-            UnlockPipeServer::new(password_clone).run().await;
+        // Start pipe server in a dedicated thread with its own runtime
+        // (tokio::spawn here would panic if no runtime is active yet)
+        let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("pipe server tokio runtime");
+            rt.block_on(async move {
+                UnlockPipeServer::new(password_clone).run().await;
+            });
         });
 
         Self {

@@ -280,6 +280,9 @@ async fn unregister_credential_provider() -> Result<(), String> {
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 fn main() {
+    std::env::set_var("RUST_BACKTRACE", "1");
+    println!("[WristKey] main() started");
+
     // Resolve log directory early
     let log_dir = directories::ProjectDirs::from("", "", "WristKey")
         .map(|d| d.data_dir().to_path_buf().join("logs"))
@@ -293,6 +296,7 @@ fn main() {
 
     let today = chrono::Local::now().format("%Y-%m-%d");
     let actual_log_path = log_dir.join(format!("wristkey.{}", today));
+    println!("[WristKey] log path: {:?}", actual_log_path);
 
     // Bootstrap log line (before tracing init)
     {
@@ -307,39 +311,62 @@ fn main() {
         .with_env_filter("info")
         .init();
     info!("WristKey started - logs at {:?}", actual_log_path);
-
-    let quit_i = MenuItem::with_id("quit", "Quit", true, None::<&str>).unwrap();
-    let show_i = MenuItem::with_id("show", "Show", true, None::<&str>).unwrap();
-    let lock_i = MenuItem::with_id("lock_now", "Lock Now", true, None::<&str>).unwrap();
-
-    let menu = Menu::with_items(&[
-        &show_i,
-        &PredefinedMenuItem::separator().unwrap(),
-        &lock_i,
-        &PredefinedMenuItem::separator().unwrap(),
-        &quit_i,
-    ]).unwrap();
+    println!("[WristKey] tracing initialized");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let storage = Arc::new(SqliteStorage::open_default().unwrap_or_else(|_| {
-                MemoryStorage::new()
-            }));
+            println!("[WristKey] setup() started");
+
+            // Tray menu
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)
+                .map_err(|e| { println!("[WristKey] MenuItem quit error: {}", e); e })?;
+            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)
+                .map_err(|e| { println!("[WristKey] MenuItem show error: {}", e); e })?;
+            let lock_i = MenuItem::with_id(app, "lock_now", "Lock Now", true, None::<&str>)
+                .map_err(|e| { println!("[WristKey] MenuItem lock error: {}", e); e })?;
+
+            let menu = Menu::with_items(app, &[
+                &show_i,
+                &PredefinedMenuItem::separator(app).map_err(|e| { println!("[WristKey] separator error: {}", e); e })?,
+                &lock_i,
+                &PredefinedMenuItem::separator(app).map_err(|e| { println!("[WristKey] separator error: {}", e); e })?,
+                &quit_i,
+            ]).map_err(|e| { println!("[WristKey] Menu error: {}", e); e })?;
+            println!("[WristKey] tray menu created");
+
+            // State initialization
+            println!("[WristKey] creating storage...");
+            let storage: Arc<dyn wristkey_core::Storage> = match SqliteStorage::open_default() {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    println!("[WristKey] SQLite failed ({}), using memory storage", e);
+                    Arc::new(MemoryStorage::new())
+                }
+            };
+            println!("[WristKey] storage created");
+
+            println!("[WristKey] creating crypto...");
             let crypto = Arc::new(EcdsaP256Crypto);
+            println!("[WristKey] creating session...");
             let session = Arc::new(SessionManager::new(crypto, storage));
+            println!("[WristKey] creating platform adapter...");
             let platform = create_platform_adapter(session.clone());
+            println!("[WristKey] platform adapter created");
+
             let state = Arc::new(AppState {
                 session: session.clone(),
                 config: Arc::new(Mutex::new(Config::default())),
                 daemon: Arc::new(Mutex::new(None)),
                 platform: platform.clone(),
             });
+            println!("[WristKey] AppState created");
 
             // FIX: auto-start daemon so auto-unlock works immediately
             let state_for_daemon = state.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                println!("[WristKey] auto-starting daemon...");
                 let mut daemon_guard = state_for_daemon.daemon.lock().await;
                 if daemon_guard.is_none() {
                     let session = Arc::clone(&state_for_daemon.session);
@@ -356,20 +383,31 @@ fn main() {
                             });
                             *daemon_guard = Some(handle);
                             info!("Daemon auto-started on app launch");
+                            println!("[WristKey] daemon auto-started");
                         }
                         Err(e) => {
                             error!("Failed to create BLE adapter for daemon: {}", e);
+                            println!("[WristKey] BLE adapter failed: {}", e);
                         }
                     }
                 }
             });
 
             app.manage(state);
+            println!("[WristKey] state managed");
 
-            // Tray icon
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
+            // Tray icon — SAFE: handle missing icon gracefully
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&menu);
+
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+                println!("[WristKey] tray icon set");
+            } else {
+                println!("[WristKey] WARNING: no default window icon, tray will have no icon");
+            }
+
+            let _tray = tray_builder
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -378,10 +416,9 @@ fn main() {
                         }
                     }
                     "lock_now" => {
-                        let app_state: State<Arc<AppState>> = app.state();
+                        let state_clone: Arc<AppState> = Arc::clone(&*app.state::<Arc<AppState>>());
                         tokio::spawn(async move {
-                            let state = app_state;
-                            if let Err(e) = state.platform.lock_screen().await {
+                            if let Err(e) = state_clone.platform.lock_screen().await {
                                 warn!("Tray lock failed: {}", e);
                             }
                         });
@@ -399,8 +436,11 @@ fn main() {
                         }
                     }
                 })
-                .build(app)?;
+                .build(app)
+                .map_err(|e| { println!("[WristKey] Tray build error: {}", e); e })?;
+            println!("[WristKey] tray built successfully");
 
+            println!("[WristKey] setup() complete");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
