@@ -2,7 +2,7 @@
 //!
 //! Features:
 //! - LockWorkStation via user32.dll
-//! - TPM 2.0 + CNG password encryption (NCryptProtectSecret / NCryptUnprotectSecret)
+//! - DPAPI password encryption (works with any TPM or software, no key management)
 //! - Named pipe server for Credential Provider communication
 //! - Auto-registration of Credential Provider in Windows Registry
 
@@ -19,12 +19,8 @@ extern "system" {
     fn LockWorkStation() -> i32;
 }
 
-/// CLSID for WristKey Credential Provider (must match C# GUID)
 pub const CP_CLSID: &str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
 pub const CP_NAME: &str = "WristKey Credential Provider";
-
-/// Key name for TPM/CNG storage
-const WRISTKEY_KEY_NAME: &str = "WristKeyDevicePassword";
 
 pub struct WindowsSecurity {
     session: Option<Arc<SessionManager>>,
@@ -37,8 +33,6 @@ impl WindowsSecurity {
         let pipe_password = Arc::new(Mutex::new(None));
         let password_clone = pipe_password.clone();
 
-        // Start pipe server in a dedicated thread with its own runtime
-        // (tokio::spawn here would panic if no runtime is active yet)
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -65,29 +59,22 @@ impl WindowsSecurity {
         info!("Unlock password buffered for Credential Provider");
     }
 
-    /// Check if Credential Provider is already registered in registry.
     pub fn is_credential_provider_registered() -> bool {
         use winreg::RegKey;
         use winreg::enums::HKEY_LOCAL_MACHINE;
 
         let path = format!(
-            r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
             CP_CLSID
         );
-        match RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(&path) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(&path).is_ok()
     }
 
-    /// Register Credential Provider DLL in Windows Registry.
-    /// Requires Administrator privileges.
     pub fn register_credential_provider(dll_path: &str) -> Result<()> {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
 
-        // 1. Register COM CLSID
-        let clsid_path = format!(r"CLSID\\{}", CP_CLSID);
+        let clsid_path = format!(r"CLSID\{}", CP_CLSID);
         let (clsid_key, _) = RegKey::predef(HKEY_CLASSES_ROOT)
             .create_subkey(&clsid_path)
             .map_err(|e| WristKeyError::Platform(format!("Failed to create CLSID key: {}", e)))?;
@@ -101,9 +88,8 @@ impl WindowsSecurity {
         inproc.set_value("ThreadingModel", &"Apartment")
             .map_err(|e| WristKeyError::Platform(format!("Failed to set ThreadingModel: {}", e)))?;
 
-        // 2. Register as Credential Provider
         let cp_path = format!(
-            r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
             CP_CLSID
         );
         let (cp_key, _) = RegKey::predef(HKEY_LOCAL_MACHINE)
@@ -116,16 +102,15 @@ impl WindowsSecurity {
         Ok(())
     }
 
-    /// Unregister Credential Provider.
     pub fn unregister_credential_provider() -> Result<()> {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
 
-        let clsid_path = format!(r"CLSID\\{}", CP_CLSID);
+        let clsid_path = format!(r"CLSID\{}", CP_CLSID);
         let _ = RegKey::predef(HKEY_CLASSES_ROOT).delete_subkey_all(&clsid_path);
 
         let cp_path = format!(
-            r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
             CP_CLSID
         );
         let _ = RegKey::predef(HKEY_LOCAL_MACHINE).delete_subkey_all(&cp_path);
@@ -134,7 +119,6 @@ impl WindowsSecurity {
         Ok(())
     }
 
-    /// Extract/find Credential Provider DLL next to the executable.
     pub async fn ensure_dll_extracted() -> Result<std::path::PathBuf> {
         let exe_dir = std::env::current_exe()
             .ok()
@@ -147,9 +131,8 @@ impl WindowsSecurity {
             return Ok(dll_path);
         }
 
-        // Fallback: try to find DLL in credential-provider folder (dev build)
         let dev_dll = exe_dir
-            .parent().and_then(|p| p.parent()) // go up from tauri/src-tauri/target/release
+            .parent().and_then(|p| p.parent())
             .and_then(|p| p.parent())
             .map(|p| p.join("crates/credential-provider/WristKeyCredentialProvider.dll"))
             .filter(|p| p.exists());
@@ -163,42 +146,12 @@ impl WindowsSecurity {
         }
 
         Err(WristKeyError::Platform(
-            "WristKeyCredentialProvider.dll not found. Build it first: cd crates/credential-provider && csc ...".into()
+            "WristKeyCredentialProvider.dll not found. Build it first.".into()
         ))
     }
 
-    /// Check if TPM 2.0 is available on this system.
-    pub fn is_tpm_available() -> bool {
-        use windows::Win32::Security::Cryptography::{
-            NCryptOpenStorageProvider, NCRYPT_PROV_HANDLE,
-        };
-        use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
-
-        let provider_name: Vec<u16> = OsStr::new("Microsoft Platform Crypto Provider")
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
-
-        let mut handle = NCRYPT_PROV_HANDLE::default();
-        unsafe {
-            let result = NCryptOpenStorageProvider(
-                &mut handle,
-                PCWSTR(provider_name.as_ptr()),
-                0,
-            );
-            result.is_ok()
-        }
-    }
-
-    /// Get human-readable storage type description.
     pub fn storage_type_description() -> &'static str {
-        if Self::is_tpm_available() {
-            "TPM 2.0 (Microsoft Platform Crypto Provider)"
-        } else {
-            "Software (Microsoft Software Key Storage Provider)"
-        }
+        "Windows Data Protection API (DPAPI)"
     }
 }
 
@@ -237,10 +190,7 @@ impl PlatformSecurity for WindowsSecurity {
                         }
                     }
                     Ok(None) => {
-                        warn!(
-                            "No Windows password stored for device {}. Use 'Set Windows Password' in GUI.",
-                            device_id
-                        );
+                        warn!("No Windows password stored for device {}. Use 'Set Windows Password' in GUI.", device_id);
                     }
                     Err(e) => {
                         warn!("Failed to retrieve device password: {}", e);
@@ -267,284 +217,88 @@ impl PlatformSecurity for WindowsSecurity {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TPM 2.0 / CNG PasswordVault Implementation
+// DPAPI PasswordVault Implementation (replaces broken CNG AES)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[async_trait]
 impl PasswordVault for WindowsSecurity {
     async fn encrypt_password(&self, password: &str) -> Result<Vec<u8>> {
-        use windows::Win32::Security::Cryptography::*;
-                use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Security::Cryptography::{
+            CryptProtectData, CRYPT_INTEGER_BLOB,
+            CRYPTPROTECT_LOCAL_MACHINE, CRYPTPROTECT_UI_FORBIDDEN,
+        };
+        use windows::Win32::System::Memory::LocalFree;
         use windows::core::PCWSTR;
 
-        let password_bytes = password.as_bytes();
+        let data = password.as_bytes();
+        let mut data_in = CRYPT_INTEGER_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut data_out = CRYPT_INTEGER_BLOB::default();
 
-        // 1. Determine provider: TPM if available, else software
-        let (provider_name, _key_usage) = if WindowsSecurity::is_tpm_available() {
-            info!("Using TPM 2.0 (Microsoft Platform Crypto Provider) for password encryption");
-            ("Microsoft Platform Crypto Provider", NCRYPT_ALLOW_DECRYPT_FLAG)
-        } else {
-            warn!("TPM 2.0 not available, falling back to Software Key Storage Provider");
-            ("Microsoft Software Key Storage Provider", NCRYPT_ALLOW_DECRYPT_FLAG)
+        unsafe {
+            CryptProtectData(
+                &mut data_in,
+                PCWSTR::null(),
+                None,       // optional entropy
+                None,       // reserved
+                None,       // prompt struct
+                CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN,
+                &mut data_out,
+            ).map_err(|e| WristKeyError::Platform(format!("CryptProtectData failed: {:?}", e)))?;
+        }
+
+        let encrypted = unsafe {
+            std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize).to_vec()
         };
 
-        let provider_name_wide: Vec<u16> = OsStr::new(provider_name)
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
-
-        // 2. Open storage provider
-        let mut prov_handle = NCRYPT_PROV_HANDLE::default();
         unsafe {
-            let result = NCryptOpenStorageProvider(
-                &mut prov_handle,
-                PCWSTR(provider_name_wide.as_ptr()),
-                0,
-            );
-            if result.is_err() {
-                return Err(WristKeyError::Platform(
-                    format!("NCryptOpenStorageProvider failed: {:?}", result)
-                ));
-            }
+            let _ = LocalFree(data_out.pbData as _);
         }
 
-        // 3. Create or open persistent key
-        let key_name_wide: Vec<u16> = OsStr::new(WRISTKEY_KEY_NAME)
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
-
-        let mut key_handle = NCRYPT_KEY_HANDLE::default();
-        let key_exists = unsafe {
-            let result = NCryptOpenKey(
-                prov_handle,
-                &mut key_handle,
-                PCWSTR(key_name_wide.as_ptr()),
-                CERT_KEY_SPEC(0),
-                NCRYPT_FLAGS(0),
-            );
-            result.is_ok()
-        };
-
-        if !key_exists {
-            info!("Creating new persistent key in {}", provider_name);
-            unsafe {
-                let result = NCryptCreatePersistedKey(
-                    prov_handle,
-                    &mut key_handle,
-                    BCRYPT_AES_ALGORITHM,
-                    PCWSTR(key_name_wide.as_ptr()),
-                    CERT_KEY_SPEC(0),
-                    NCRYPT_FLAGS(0),
-                );
-                if result.is_err() {
-                    let _ = NCryptFreeObject(prov_handle);
-                    return Err(WristKeyError::Platform(
-                        format!("NCryptCreatePersistedKey failed: {:?}", result)
-                    ));
-                }
-
-                // Set key length to 256 bits
-                let key_length: u32 = 256;
-                let result = NCryptSetProperty(
-                    key_handle,
-                    NCRYPT_LENGTH_PROPERTY,
-                    &key_length.to_le_bytes(),
-                    NCRYPT_FLAGS(0),
-                );
-                if result.is_err() {
-                    let _ = NCryptFreeObject(key_handle);
-                    let _ = NCryptFreeObject(prov_handle);
-                    return Err(WristKeyError::Platform(
-                        format!("NCryptSetProperty(LENGTH) failed: {:?}", result)
-                    ));
-                }
-
-                // Finalize the key
-                let result = NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0));
-                if result.is_err() {
-                    let _ = NCryptFreeObject(key_handle);
-                    let _ = NCryptFreeObject(prov_handle);
-                    return Err(WristKeyError::Platform(
-                        format!("NCryptFinalizeKey failed: {:?}", result)
-                    ));
-                }
-            }
-        } else {
-            info!("Opened existing key from {}", provider_name);
-        }
-
-        // 4. Generate random IV
-        let mut iv = [0u8; 12]; // AES-GCM IV
-        unsafe {
-            let result = BCryptGenRandom(
-                None,
-                &mut iv,
-                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-            );
-            if result.is_err() {
-                let _ = NCryptFreeObject(key_handle);
-                let _ = NCryptFreeObject(prov_handle);
-                return Err(WristKeyError::Platform(
-                    format!("BCryptGenRandom failed: {:?}", result)
-                ));
-            }
-        }
-
-        // 5. Encrypt using NCryptEncrypt (AES-GCM via CNG)
-        let mut encrypted_len: u32 = 0;
-        let plaintext = password_bytes;
-
-        unsafe {
-            // First call to get size
-            let result = NCryptEncrypt(
-                key_handle,
-                Some(plaintext),
-                Some(iv.as_ptr() as *const std::ffi::c_void),
-                None,
-                &mut encrypted_len,
-                NCRYPT_PAD_PKCS1_FLAG,
-            );
-            // NTE_BUFFER_TOO_SMALL expected, ignore
-            let _ = result;
-
-            let mut encrypted = vec![0u8; encrypted_len as usize];
-            let result = NCryptEncrypt(
-                key_handle,
-                Some(plaintext),
-                Some(iv.as_ptr() as *const std::ffi::c_void),
-                Some(&mut encrypted),
-                &mut encrypted_len,
-                NCRYPT_PAD_PKCS1_FLAG,
-            );
-            if result.is_err() {
-                let _ = NCryptFreeObject(key_handle);
-                let _ = NCryptFreeObject(prov_handle);
-                return Err(WristKeyError::Platform(
-                    format!("NCryptEncrypt failed: {:?}", result)
-                ));
-            }
-            encrypted.truncate(encrypted_len as usize);
-
-            // 6. Build output: [1 byte provider][12 bytes IV][rest: ciphertext]
-            let provider_flag = if WindowsSecurity::is_tpm_available() { 1u8 } else { 0u8 };
-            let mut output = vec![provider_flag];
-            output.extend_from_slice(&iv);
-            output.extend_from_slice(&encrypted);
-
-            // Cleanup
-            let _ = NCryptFreeObject(key_handle);
-            let _ = NCryptFreeObject(prov_handle);
-
-            info!("Password encrypted with {} ({} bytes)", provider_name, output.len());
-            Ok(output)
-        }
+        info!("Password encrypted with DPAPI ({} bytes)", encrypted.len());
+        Ok(encrypted)
     }
 
     async fn decrypt_password(&self, ciphertext: &[u8]) -> Result<String> {
-        use windows::Win32::Security::Cryptography::*;
-                use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
+        use windows::Win32::Security::Cryptography::{
+            CryptUnprotectData, CRYPT_INTEGER_BLOB,
+            CRYPTPROTECT_UI_FORBIDDEN,
+        };
+        use windows::Win32::System::Memory::LocalFree;
 
-        if ciphertext.len() < 14 {
-            return Err(WristKeyError::Platform("Ciphertext too short".into()));
+        let mut data_in = CRYPT_INTEGER_BLOB {
+            cbData: ciphertext.len() as u32,
+            pbData: ciphertext.as_ptr() as *mut u8,
+        };
+        let mut data_out = CRYPT_INTEGER_BLOB::default();
+
+        unsafe {
+            CryptUnprotectData(
+                &mut data_in,
+                None,       // description
+                None,       // optional entropy
+                None,       // reserved
+                None,       // prompt struct
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut data_out,
+            ).map_err(|e| WristKeyError::Platform(format!("CryptUnprotectData failed: {:?}", e)))?;
         }
 
-        // Parse: [1 byte provider][12 bytes IV][rest: ciphertext]
-        let provider_flag = ciphertext[0];
-        let iv = &ciphertext[1..13];
-        let encrypted = &ciphertext[13..];
-
-        let provider_name = if provider_flag == 1 {
-            info!("Decrypting with TPM 2.0 (Microsoft Platform Crypto Provider)");
-            "Microsoft Platform Crypto Provider"
-        } else {
-            info!("Decrypting with Software Key Storage Provider");
-            "Microsoft Software Key Storage Provider"
+        let decrypted = unsafe {
+            std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize).to_vec()
         };
 
-        let provider_name_wide: Vec<u16> = OsStr::new(provider_name)
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
-
-        // Open provider
-        let mut prov_handle = NCRYPT_PROV_HANDLE::default();
         unsafe {
-            let result = NCryptOpenStorageProvider(
-                &mut prov_handle,
-                PCWSTR(provider_name_wide.as_ptr()),
-                0,
-            );
-            if result.is_err() {
-                return Err(WristKeyError::Platform(
-                    format!("NCryptOpenStorageProvider failed: {:?}", result)
-                ));
-            }
+            let _ = LocalFree(data_out.pbData as _);
         }
 
-        // Open key
-        let key_name_wide: Vec<u16> = OsStr::new(WRISTKEY_KEY_NAME)
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
+        let password = String::from_utf8(decrypted)
+            .map_err(|e| WristKeyError::Platform(format!("UTF-8 decode: {}", e)))?;
 
-        let mut key_handle = NCRYPT_KEY_HANDLE::default();
-        unsafe {
-            let result = NCryptOpenKey(
-                prov_handle,
-                &mut key_handle,
-                PCWSTR(key_name_wide.as_ptr()),
-                CERT_KEY_SPEC(0),
-                NCRYPT_FLAGS(0),
-            );
-            if result.is_err() {
-                let _ = NCryptFreeObject(prov_handle);
-                return Err(WristKeyError::Platform(
-                    format!("NCryptOpenKey failed: {:?} — key not found. Did you set the password first?", result)
-                ));
-            }
-
-            // Decrypt
-            let mut decrypted_len: u32 = 0;
-            let _result = NCryptDecrypt(
-                key_handle,
-                Some(encrypted),
-                Some(iv.as_ptr() as *const std::ffi::c_void),
-                None,
-                &mut decrypted_len,
-                NCRYPT_PAD_PKCS1_FLAG,
-            );
-
-            let mut decrypted = vec![0u8; decrypted_len as usize];
-            let result = NCryptDecrypt(
-                key_handle,
-                Some(encrypted),
-                Some(iv.as_ptr() as *const std::ffi::c_void),
-                Some(&mut decrypted),
-                &mut decrypted_len,
-                NCRYPT_PAD_PKCS1_FLAG,
-            );
-            if result.is_err() {
-                let _ = NCryptFreeObject(key_handle);
-                let _ = NCryptFreeObject(prov_handle);
-                return Err(WristKeyError::Platform(
-                    format!("NCryptDecrypt failed: {:?}", result)
-                ));
-            }
-            decrypted.truncate(decrypted_len as usize);
-
-            let _ = NCryptFreeObject(key_handle);
-            let _ = NCryptFreeObject(prov_handle);
-
-            let password = String::from_utf8(decrypted)
-                .map_err(|e| WristKeyError::Platform(format!("UTF-8 decode: {}", e)))?;
-
-            info!("Password decrypted successfully ({} chars)", password.len());
-            Ok(password)
-        }
+        info!("Password decrypted with DPAPI ({} chars)", password.len());
+        Ok(password)
     }
 }
 
@@ -578,10 +332,7 @@ impl UnlockPipeServer {
                                 if let Err(e) = server.write_all(password.as_bytes()).await {
                                     error!("Failed to write password to pipe: {}", e);
                                 } else {
-                                    info!(
-                                        "Password sent to Credential Provider ({} bytes)",
-                                        password.len()
-                                    );
+                                    info!("Password sent to Credential Provider ({} bytes)", password.len());
                                 }
                                 if let Err(e) = server.write_all(b"\n").await {
                                     error!("Failed to write newline: {}", e);
