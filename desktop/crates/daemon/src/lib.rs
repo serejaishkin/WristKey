@@ -89,19 +89,15 @@ impl Daemon {
         loop {
             ticker.tick().await;
 
-            // FIX: list_devices -> list_paired_devices
             let devices = self.session.list_paired_devices().await?;
             if devices.is_empty() {
                 sleep(Duration::from_secs(5)).await;
                 continue;
             }
 
-            // Check if screen is currently locked
             let is_locked = self.platform.is_locked().await.unwrap_or(false);
             let session_state = self.session.state().await;
 
-            // Try to find the watch and determine proximity
-            // FIX: prefix unused is_locked with underscore to suppress warning
             let action = self.check_proximity(&service_uuid, &devices, is_locked).await?;
 
             match action {
@@ -141,7 +137,6 @@ impl Daemon {
             }
             match timeout(remaining, rx.recv()).await {
                 Ok(Some(info)) => {
-                    // FIX: convert Vec<u8> device_id to String for comparison with PeripheralInfo
                     let matched = devices.iter().find(|d| {
                         d.address == info.id
                         || d.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()).as_ref() == info.device_id.as_ref()
@@ -156,10 +151,8 @@ impl Daemon {
                                 device.name, rssi, smoother.current_rssi(), should_unlock, changed
                             );
 
-                            // Update threshold from device config
                             let threshold = device.baseline_rssi;
                             if smoother.current_rssi().is_none() || changed {
-                                // Re-initialize smoother if baseline changed significantly
                                 drop(smoother);
                                 let mut s = self.smoother.lock().await;
                                 *s = RssiSmoother::new(threshold);
@@ -175,15 +168,13 @@ impl Daemon {
                         }
                     }
                 }
-                Ok(None) => break, // channel closed
-                Err(_) => break,   // deadline reached
+                Ok(None) => break,
+                Err(_) => break,
             }
         }
 
-        // FIX: always stop scan when done
         let _ = self.ble.stop_scan().await;
 
-        // No signal found -> check debounce for lock
         if found_rssi.is_none() {
             let should_lock = self.debounce.lock().await.tick(true);
             if should_lock {
@@ -200,11 +191,9 @@ impl Daemon {
         service_uuid: &Uuid,
         devices: &[wristkey_core::PairedDevice],
     ) -> Result<()> {
-        // Find the primary paired device
         let device = devices.first()
             .ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
 
-        // FIX: convert Vec<u8> device_id to String for PeripheralInfo
         let info = PeripheralInfo {
             id: device.address.clone(),
             name: Some(device.name.clone()),
@@ -219,10 +208,8 @@ impl Daemon {
         let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
 
-        // Begin unlock -> get challenge
         let challenge = self.session.begin_unlock(device.id).await?;
 
-        // Write challenge to watch
         let mut write_ok = false;
         for attempt in 1..=3 {
             if self.ble.write(&conn, challenge_char, &challenge.to_bytes()).await.is_ok() {
@@ -237,10 +224,10 @@ impl Daemon {
             return Err(WristKeyError::Ble("failed to write challenge after 3 attempts".into()));
         }
 
-        // Subscribe to response
         let mut rx = self.ble.notify(&conn, response_char).await?;
 
-        // Wait for signed response (130 bytes: 64 sig + 1 user_present + 65 pubkey)
+        // FIX: expect 65 bytes (64 sig + 1 user_present), not 130
+        // Public key is already stored in PairedDevice from pairing
         let response_data = match timeout(
             Duration::from_secs(10),
             rx.recv()
@@ -252,16 +239,15 @@ impl Daemon {
             }
         };
 
-        if response_data.len() != 130 {
+        if response_data.len() < 65 {
             let _ = self.ble.disconnect(&conn).await;
             return Err(WristKeyError::Protocol(format!(
-                "invalid response: {} bytes (expected 130)", response_data.len()
+                "invalid response: {} bytes (expected at least 65)", response_data.len()
             )));
         }
 
         let signature = response_data[..64].to_vec();
         let user_present = response_data[64] != 0;
-        let _public_key = response_data[65..].to_vec();
 
         let response = Response {
             signature,
@@ -269,14 +255,10 @@ impl Daemon {
             timestamp: chrono::Utc::now(),
         };
 
-        // Verify signature
         self.session.verify_unlock(&response).await?;
-
-        // Success -> unlock screen
         self.platform.unlock_screen().await?;
         info!("Screen unlocked via crypto challenge-response");
 
-        // Keep connection alive for RSSI monitoring
         Ok(())
     }
 }

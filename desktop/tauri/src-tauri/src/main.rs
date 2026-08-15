@@ -5,9 +5,9 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tracing::{info, warn, error};
 
-use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, MemoryStorage, PlatformSecurity};
+use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, MemoryStorage, PlatformSecurity, Response};
 use wristkey_daemon::{Daemon, ConnectionManager};
-use wristkey_ble::{BleAdapter, BtleplugAdapter, MockBleAdapter};
+use wristkey_ble::{BleAdapter, BtleplugAdapter, MockBleAdapter, PeripheralInfo};
 
 #[cfg(target_os = "windows")]
 use wristkey_platform_win::WindowsSecurity;
@@ -16,6 +16,11 @@ use wristkey_platform_linux::LinuxSecurity;
 
 // Log directory — set once in main() so get_log_dir can expose it to UI
 static LOG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+// GATT UUIDs
+const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
+const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
 
 // ─── DTOs ───────────────────────────────────────────────────────────────────
 
@@ -158,7 +163,7 @@ async fn get_paired_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<Devic
 
 #[tauri::command]
 async fn scan_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanResultDto>, String> {
-    let service_uuid = uuid::Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567890").unwrap();
+    let service_uuid = uuid::Uuid::parse_str(SERVICE_UUID).unwrap();
     let mut rx = state.ble.scan(service_uuid).await.map_err(|e| e.to_string())?;
     let mut found = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -185,9 +190,97 @@ async fn scan_devices(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanResultD
     Ok(found)
 }
 
+// FIX: real BLE pairing with challenge-response exchange
 #[tauri::command]
 async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Result<(), String> {
-    state.session.pair_device(&req.id, &req.name, req.rssi, &req.address).await.map_err(|e| e.to_string())
+    let service_uuid = uuid::Uuid::parse_str(SERVICE_UUID).unwrap();
+    let challenge_char = uuid::Uuid::parse_str(CHALLENGE_CHAR).unwrap();
+    let response_char = uuid::Uuid::parse_str(RESPONSE_CHAR).unwrap();
+
+    // 1. Connect to watch
+    let info = PeripheralInfo {
+        id: req.address.clone(),
+        name: Some(req.name.clone()),
+        pin: None,
+        device_id: Some(req.id.clone()),
+        rssi: Some(req.rssi as i16),
+        service_uuids: vec![service_uuid],
+        raw_manufacturer_data: None,
+    };
+
+    info!("Pairing: connecting to {} ({})", req.name, req.address);
+    let conn = state.ble.connect(&info).await.map_err(|e| e.to_string())?;
+    info!("Pairing: connected");
+
+    // 2. Begin pairing - generate challenge
+    let challenge = state.session.begin_pairing().await.map_err(|e| e.to_string())?;
+    info!("Pairing: challenge generated");
+
+    // 3. Write challenge to watch
+    state.ble.write(&conn, challenge_char, &challenge.to_bytes()).await.map_err(|e| e.to_string())?;
+    info!("Pairing: challenge written");
+
+    // 4. Subscribe to response
+    let mut rx = state.ble.notify(&conn, response_char).await.map_err(|e| e.to_string())?;
+    info!("Pairing: subscribed to response");
+
+    // 5. Wait for response
+    let response_data = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        rx.recv()
+    ).await {
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            let _ = state.ble.disconnect(&conn).await;
+            return Err("Response channel closed".into());
+        }
+        Err(_) => {
+            let _ = state.ble.disconnect(&conn).await;
+            return Err("Timeout waiting for pairing response".into());
+        }
+    };
+
+    info!("Pairing: received {} bytes response", response_data.len());
+
+    // 6. Parse response: 64 sig + 1 user_present + rest pubkey (for pairing)
+    if response_data.len() < 65 {
+        let _ = state.ble.disconnect(&conn).await;
+        return Err(format!("Invalid response: {} bytes (expected at least 65)", response_data.len()));
+    }
+
+    let signature = response_data[..64].to_vec();
+    let user_present = response_data[64] != 0;
+
+    // For pairing, watch sends public key after signature + user_present
+    let public_key = if response_data.len() > 65 {
+        response_data[65..].to_vec()
+    } else {
+        let _ = state.ble.disconnect(&conn).await;
+        return Err("Pairing response missing public key".into());
+    };
+
+    let response = Response {
+        signature,
+        user_present,
+        timestamp: chrono::Utc::now(),
+    };
+
+    // 7. Complete pairing
+    state.session.complete_pairing(
+        req.name,
+        public_key,
+        Some(req.id.into_bytes()),
+        &response,
+        req.rssi as i16,
+        req.address,
+    ).await.map_err(|e| e.to_string())?;
+
+    info!("Pairing: completed successfully");
+
+    // 8. Disconnect
+    let _ = state.ble.disconnect(&conn).await;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -397,8 +490,7 @@ fn main() {
             });
             println!("[WristKey] AppState created");
 
-            // FIX: auto-start daemon so auto-unlock works immediately
-            // Use std::thread::spawn with own runtime because setup() may not have tokio runtime
+            // Auto-start daemon
             let state_for_daemon = state.clone();
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_multi_thread()
@@ -430,7 +522,7 @@ fn main() {
             app.manage(state);
             println!("[WristKey] state managed");
 
-            // Tray icon — SAFE: handle missing icon gracefully
+            // Tray icon
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu);
 
