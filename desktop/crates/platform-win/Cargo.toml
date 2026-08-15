@@ -1,12 +1,15 @@
 [package]
-name = "platform-win"
+name = "wristkey-platform-win"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 wristkey-core = { path = "../core" }
+wristkey-crypto = { path = "../crypto" }
+async-trait = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
+    "Win32_System_Shutdown",
 ] }

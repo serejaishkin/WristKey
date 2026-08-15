@@ -1,5 +1,5 @@
 [package]
-name = "platform-linux"
+name = "wristkey-platform-linux"
 version = "0.1.0"
 edition = "2021"
 
