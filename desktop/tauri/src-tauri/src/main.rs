@@ -363,34 +363,41 @@ fn main() {
             println!("[WristKey] AppState created");
 
             // FIX: auto-start daemon so auto-unlock works immediately
+            // Use std::thread::spawn with own runtime because setup() may not have tokio runtime
             let state_for_daemon = state.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                println!("[WristKey] auto-starting daemon...");
-                let mut daemon_guard = state_for_daemon.daemon.lock().await;
-                if daemon_guard.is_none() {
-                    let session = Arc::clone(&state_for_daemon.session);
-                    let platform = Arc::clone(&state_for_daemon.platform);
-                    match BtleplugAdapter::new().await {
-                        Ok(ble_adapter) => {
-                            let ble = Arc::new(ble_adapter);
-                            let conn_mgr = Arc::new(ConnectionManager::new());
-                            let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
-                            let handle = tokio::spawn(async move {
-                                if let Err(e) = daemon.run().await {
-                                    error!("Daemon error: {}", e);
-                                }
-                            });
-                            *daemon_guard = Some(handle);
-                            info!("Daemon auto-started on app launch");
-                            println!("[WristKey] daemon auto-started");
-                        }
-                        Err(e) => {
-                            error!("Failed to create BLE adapter for daemon: {}", e);
-                            println!("[WristKey] BLE adapter failed: {}", e);
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("daemon auto-start tokio runtime");
+                rt.block_on(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    println!("[WristKey] auto-starting daemon...");
+                    let mut daemon_guard = state_for_daemon.daemon.lock().await;
+                    if daemon_guard.is_none() {
+                        let session = Arc::clone(&state_for_daemon.session);
+                        let platform = Arc::clone(&state_for_daemon.platform);
+                        match BtleplugAdapter::new().await {
+                            Ok(ble_adapter) => {
+                                let ble = Arc::new(ble_adapter);
+                                let conn_mgr = Arc::new(ConnectionManager::new());
+                                let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
+                                let handle = tokio::spawn(async move {
+                                    if let Err(e) = daemon.run().await {
+                                        error!("Daemon error: {}", e);
+                                    }
+                                });
+                                *daemon_guard = Some(handle);
+                                info!("Daemon auto-started on app launch");
+                                println!("[WristKey] daemon auto-started");
+                            }
+                            Err(e) => {
+                                error!("Failed to create BLE adapter for daemon: {}", e);
+                                println!("[WristKey] BLE adapter failed: {}", e);
+                            }
                         }
                     }
-                }
+                });
             });
 
             app.manage(state);
