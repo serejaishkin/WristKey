@@ -53,7 +53,6 @@ class WristKeyBleService : Service() {
         val UNLOCK_REQUEST_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567895")
         val UNLOCK_RESPONSE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567896")
         val PAIRING_KEY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567897")
-        val SAMSUNG_SERVICE_UUID: UUID = UUID.fromString("0000fd50-0000-1000-8000-00805f9b34fb")
     }
 
     private val binder = LocalBinder()
@@ -199,19 +198,36 @@ class WristKeyBleService : Service() {
     fun startAdvertising() {
         val adapter = bluetoothAdapter ?: return
         if (advertiseCallback != null) return
+
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setConnectable(true).setTimeout(0)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH).build()
+            .setConnectable(true)
+            .setTimeout(0)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .build()
+
+        // Primary advertisement data — только UUID (31 байт лимит)
         val data = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
-            .addServiceUuid(ParcelUuid(SAMSUNG_SERVICE_UUID))
-            .setIncludeDeviceName(true).build()
+            .setIncludeDeviceName(false)  // Имя в scan response, не здесь
+            .build()
+
+        // Scan response — имя устройства + PIN
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .addServiceData(ParcelUuid(SERVICE_UUID), getAdvertisePin().toByteArray())
+            .build()
+
         val callback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) { Log.i(TAG, "Advertising started") }
-            override fun onStartFailure(errorCode: Int) { Log.e(TAG, "Advertising failed: $errorCode") }
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) { 
+                Log.i(TAG, "Advertising started (UUID: $SERVICE_UUID)") 
+            }
+            override fun onStartFailure(errorCode: Int) { 
+                Log.e(TAG, "Advertising failed: $errorCode") 
+            }
         }
-        adapter.bluetoothLeAdvertiser?.startAdvertising(settings, data, callback)
+
+        adapter.bluetoothLeAdvertiser?.startAdvertising(settings, data, scanResponse, callback)
         advertiseCallback = callback
     }
 
