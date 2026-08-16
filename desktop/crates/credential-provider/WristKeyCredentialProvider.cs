@@ -347,12 +347,20 @@ namespace WristKeyCredentialProvider
                         var request = new JObject();
                         request["action"] = "unlock";
                         request["user"] = Environment.UserName;
-                        writer.WriteLine(request.ToString(Newtonsoft.Json.Formatting.None));
+                        // WriteLine добавляет \r\n — daemon читает через from_slice и падает.
+                        // Используем Write + \n без \r.
+                        string json = request.ToString(Newtonsoft.Json.Formatting.None);
+                        writer.Write(json + "\n");
+                        writer.Flush();
                     }
                     using (StreamReader reader = new StreamReader(client, Encoding.UTF8))
                     {
-                        string responseJson = reader.ReadLine();
+                        string responseJson = reader.ReadToEnd().TrimEnd('\r', '\n', '\0');
+                        if (string.IsNullOrEmpty(responseJson))
+                            throw new Exception("Empty response from daemon");
                         var response = JsonConvert.DeserializeObject<UnlockResponse>(responseJson);
+                        if (response == null)
+                            throw new Exception("Failed to parse daemon response");
                         if (response.status == "success")
                         {
                             return response.password;

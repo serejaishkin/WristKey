@@ -22,6 +22,11 @@ if (-not (Test-Path $dir)) {
 
 if (-not (Test-Path $DllPath)) {
     Write-Error "DLL not found at $DllPath. Build the project first."
+    Write-Host ""
+    Write-Host "Build instructions:"
+    Write-Host "  1. Open WristKeyCredentialProvider.csproj in Visual Studio or use MSBuild"
+    Write-Host "  2. Build in Release mode (x64)"
+    Write-Host "  3. Copy output DLL to $DllPath"
     exit 1
 }
 
@@ -43,5 +48,8 @@ Set-ItemProperty -Path $cpPath -Name "(Default)" -Value $name
 Write-Host "WristKey Credential Provider registered successfully!" -ForegroundColor Green
 Write-Host "CLSID: $clsid" -ForegroundColor Cyan
 Write-Host "DLL: $DllPath" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "IMPORTANT: Ensure WristKey daemon is running before lock screen." -ForegroundColor Yellow
+Write-Host "  Start daemon: wristkeyd.exe or via Tauri app" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Restart your computer or run 'shutdown /r /t 0' to apply changes." -ForegroundColor Yellow

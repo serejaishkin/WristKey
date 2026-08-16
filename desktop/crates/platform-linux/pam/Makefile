@@ -1,17 +1,23 @@
-# Build PAM module for WristKey
+# Makefile for pam_wristkey.so
+
 CC = gcc
-CFLAGS = -Wall -fPIC -shared
+CFLAGS = -shared -fPIC -Wall -Wextra
 LDFLAGS = -lpam
 
-all: pam_wristkey.so
+TARGET = pam_wristkey.so
+SRC = pam_wristkey.c
 
-pam_wristkey.so: pam_wristkey.c
+all: $(TARGET)
+
+$(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-install: pam_wristkey.so
-	install -m 644 pam_wristkey.so /lib/security/
-	@echo "Add to /etc/pam.d/gdm-password or /etc/pam.d/sddm:"
-	@echo "  auth sufficient pam_wristkey.so"
-
 clean:
-	rm -f pam_wristkey.so
+	rm -f $(TARGET)
+
+install: $(TARGET)
+	cp $(TARGET) /lib/security/
+	@echo "Installed to /lib/security/$(TARGET)"
+	@echo "Add 'auth sufficient pam_wristkey.so' to /etc/pam.d/gdm-password (or your display manager)"
+
+.PHONY: all clean install
