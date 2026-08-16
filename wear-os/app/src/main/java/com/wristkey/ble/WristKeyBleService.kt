@@ -384,7 +384,11 @@ class WristKeyBleService : Service() {
 
     private fun registerUnlockReceiver() {
         val filter = IntentFilter("com.wristkey.UNLOCK_ACTION")
-        registerReceiver(unlockReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(unlockReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(unlockReceiver, filter)
+        }
     }
 
     private val unlockReceiver = object : BroadcastReceiver() {
@@ -405,7 +409,11 @@ class WristKeyBleService : Service() {
 
     private fun registerBluetoothStateReceiver() {
         val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
-        registerReceiver(bluetoothStateReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(bluetoothStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(bluetoothStateReceiver, filter)
+        }
     }
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
@@ -420,8 +428,12 @@ class WristKeyBleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopAdvertising(); stopGattServer()
-        unregisterReceiver(bluetoothStateReceiver)
-        unregisterReceiver(unlockReceiver)
+        try {
+            unregisterReceiver(bluetoothStateReceiver)
+        } catch (e: Exception) { Log.w(TAG, "unregisterReceiver failed", e) }
+        try {
+            unregisterReceiver(unlockReceiver)
+        } catch (e: Exception) { Log.w(TAG, "unregisterReceiver failed", e) }
         wakeLock?.let { if (it.isHeld) { it.release(); Log.i(TAG, "WakeLock released") } }
     }
 }
