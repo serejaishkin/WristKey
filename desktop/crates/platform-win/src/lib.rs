@@ -127,7 +127,7 @@ impl WindowsSecurity {
         "DPAPI (Windows Data Protection)"
     }
 
-    pub async fn ensure_dll_extracted() -> std::result::Result<std::path::PathBuf, String> {
+    pub async fn ensure_dll_extracted() -> std::result::Result<String, String> {
         Err("DLL extraction not yet implemented".to_string())
     }
 
@@ -144,7 +144,7 @@ impl WindowsSecurity {
 impl PlatformSecurity for WindowsSecurity {
     async fn lock_screen(&self) -> Result<()> {
         unsafe {
-            windows::Win32::System::Shutdown::LockWorkStation();
+            let _ = windows::Win32::System::Shutdown::LockWorkStation();
         }
         Ok(())
     }

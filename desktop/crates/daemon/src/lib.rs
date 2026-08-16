@@ -317,6 +317,9 @@ impl Daemon {
     }
 }
 
+// ============================================================
+// Named Pipe Server (Windows) for Credential Provider — REAL BLE UNLOCK
+// ============================================================
 #[cfg(windows)]
 pub mod pipe_server {
     use tokio::net::windows::named_pipe::{ServerOptions, NamedPipeServer};
@@ -325,9 +328,10 @@ pub mod pipe_server {
     use std::time::Duration;
     use tracing::{info, error, warn};
     use uuid::Uuid;
-    use wristkey_core::vault::{DeviceVault, UnlockRequest, UnlockResponse};
+    use wristkey_core::vault::{DeviceVault, KeyProtector, UnlockRequest, UnlockResponse};
     use wristkey_ble::{BleAdapter, PeripheralInfo};
     use tokio::time::{timeout, sleep};
+
     use crate::ConnectionManager;
 
     const UNLOCK_REQUEST_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567895";
@@ -339,7 +343,7 @@ pub mod pipe_server {
         ble: Arc<dyn BleAdapter>,
         conn_mgr: Arc<ConnectionManager>,
     ) {
-        let pipe_name = r"\\.\pipe\WristKeyUnlock";
+        let pipe_name = r"\.\pipe\WristKeyUnlock";
         loop {
             let server = match ServerOptions::new().create(pipe_name) {
                 Ok(s) => s,
@@ -399,7 +403,7 @@ pub mod pipe_server {
         ble: Arc<dyn BleAdapter>,
         conn_mgr: Arc<ConnectionManager>,
     ) -> Result<String, String> {
-        use wristkey_platform_win::{WindowsVault, WindowsKeyProtector};
+        use wristkey_platform_win::WindowsKeyProtector;
         use base64::{Engine as _, engine::general_purpose};
 
         let devices = session.list_paired_devices().await.map_err(|e| e.to_string())?;
@@ -442,7 +446,7 @@ pub mod pipe_server {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH).unwrap()
                 .as_millis() as u64,
-            user: format!("{}\{}",
+            user: format!("{}\\{}",
                 std::env::var("USERDOMAIN").unwrap_or_default(),
                 std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string())),
             device_id: device.id.to_string(),

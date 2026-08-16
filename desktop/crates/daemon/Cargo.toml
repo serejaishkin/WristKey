@@ -8,14 +8,6 @@ license = "MIT"
 name = "wristkey_daemon"
 path = "src/lib.rs"
 
-[[bin]]
-name = "wristkeyd"
-path = "src/main.rs"
-
-[[bin]]
-name = "wristkey-pair"
-path = "src/pair_gui.rs"
-
 [features]
 default = []
 tray = ["dep:tray-icon", "dep:winit"]
