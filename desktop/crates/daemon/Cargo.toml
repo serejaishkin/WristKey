@@ -8,12 +8,39 @@ license = "MIT"
 name = "wristkey_daemon"
 path = "src/lib.rs"
 
+[[bin]]
+name = "wristkeyd"
+path = "src/main.rs"
+
+[[bin]]
+name = "wristkey-pair"
+path = "src/pair_gui.rs"
+
 [features]
+default = []
+tray = ["dep:tray-icon", "dep:winit"]
 
 [dependencies]
 wristkey-core = { path = "../core" }
 wristkey-ble = { path = "../ble" }
+wristkey-platform-win = { path = "../platform-win" }
+wristkey-platform-linux = { path = "../platform-linux" }
+wristkey-platform-macos = { path = "../platform-macos" }
+wristkey-crypto = { path = "../crypto" }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = "1.0"
 chrono = { workspace = true }
 uuid = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
+tracing-appender = { workspace = true }
+directories = "5"
+base64 = "0.21"
+rand = { workspace = true }
+
+tray-icon = { version = "0.19", optional = true }
+winit = { version = "0.30", optional = true }
+eframe = "0.28"

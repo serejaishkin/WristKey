@@ -7,9 +7,14 @@ edition = "2021"
 wristkey-core = { path = "../core" }
 wristkey-crypto = { path = "../crypto" }
 async-trait = { workspace = true }
-windows = { version = "0.58", features = [
+tokio = { workspace = true, features = ["net", "io-util", "time", "fs"] }
+tracing = { workspace = true }
+winreg = { workspace = true }
+
+[dependencies.windows]
+version = "0.58"
+features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
-    "Win32_System_Memory",
-    "Win32_System_Shutdown",
-] }
+    "Win32_System_Threading",
+]
