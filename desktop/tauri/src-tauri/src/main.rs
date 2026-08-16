@@ -3,9 +3,9 @@ use tokio::sync::Mutex;
 use tauri::{Manager, State, RunEvent};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tracing::{info, warn, error};
+use tracing::{info, error};
 
-use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, MemoryStorage, PlatformSecurity, Response};
+use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, MemoryStorage, PlatformSecurity, Response};
 use wristkey_daemon::{Daemon, ConnectionManager};
 use wristkey_ble::{BleAdapter, BtleplugAdapter, MockBleAdapter, PeripheralInfo};
 
@@ -353,7 +353,8 @@ async fn get_logs() -> Result<Vec<String>, String> {
     Ok(vec!["Log viewing not yet implemented".to_string()])
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let log_dir = std::env::var("WRISTKEY_LOG_DIR")
         .map(|s| std::path::PathBuf::from(s))
         .unwrap_or_else(|_| {
@@ -364,7 +365,6 @@ fn main() {
     std::fs::create_dir_all(&log_dir).ok();
     LOG_DIR.set(log_dir.clone()).ok();
 
-    let log_file = log_dir.join("wristkey.log");
     let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkey.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
@@ -380,19 +380,14 @@ fn main() {
     let config = Config::from_file(&dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("WristKey/config.toml"))
         .unwrap_or_default();
 
-    let storage: Arc<dyn wristkey_core::Storage> = if cfg!(feature = "sqlite") {
-        Arc::new(SqliteStorage::new("wristkey.db").unwrap_or_else(|_| MemoryStorage::new()))
-    } else {
-        Arc::new(MemoryStorage::new())
-    };
+    let storage: Arc<dyn wristkey_core::Storage> = Arc::new(MemoryStorage::new());
 
     let crypto = Arc::new(EcdsaP256Crypto);
     let session = Arc::new(SessionManager::new(crypto, storage));
     let platform = create_platform_adapter(session.clone());
-    let ble: Arc<dyn BleAdapter> = if cfg!(feature = "mock-ble") {
-        Arc::new(MockBleAdapter::new())
-    } else {
-        Arc::new(BtleplugAdapter::new().unwrap_or_else(|_| MockBleAdapter::new()))
+    let ble: Arc<dyn BleAdapter> = match BtleplugAdapter::new().await {
+        Ok(adapter) => Arc::new(adapter),
+        Err(_) => Arc::new(MockBleAdapter::new()),
     };
 
     let app_state = Arc::new(AppState {
@@ -421,13 +416,13 @@ fn main() {
             get_log_dir,
         ])
         .setup(|app| {
-            let handle = app.handle().clone();
-            let app_state = handle.state::<Arc<AppState>>();
+            // Клонируем поля AppState ДО spawn, чтобы не заимствовать handle
+            let app_state: tauri::State<Arc<AppState>> = app.state();
+            let session = app_state.session.clone();
+            let ble = app_state.ble.clone();
+            let platform = app_state.platform.clone();
 
             tauri::async_runtime::spawn(async move {
-                let session = app_state.session.clone();
-                let ble = app_state.ble.clone();
-                let platform = app_state.platform.clone();
                 let conn_mgr = Arc::new(ConnectionManager::new());
                 let daemon = Daemon::new(session, ble, platform, conn_mgr);
                 if let Err(e) = daemon.run().await {
@@ -435,6 +430,7 @@ fn main() {
                 }
             });
 
+            let handle = app.handle().clone();
             let quit_item = MenuItem::with_id(&handle, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(&handle, &[&PredefinedMenuItem::separator(&handle)?, &quit_item])?;
 
