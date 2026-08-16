@@ -215,37 +215,24 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
     let mut rx = state.ble.notify(&conn, response_char).await.map_err(|e| e.to_string())?;
     info!("Pairing: subscribed to response");
 
-    let response_data = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        rx.recv()
-    ).await {
+    let response_data = match tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await {
         Ok(Some(d)) => d,
-        Ok(None) => {
+        _ => {
             let _ = state.ble.disconnect(&conn).await;
-            return Err("Response channel closed".into());
-        }
-        Err(_) => {
-            let _ = state.ble.disconnect(&conn).await;
-            return Err("Timeout waiting for pairing response".into());
+            return Err("Pairing response timeout".into());
         }
     };
 
-    info!("Pairing: received {} bytes response", response_data.len());
-
     if response_data.len() < 65 {
         let _ = state.ble.disconnect(&conn).await;
-        return Err(format!("Invalid response: {} bytes (expected at least 65)", response_data.len()));
+        return Err(format!("Pairing response too short: {} bytes", response_data.len()));
     }
 
     let signature = response_data[..64].to_vec();
     let user_present = response_data[64] != 0;
 
-    let public_key = if response_data.len() > 65 {
-        response_data[65..].to_vec()
-    } else {
-        let _ = state.ble.disconnect(&conn).await;
-        return Err("Pairing response missing public key".into());
-    };
+    let public_key = state.ble.read(&conn, challenge_char).await
+        .map_err(|e| format!("Failed to read public key: {}", e))?;
 
     let response = Response {
         signature,
@@ -259,10 +246,28 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
         Some(req.id.into_bytes()),
         &response,
         req.rssi as i16,
-        req.address,
+        req.address.clone(),
     ).await.map_err(|e| e.to_string())?;
 
     info!("Pairing: completed successfully");
+
+    // NEW: sync pairing key to watch
+    #[cfg(target_os = "windows")]
+    {
+        use wristkey_platform_win::WindowsVault;
+        let vault = WindowsVault::new();
+        let device = state.session.list_paired_devices().await
+            .map_err(|e| e.to_string())?
+            .into_iter().find(|d| d.address == req.address)
+            .ok_or("Paired device not found")?;
+        let pairing_key = vault.ensure_device(&device.id.to_string(), &device.name, &device.address)
+            .map_err(|e| e.to_string())?;
+        let pairing_key_char = uuid::Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567897").unwrap();
+        state.ble.write(&conn, pairing_key_char, &pairing_key).await
+            .map_err(|e| format!("Failed to send pairing key: {}", e))?;
+        info!("Pairing key sent to watch");
+    }
+
     let _ = state.ble.disconnect(&conn).await;
     Ok(())
 }
@@ -273,316 +278,198 @@ async fn forget_device(state: State<'_, Arc<AppState>>, id: String) -> Result<()
 }
 
 #[tauri::command]
-async fn calibrate_proximity(state: State<'_, Arc<AppState>>, id: String) -> Result<CalibrationResultDto, String> {
+async fn calibrate_device(state: State<'_, Arc<AppState>>, id: String) -> Result<CalibrationResultDto, String> {
     let (avg, threshold, samples) = state.session.calibrate_device(&id).await.map_err(|e| e.to_string())?;
     Ok(CalibrationResultDto { avg, threshold, samples })
 }
 
 #[tauri::command]
-async fn get_config(state: State<'_, Arc<AppState>>) -> Result<Config, String> {
-    let cfg = state.config.lock().await.clone();
-    Ok(cfg)
-}
-
-#[tauri::command]
-async fn set_config(state: State<'_, Arc<AppState>>, config: Config) -> Result<(), String> {
-    let mut cfg = state.config.lock().await;
-    *cfg = config;
+async fn start_daemon(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let mut daemon_guard = state.daemon.lock().await;
+    if daemon_guard.is_some() {
+        return Err("Daemon already running".into());
+    }
+    let session = state.session.clone();
+    let ble = state.ble.clone();
+    let platform = state.platform.clone();
+    let conn_mgr = Arc::new(ConnectionManager::new());
+    let daemon = Daemon::new(session, ble, platform, conn_mgr);
+    let handle = tokio::spawn(async move {
+        if let Err(e) = daemon.run().await {
+            error!("Daemon error: {}", e);
+        }
+    });
+    *daemon_guard = Some(handle);
+    info!("Daemon started");
     Ok(())
 }
 
 #[tauri::command]
-async fn toggle_daemon(state: State<'_, Arc<AppState>>, enabled: bool) -> Result<(), String> {
+async fn stop_daemon(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let mut daemon_guard = state.daemon.lock().await;
-    if enabled && daemon_guard.is_none() {
-        let session = Arc::clone(&state.session);
-        let platform = Arc::clone(&state.platform);
-        let ble = Arc::clone(&state.ble);
-        let conn_mgr = Arc::new(ConnectionManager::new());
-        let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
-        let handle = tokio::spawn(async move {
-            if let Err(e) = daemon.run().await {
-                error!("Daemon error: {}", e);
-            }
-        });
-        *daemon_guard = Some(handle);
-        info!("Daemon started");
-    } else if !enabled && daemon_guard.is_some() {
-        if let Some(handle) = daemon_guard.take() {
-            handle.abort();
-        }
+    if let Some(handle) = daemon_guard.take() {
+        handle.abort();
         info!("Daemon stopped");
     }
     Ok(())
 }
 
-#[tauri::command]
-async fn lock_screen(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.platform.lock_screen().await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn unlock_screen(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.platform.unlock_screen().await.map_err(|e| e.to_string())
-}
-
 #[cfg(target_os = "windows")]
 #[tauri::command]
 async fn set_windows_password(state: State<'_, Arc<AppState>>, password: String) -> Result<(), String> {
-    use wristkey_core::PasswordVault;
     use wristkey_platform_win::WindowsVault;
     let vault = WindowsVault::new();
-    let encrypted = vault.encrypt_password(&password).await.map_err(|e| e.to_string())?;
-
     let devices = state.session.list_paired_devices().await.map_err(|e| e.to_string())?;
     if let Some(device) = devices.first() {
-        state.session.set_device_password(device.id, encrypted).await.map_err(|e| e.to_string())?;
-        info!("Windows password encrypted and stored for device {}", device.id);
+        vault.set_password(&device.id.to_string(), &password).map_err(|e| e.to_string())?;
+        info!("Windows password stored in vault for device {}", device.id);
     } else {
         return Err("No paired device found. Pair a watch first.".into());
     }
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-#[tauri::command]
-async fn register_credential_provider() -> Result<(), String> {
-    let dll_path = WindowsSecurity::ensure_dll_extracted().await.map_err(|e| e.to_string())?;
-    WindowsSecurity::register_credential_provider(&dll_path.to_string_lossy()).map_err(|e| e.to_string())
-}
-
-#[cfg(target_os = "windows")]
-#[tauri::command]
-async fn unregister_credential_provider() -> Result<(), String> {
-    WindowsSecurity::unregister_credential_provider().map_err(|e| e.to_string())
-}
-
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-async fn set_windows_password(_password: String) -> Result<(), String> {
-    Err("Windows password only available on Windows".into())
+async fn set_windows_password(_state: State<'_, Arc<AppState>>, _password: String) -> Result<(), String> {
+    Err("Windows password storage is only available on Windows".into())
 }
 
-#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-async fn register_credential_provider() -> Result<(), String> {
-    Err("Credential Provider only available on Windows".into())
+async fn get_config(state: State<'_, Arc<AppState>>) -> Result<Config, String> {
+    let config = state.config.lock().await.clone();
+    Ok(config)
 }
 
-#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-async fn unregister_credential_provider() -> Result<(), String> {
-    Err("Credential Provider only available on Windows".into())
+async fn update_config(state: State<'_, Arc<AppState>>, new_config: Config) -> Result<(), String> {
+    let mut config = state.config.lock().await;
+    *config = new_config;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_logs() -> Result<Vec<String>, String> {
+    Ok(vec!["Log viewing not yet implemented".to_string()])
 }
 
 fn main() {
-    std::env::set_var("RUST_BACKTRACE", "1");
-    println!("[WristKey] main() started");
+    let log_dir = std::env::var("WRISTKEY_LOG_DIR")
+        .map(|s| std::path::PathBuf::from(s))
+        .unwrap_or_else(|_| {
+            let mut path = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+            path.push("WristKey/logs");
+            path
+        });
+    std::fs::create_dir_all(&log_dir).ok();
+    LOG_DIR.set(log_dir.clone()).ok();
 
-    let log_dir = directories::ProjectDirs::from("", "", "WristKey")
-        .map(|d| d.data_dir().to_path_buf().join("logs"))
-        .or_else(|| {
-            std::env::current_exe().ok()
-                .and_then(|p| p.parent().map(|d| d.join("logs")))
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("logs"));
-    let _ = std::fs::create_dir_all(&log_dir);
-    let _ = LOG_DIR.set(log_dir.clone());
-
-    let today = chrono::Local::now().format("%Y-%m-%d");
-    let actual_log_path = log_dir.join(format!("wristkey.{}", today));
-    println!("[WristKey] log path: {:?}", actual_log_path);
-
-    {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&actual_log_path) {
-            let _ = writeln!(f, "[{}] [WristKey] ---- process starting (pid {}) ----",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), std::process::id());
-        }
-    }
+    let log_file = log_dir.join("wristkey.log");
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "wristkey.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
-        .with_env_filter("info")
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_level(true)
+        .with_target(true)
         .init();
-    info!("WristKey started - logs at {:?}", actual_log_path);
-    println!("[WristKey] tracing initialized");
+
+    info!("WristKey starting up...");
+
+    let config = Config::from_file(&dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("WristKey/config.toml"))
+        .unwrap_or_default();
+
+    let storage: Arc<dyn wristkey_core::Storage> = if cfg!(feature = "sqlite") {
+        Arc::new(SqliteStorage::new("wristkey.db").unwrap_or_else(|_| MemoryStorage::new()))
+    } else {
+        Arc::new(MemoryStorage::new())
+    };
+
+    let crypto = Arc::new(EcdsaP256Crypto);
+    let session = Arc::new(SessionManager::new(crypto, storage));
+    let platform = create_platform_adapter(session.clone());
+    let ble: Arc<dyn BleAdapter> = if cfg!(feature = "mock-ble") {
+        Arc::new(MockBleAdapter::new())
+    } else {
+        Arc::new(BtleplugAdapter::new().unwrap_or_else(|_| MockBleAdapter::new()))
+    };
+
+    let app_state = Arc::new(AppState {
+        session: session.clone(),
+        config: Arc::new(Mutex::new(config)),
+        daemon: Arc::new(Mutex::new(None)),
+        platform,
+        ble,
+    });
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
-            println!("[WristKey] setup() started");
-
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)
-                .map_err(|e| { println!("[WristKey] MenuItem quit error: {}", e); e })?;
-            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)
-                .map_err(|e| { println!("[WristKey] MenuItem show error: {}", e); e })?;
-            let lock_i = MenuItem::with_id(app, "lock_now", "Lock Now", true, None::<&str>)
-                .map_err(|e| { println!("[WristKey] MenuItem lock error: {}", e); e })?;
-
-            let menu = Menu::with_items(app, &[
-                &show_i,
-                &PredefinedMenuItem::separator(app).map_err(|e| { println!("[WristKey] separator error: {}", e); e })?,
-                &lock_i,
-                &PredefinedMenuItem::separator(app).map_err(|e| { println!("[WristKey] separator error: {}", e); e })?,
-                &quit_i,
-            ]).map_err(|e| { println!("[WristKey] Menu error: {}", e); e })?;
-            println!("[WristKey] tray menu created");
-
-            println!("[WristKey] creating storage...");
-            let storage: Arc<dyn wristkey_core::Storage> = match SqliteStorage::open_default() {
-                Ok(s) => Arc::new(s),
-                Err(e) => {
-                    println!("[WristKey] SQLite failed ({}), using memory storage", e);
-                    Arc::new(MemoryStorage::new())
-                }
-            };
-            println!("[WristKey] storage created");
-
-            println!("[WristKey] creating crypto...");
-            let crypto = Arc::new(EcdsaP256Crypto);
-            println!("[WristKey] creating session...");
-            let session = Arc::new(SessionManager::new(crypto, storage));
-            println!("[WristKey] creating platform adapter...");
-            let platform = create_platform_adapter(session.clone());
-            println!("[WristKey] platform adapter created");
-
-            // Start pipe server early (Windows only) -- lazy singleton, safe to call multiple times
-            #[cfg(target_os = "windows")]
-            {
-                WindowsSecurity::start_pipe_server();
-                println!("[WristKey] pipe server started");
-            }
-
-            println!("[WristKey] creating BLE adapter...");
-            let ble: Arc<dyn BleAdapter> = match tauri::async_runtime::block_on(BtleplugAdapter::new()) {
-                Ok(adapter) => {
-                    println!("[WristKey] BLE adapter ready");
-                    Arc::new(adapter)
-                }
-                Err(e) => {
-                    println!("[WristKey] BLE adapter failed ({}), using mock", e);
-                    Arc::new(MockBleAdapter::new())
-                }
-            };
-
-            let state = Arc::new(AppState {
-                session: session.clone(),
-                config: Arc::new(Mutex::new(Config::default())),
-                daemon: Arc::new(Mutex::new(None)),
-                platform: platform.clone(),
-                ble: ble.clone(),
-            });
-            println!("[WristKey] AppState created");
-
-            // Auto-start daemon
-            let state_for_daemon = state.clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .expect("daemon auto-start tokio runtime");
-                rt.block_on(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    println!("[WristKey] auto-starting daemon...");
-                    let mut daemon_guard = state_for_daemon.daemon.lock().await;
-                    if daemon_guard.is_none() {
-                        let session = Arc::clone(&state_for_daemon.session);
-                        let platform = Arc::clone(&state_for_daemon.platform);
-                        let ble = Arc::clone(&state_for_daemon.ble);
-                        let conn_mgr = Arc::new(ConnectionManager::new());
-                        let daemon = Arc::new(Daemon::new(session, ble, platform, conn_mgr));
-                        let handle = tokio::spawn(async move {
-                            if let Err(e) = daemon.run().await {
-                                error!("Daemon error: {}", e);
-                            }
-                        });
-                        *daemon_guard = Some(handle);
-                        info!("Daemon auto-started on app launch");
-                        println!("[WristKey] daemon auto-started");
-                    }
-                });
-            });
-
-            app.manage(state);
-            println!("[WristKey] state managed");
-
-            let mut tray_builder = TrayIconBuilder::new()
-                .menu(&menu);
-
-            if let Some(icon) = app.default_window_icon() {
-                tray_builder = tray_builder.icon(icon.clone());
-                println!("[WristKey] tray icon set");
-            } else {
-                println!("[WristKey] WARNING: no default window icon");
-            }
-
-            let _tray = tray_builder
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "lock_now" => {
-                        let state_clone: Arc<AppState> = Arc::clone(&*app.state::<Arc<AppState>>());
-                        tokio::spawn(async move {
-                            if let Err(e) = state_clone.platform.lock_screen().await {
-                                warn!("Tray lock failed: {}", e);
-                            }
-                        });
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { .. } = event {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)
-                .map_err(|e| { println!("[WristKey] Tray build error: {}", e); e })?;
-            println!("[WristKey] tray built successfully");
-
-            println!("[WristKey] setup() complete");
-            Ok(())
-        })
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_paired_devices,
             scan_devices,
             pair_device,
             forget_device,
-            calibrate_proximity,
-            get_config,
-            set_config,
-            toggle_daemon,
-            lock_screen,
-            unlock_screen,
+            calibrate_device,
+            start_daemon,
+            stop_daemon,
             set_windows_password,
-            register_credential_provider,
-            unregister_credential_provider,
+            get_config,
+            update_config,
+            get_logs,
             get_log_dir,
         ])
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let app_state = handle.state::<Arc<AppState>>();
+
+            tauri::async_runtime::spawn(async move {
+                let session = app_state.session.clone();
+                let ble = app_state.ble.clone();
+                let platform = app_state.platform.clone();
+                let conn_mgr = Arc::new(ConnectionManager::new());
+                let daemon = Daemon::new(session, ble, platform, conn_mgr);
+                if let Err(e) = daemon.run().await {
+                    error!("Background daemon error: {}", e);
+                }
+            });
+
+            let quit_item = MenuItem::with_id(&handle, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(&handle, &[&PredefinedMenuItem::separator(&handle)?, &quit_item])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(handle.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    if event.id().as_ref() == "quit" {
+                        app.exit(0);
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::DoubleClick { .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(&handle)?;
+
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.hide().unwrap();
+                window.hide().ok();
                 api.prevent_close();
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app_handle, event| match event {
-            RunEvent::ExitRequested { api, code, .. } => {
-                if code != Some(0) {
-                    api.prevent_exit();
-                }
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| {
+            if let RunEvent::ExitRequested { api, .. } = event {
+                api.prevent_exit();
             }
-            _ => {}
         });
 }

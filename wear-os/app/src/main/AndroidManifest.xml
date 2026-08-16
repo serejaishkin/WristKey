@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.wristkey">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
@@ -10,49 +11,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <uses-feature android:name="android.hardware.type.watch" />
 
     <application
-        android:name=".app.WristKeyApp"
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
-        android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">
-
-        <uses-library
-            android:name="com.google.android.wearable"
-            android:required="true" />
-
-        <meta-data
-            android:name="com.google.android.wearable.standalone"
-            android:value="true" />
-
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:keepScreenOn="true"
-            android:theme="@android:style/Theme.DeviceDefault">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".SettingsActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.DeviceDefault" />
-
-        <activity
-            android:name=".ui.UnlockActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.DeviceDefault" />
 
         <service
             android:name=".ble.WristKeyBleService"
@@ -60,15 +29,26 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
-        <receiver
-            android:name=".boot.BootReceiver"
-            android:enabled="true"
+        <activity
+            android:name=".MainActivity"
             android:exported="true"
-            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            android:keepScreenOn="true"
+            android:launchMode="singleTask">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </receiver>
+        </activity>
+
+        <activity
+            android:name=".ui.UnlockActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog"
+            android:keepScreenOn="true" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
     </application>
 </manifest>

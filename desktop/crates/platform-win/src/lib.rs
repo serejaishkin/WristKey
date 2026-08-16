@@ -7,7 +7,6 @@ use windows::Win32::Security::Cryptography::{
 };
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 
-/// Windows DPAPI protector for the 32-byte pairingKey.
 pub struct WindowsKeyProtector;
 
 impl KeyProtector for WindowsKeyProtector {
@@ -43,7 +42,6 @@ impl KeyProtector for WindowsKeyProtector {
     }
 }
 
-/// High-level vault — same interface as before, but uses DeviceVault internally.
 pub struct WindowsVault {
     vault: DeviceVault<WindowsKeyProtector>,
 }
@@ -82,16 +80,30 @@ impl WindowsVault {
             .map_err(|e| e.to_string())
     }
 
-    /// Async encrypt password (backward-compat for main.rs).
     pub async fn encrypt_password(&self, password: &str) -> std::result::Result<Vec<u8>, String> {
-        // For now: store and return dummy encrypted blob (main.rs uses this for CP pipe)
         let pairing_key = generate_key();
         let encrypted = wristkey_crypto::encrypt(password.as_bytes(), &pairing_key);
         Ok(encrypted)
     }
+
+    pub fn ensure_device(&self, device_id: &str, name: &str, ble_address: &str) -> std::result::Result<[u8; 32], String> {
+        self.vault.ensure_device(
+            device_id.to_string(),
+            name.to_string(),
+            std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string()),
+            ble_address.to_string(),
+        ).map_err(|e| e.to_string())
+    }
+
+    pub fn set_password(&self, device_id: &str, password: &str) -> std::result::Result<(), String> {
+        self.vault.set_password(device_id, password).map_err(|e| e.to_string())
+    }
+
+    pub fn get_pairing_key(&self, device_id: &str) -> std::result::Result<[u8; 32], String> {
+        self.vault.get_pairing_key(device_id).map_err(|e| e.to_string())
+    }
 }
 
-/// Platform security adapter for Windows.
 pub struct WindowsSecurity {
     session: Option<Arc<SessionManager>>,
 }
@@ -105,13 +117,9 @@ impl WindowsSecurity {
         self.session = Some(session);
     }
 
-    /// Lazy pipe server — starts on first unlock request from CP.
-    pub fn start_pipe_server() {
-        // TODO: implement named pipe server when CP integration is needed
-    }
+    pub fn start_pipe_server() {}
 
     pub fn is_credential_provider_registered() -> bool {
-        // TODO: check registry
         false
     }
 
@@ -120,17 +128,14 @@ impl WindowsSecurity {
     }
 
     pub async fn ensure_dll_extracted() -> std::result::Result<std::path::PathBuf, String> {
-        // TODO: extract embedded DLL
         Err("DLL extraction not yet implemented".to_string())
     }
 
     pub fn register_credential_provider(_dll_path: &str) -> std::result::Result<(), String> {
-        // TODO: registry manipulation
         Ok(())
     }
 
     pub fn unregister_credential_provider() -> std::result::Result<(), String> {
-        // TODO: registry cleanup
         Ok(())
     }
 }
