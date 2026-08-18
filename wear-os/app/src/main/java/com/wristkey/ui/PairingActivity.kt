@@ -23,10 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.TimeText
-import androidx.wear.compose.material.AppScaffold
 import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
 
@@ -65,40 +64,38 @@ class PairingActivity : ComponentActivity() {
             }
 
             MaterialTheme {
-                AppScaffold {
-                    TimeText()
-                    Column(
-                        modifier = Modifier.fillMaxSize().padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text("Pair WristKey", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
-                        Spacer(Modifier.height(8.dp))
-                        Text(pcName, textAlign = TextAlign.Center)
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            if (ready) "Allow this PC to use your watch?" else "Waiting for the PC...",
-                            textAlign = TextAlign.Center
-                        )
-                        error?.let {
-                            Spacer(Modifier.height(6.dp))
-                            Text(it, textAlign = TextAlign.Center)
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        Button(
-                            onClick = {
-                                val ok = service?.confirmPairing() == true
-                                if (ok) finish() else error = "No pairing challenge received"
-                            },
-                            enabled = ready,
-                            modifier = Modifier.fillMaxWidth(0.85f)
-                        ) { Text("Allow") }
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { service?.rejectPairing(); finish() },
-                            modifier = Modifier.fillMaxWidth(0.85f)
-                        ) { Text("Cancel") }
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("Pair WristKey", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(8.dp))
+                    Text(pcName, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (ready) "Allow this PC to use your watch?" else "Waiting for the PC...",
+                        textAlign = TextAlign.Center
+                    )
+                    error?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, textAlign = TextAlign.Center)
                     }
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val ok = service?.confirmPairing() == true
+                            if (ok) finish() else error = "No pairing challenge received"
+                        },
+                        enabled = ready,
+                        modifier = Modifier.fillMaxWidth(0.85f)
+                    ) { Text("Allow") }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { service?.rejectPairing(); finish() },
+                        colors = ButtonDefaults.secondaryButtonColors(),
+                        modifier = Modifier.fillMaxWidth(0.85f)
+                    ) { Text("Cancel") }
                 }
             }
         }
