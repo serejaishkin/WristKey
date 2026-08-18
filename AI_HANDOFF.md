@@ -88,28 +88,74 @@ wear-os/app/src/main/java/com/wristkey/
 
 ### 1.3 GATT protocol
 
+Базовые UUID:
+
 ```text
 Service UUID:    a1b2c3d4-e5f6-7890-abcd-ef1234567890
 CHALLENGE_CHAR:  a1b2c3d4-e5f6-7890-abcd-ef1234567891
 RESPONSE_CHAR:   a1b2c3d4-e5f6-7890-abcd-ef1234567892
-STATUS_CHAR:     a1b2c3d4-e5f6-7890-abcd-ef1234567893
+PUBLIC_KEY_CHAR: a1b2c3d4-e5f6-7890-abcd-ef1234567893
 CONFIG_CHAR:     a1b2c3d4-e5f6-7890-abcd-ef1234567894
+UNLOCK_REQUEST:  a1b2c3d4-e5f6-7890-abcd-ef1234567895
+UNLOCK_RESPONSE: a1b2c3d4-e5f6-7890-abcd-ef1234567896
+PAIRING_KEY:     a1b2c3d4-e5f6-7890-abcd-ef1234567897
+PC_NAME:         a1b2c3d4-e5f6-7890-abcd-ef1234567898
 ```
 
-Response:
+`RESPONSE_CHAR` и `UNLOCK_RESPONSE` используют `NOTIFY` + стандартный CCCD `0x2902`. Windows/btleplug должен сначала выполнить `subscribe()`, затем challenge/write.
+
+Публичный ключ теперь читается отдельной `PUBLIC_KEY_CHAR`, а не должен встраиваться в response. На Wear OS он берётся из существующего Android Keystore `KeyStoreManager` и должен соответствовать ключу, которым подписывается challenge.
+
+Pairing response текущей Wear OS реализации:
 
 ```text
-signature(64) || user_present_flag(1) || public_key(65)
+ECDSA signature || user_present_flag(1)
 ```
+
+**Важно:** предыдущая запись `signature(64) || user_present_flag(1) || public_key(65)` относится к старой протокольной схеме и заменена текущей отдельной `PUBLIC_KEY_CHAR`. Не возвращать public key в response без подтверждённой необходимости.
 
 Public key — raw SEC1 `0x04 || X || Y`, не X.509 DER.
 
 Advertising:
 
 - primary packet — manufacturer data `0xFFFF`, PIN;
-- scan response — service UUID + PIN + 4-byte `device_id` fingerprint.
+- scan response — device name/дополнительные данные в рамках legacy BLE лимита.
 
 PIN — только визуальная sanity-проверка, не криптографический фактор.
+
+### 1.4 Текущий BLE pairing flow
+
+Текущая схема должна быть:
+
+```text
+Windows scan
+  ↓
+stop scan
+  ↓
+BLE connect
+  ↓
+GATT discovery
+  ↓
+subscribe RESPONSE (CCCD 0x2902)
+  ↓
+read PUBLIC_KEY
+  ↓
+write challenge
+  ↓
+Watch показывает Pair WristKey
+  ↓
+USER: Allow / Cancel
+  ↓
+Watch signs challenge
+  ↓
+notify RESPONSE to connected PC
+  ↓
+Windows verifies signature
+  ↓
+pairing complete
+```
+
+**Не использовать системное Windows Bluetooth Pairing как механизм WristKey pairing.** Наше pairing — прикладной GATT/crypto flow. Если Windows показывает системный диалог Bluetooth Pairing, это отдельная проблема, которую нужно диагностировать, а не считать успешным WristKey pairing.
 
 ---
 
@@ -130,6 +176,8 @@ PIN — только визуальная sanity-проверка, не крип
 | — | Мусорные `desktop/lib.rs`, `lib (2/3/4).rs` | desktop | Периодически появляются, Cargo их не использует |
 | — | Два pipe server давали `Access denied` | platform-win | Исправлено lazy singleton / явный start |
 | — | Старый `wear-os/app/.../app/MainActivity.kt` | Wear OS | Мёртвый файл, удалять; активный путь `com/wristkey/MainActivity.kt` |
+| — | Windows `subscribe()` падал `HRESULT(0x80650003) / Не удается записать атрибут` | Wear OS GATT | Исправлено: добавлен CCCD `0x2902` к notify characteristics |
+| — | После subscribe Windows не мог читать public key | Wear OS GATT | Исправлено в Git: добавлена `PUBLIC_KEY_CHAR` + READ из KeyStore |
 
 ---
 
@@ -180,6 +228,63 @@ Credential Provider — отдельный C#/.NET COM проект. Для lock
 
 В текущем Git `platform-macos/src/lib.rs` есть cfg-gated Keychain protector и PAM proof handler с 5-секундным окном. Реальная интеграция на macOS ещё требует проверки на macOS.
 
+### 3.7 Текущий BLE pairing blocker
+
+На реальном Galaxy Watch4 последняя подтверждённая тестовая цепочка дошла до:
+
+```text
+PC → connect
+PC → GATT discovery
+PC → subscribe RESPONSE
+PC → pairing flow
+Watch → Pairing request
+Watch → Allow
+```
+
+Предыдущая ошибка:
+
+```text
+Pairing failed: ble error: subscribe: Error {
+  code: HRESULT(0x80650003),
+  message: "Не удается записать атрибут."
+}
+```
+
+была вызвана отсутствием CCCD у notification characteristics и исправлена.
+
+Следующая подтверждённая ошибка до последнего фикса была:
+
+```text
+Pairing failed: Failed to read public key:
+ble error: read: Windows UWP threw error on read: GattReadResult(...)
+```
+
+Причина была подтверждена в коде: desktop ожидал public key, а GATT server не предоставлял отдельную READ characteristic. В коммите `05c95b5` добавлена `PUBLIC_KEY_CHAR` и чтение реального public key из Android Keystore.
+
+**Статус после `05c95b5`: НЕ ПРОТЕСТИРОВАНО пользователем.** Следующий тест должен подтвердить, что `read public key` проходит.
+
+### 3.8 Pairing UI на часах
+
+В `PairingActivity` добавлен отдельный экран подтверждения. Он должен показывать:
+
+```text
+Pair WristKey
+Windows PC
+Allow this PC?
+[ALLOW]
+[CANCEL]
+```
+
+Экран рассчитан на маленький экран Wear OS; добавлен scroll как страховка. Пользователь ранее сообщил, что без scroll кнопка Allow уходила вниз — это было исправлено.
+
+После `Allow` часы должны отправить подпись challenge + `user_present=1` через `RESPONSE_CHAR`.
+
+### 3.9 Windows системный Bluetooth pairing
+
+Пользователь сообщил, что после сброса pairing на часах Windows иногда сразу показывает системный запрос Bluetooth pairing. Это **не является желаемым механизмом WristKey pairing**.
+
+Не считать системное Bluetooth pairing успешным. Нужно выяснить, почему Windows UWP/btleplug инициирует системное pairing для текущего GATT сценария, если оно повторится после успешного `PUBLIC_KEY` read.
+
 ---
 
 ## 4. Проверка перед изменениями
@@ -210,6 +315,8 @@ cargo tauri build
 ```
 
 Не считать «собралось» доказательством работоспособности BLE, unlock или Credential Provider.
+
+Для текущего Wear OS BLE blocker обязательно тестировать на реальном Galaxy Watch4, потому что Windows UWP/btleplug и Android GATT Server дают device-specific поведение, которое обычный compile не проверяет.
 
 ---
 
@@ -398,105 +505,107 @@ Pipe create error: Отказано в доступе
 
 Это последние известные направления диагностики. Не начинать с нуля поиск проблемы discovery/calibration, пока не проверены эти места.
 
-### 6.11 2026-08-16 — состояние после загрузки нового архива
+### 6.11 2026-08-18 — BLE pairing на Galaxy Watch4: от connect до public-key read
 
-На момент этой записи:
+Это текущая контрольная точка ветки `fix/wristkey-20260818`.
 
-**Подтверждено текущим Git:**
+#### 6.11.1 Discovery / connection
 
-- Tauri + SQLite архитектура;
-- daemon содержит crypto unlock path;
-- `session.verify_unlock()` находится в реальном unlock flow;
-- Windows named pipe server существует;
-- Linux PAM proof handler существует;
-- macOS PAM proof handler и Keychain protector существуют;
-- текущий Wear OS `MainActivity.kt` использует active `WristKeyBleService` и отображает PIN/status/paired PC.
-
-**Подтверждено последними чатами, но требует реального device/Windows теста:**
-
-- корректность calibration;
-- отсутствие конфликтов нескольких BLE adapters;
-- реальный unlock Windows;
-- появление Credential Provider tile на lock screen;
-- сохранение работы Wear OS service после гашения экрана;
-- отображение MAC часов и имени текущего ПК на часах.
-
-**Следующий инженерный приоритет:**
-
-1. не переписывать архитектуру снова;
-2. исправить BLE discovery/connection lifecycle и multiple-adapter проблему;
-3. привести RSSI smoother/calibration к одному источнику baseline и одному BLE connection lifecycle;
-4. проверить реальный crypto unlock на Windows;
-5. отдельно довести Credential Provider до реально видимой lock-screen tile;
-6. затем довести Wear OS UI с MAC/PC name и устойчивостью после screen-off.
-
----
-
-## 7. Источники истории
-
-История собиралась из архивных чатов, включая старые документы и новый архив `обновить.zip`.
-
-Новый архив содержит:
-
-- `ZIP-замена.docx` — серия полных replacement patches и compile fixes;
-- `Продолжение проекта WristKey.docx` — план фаз vault/BLE/CP/PAM/Wear OS и промежуточный unlock pipe;
-- `fix claud2.docx` — свежая проверка Git, crypto unlock, RSSI/calibration, BLE adapter conflicts и Wear OS UI;
-- `WristKey проект завершение.docx` — Windows CP, pipe access denied, Wear OS screen-off и lock-screen tile.
-
-Старые документы из предыдущего архива не удаляются и не заменяются этим архивом.
-
----
-
-## 8. Жёсткое правило для следующего Kimi
-
-Используй этот порядок при каждой новой сессии:
+Пользователь тестирует реальный Samsung Galaxy Watch4. На Windows устройство появляется примерно как:
 
 ```text
-1. Скачать/прочитать актуальный GitHub.
-2. Прочитать AI_HANDOFF.md.
-3. Прочитать ПРИКРЕПЛЁННЫЙ ПОСЛЕДНИЙ ЧАТ.
-4. Сравнить утверждения последнего чата с текущим Git.
-5. Если деталей не хватает — искать конкретную информацию в docs/.
-6. Определить точку, где реально остановились.
-7. Продолжить работу, а не начинать проект заново.
+Galaxy Watch4 (N5XN)
+RSSI: -75 dBm
+6A:61:5D:62:88:BB
 ```
 
-**Критически:** последний прикреплённый чат может быть новее `AI_HANDOFF.md`. Это нормально.
+Имя часов ранее появлялось нестабильно. Важно не считать BLE address постоянным identity из-за возможной BLE Privacy/randomization.
 
-Если чат содержит фикс, которого нет в Git — не считать его применённым.
+В `ConnectionManager` добавлена остановка active scan перед connect и retry до 4 раз с возрастающей задержкой. Цель — убрать Samsung/Windows ситуацию, когда устройство уже найдено, но GATT connect завершается `Not connected`.
 
-Если Git содержит изменение, которого нет в AI_HANDOFF — считать Git актуальным, а при следующей значимой контрольной точке добавить его в handoff.
+#### 6.11.2 Wear OS pairing UI
 
-Если старое решение оказалось неправильным — не удалять его из истории. Добавить:
+Добавлен `PairingActivity`. Теперь при подключении нового ПК/получении challenge часы действительно показывают запрос подтверждения. Пользователь подтвердил, что на часах появляется `Pairing request`.
+
+Проблема с кнопкой `Allow`, уходившей за нижнюю границу экрана, исправлена переработкой UI под маленький Wear OS display и добавлением scroll fallback.
+
+#### 6.11.3 CCCD / subscribe
+
+Первоначально Windows падал на:
 
 ```text
-ОТМЕНЕНО:
-...
-
-НОВОЕ РЕШЕНИЕ:
-...
-
-ПОЧЕМУ:
-...
+Pairing failed: ble error: subscribe: Error {
+  code: HRESULT(0x80650003),
+  message: "Не удается записать атрибут."
+}
 ```
 
-Не читать весь `docs/` без необходимости: это архив, а не обязательный полный контекст.
+Причина: notification characteristics не имели стандартного CCCD descriptor `00002902-0000-1000-8000-00805f9b34fb`.
 
-Не заявлять «работает», если была только компиляция. Для BLE, Wear OS, Windows Lock Screen и Credential Provider нужен реальный тест.
+В `WristKeyBleService.kt` CCCD добавлен к `RESPONSE_CHAR` и `UNLOCK_RESPONSE`, а `onDescriptorWriteRequest()` обрабатывает запись CCCD.
 
----
+После этого ошибка `subscribe` исчезла в тесте и flow дошёл дальше до чтения public key.
 
-## 9. Правило сохранения истории — APPEND-ONLY
+#### 6.11.4 Public key GATT characteristic
 
-1. Никогда не удалять старые записи из раздела 6.
-2. Новая рабочая сессия — новый подраздел с датой.
-3. Исправление старого решения не стирает старое решение.
-4. Текущую архитектуру держать в разделах 0–5.
-5. Историю решений держать в разделе 6.
-6. `docs/` хранит подробную переписку; `AI_HANDOFF.md` хранит инженерный итог.
-7. При обновлении фиксировать отдельно:
-   - что подтверждено Git;
-   - что подтверждено последним чатом;
-   - что остаётся гипотезой;
-   - что стало неактуальным;
-   - какой следующий конкретный шаг.
+Следующая ошибка была:
+
+```text
+Pairing failed: Failed to read public key:
+ble error: read: Windows UWP threw error on read: GattReadResult(...)
+```
+
+Причина: desktop ожидал public key, но Wear OS GATT server не предоставлял отдельный READ attribute для него.
+
+Коммит `05c95b5` добавил:
+
+```text
+PUBLIC_KEY_CHAR_UUID = a1b2c3d4-e5f6-7890-abcd-ef1234567893
+```
+
+Характеристика имеет `PROPERTY_READ`/`PERMISSION_READ`. Значение берётся из `KeyStoreManager` и должно быть raw SEC1 public key.
+
+**Важно: после `05c95b5` пользователь ещё не подтвердил повторный тест. Поэтому считать `read public key fixed` кодовым исправлением, но не подтверждённым hardware result.**
+
+#### 6.11.5 Current next test
+
+После установки APK из последнего коммита нужно проверить чистый pairing:
+
+1. обновить `fix/wristkey-20260818`;
+2. `./gradlew clean`;
+3. `./gradlew :app:assembleDebug`;
+4. установить APK на Galaxy Watch4;
+5. сбросить старое WristKey pairing на часах;
+6. при необходимости удалить старую системную Bluetooth запись Windows;
+7. запустить desktop daemon;
+8. выполнить pairing.
+
+Ожидаемая последовательность:
+
+```text
+connect
+→ GATT discovery
+→ subscribe RESPONSE
+→ read PUBLIC_KEY
+→ write challenge
+→ PairingActivity
+→ Allow
+→ signature + user_present
+→ Windows verification
+```
+
+Если `read PUBLIC_KEY` проходит, следующий ожидаемый blocker может быть в формате ECDSA signature. Android `SHA256withECDSA` потенциально возвращает DER-encoded ECDSA signature, тогда как desktop protocol исторически ожидал fixed-size `r || s` (64 bytes). Это **пока предположение**, не считать подтверждённой ошибкой до следующего теста.
+
+Если после `Allow` возникает `auth response too short` или `invalid signature`, первым делом сравнить фактическую длину/байты response на Windows и Android, затем привести формат подписи к единому protocol representation.
+
+#### 6.11.6 Windows system Bluetooth pairing
+
+Пользователь сообщил, что после сброса pairing на часах Windows иногда сразу предлагает системное Bluetooth pairing. Это не должно считаться успехом WristKey pairing. Если повторится после прохождения `PUBLIC_KEY` read, исследовать btleplug/UWP pairing state и свойства GATT service отдельно.
+
+#### 6.11.7 Recent commits on current branch
+
+- `fix/wristkey-20260818`: основной рабочий branch для текущей BLE pairing отладки.
+- `05c95b5` — `fix: expose watch public key over GATT`.
+- Ранее в этой ветке добавлялись CCCD/targeted notifications, retry connect/stop scan и `PairingActivity`.
+
+**Не мержить `fix/wristkey-20260818` в `main`, пока реальный Galaxy Watch4 pairing не пройдёт end-to-end.**
