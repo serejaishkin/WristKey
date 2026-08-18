@@ -412,7 +412,7 @@ fun PairedDevicesScreen(
                 items(devices.size) { index ->
                     val deviceId = devices[index]
                     Chip(
-                        label = { Text(deviceId.take(8) + "...") },
+                        label = { Text(deviceId) },
                         secondaryLabel = { Text("Paired") },
                         onClick = {
                             settings.removePairedDevice(deviceId)

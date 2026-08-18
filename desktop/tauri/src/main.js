@@ -110,19 +110,28 @@ async function scanDevices() {
         const found = await invoke('scan_devices');
         const list = document.getElementById('scanList');
         list.innerHTML = '';
-        if (found.length === 0) {
-            list.innerHTML = '<div class="empty-state">No devices found. Make sure watch app is open.</div>';
+        
+        // Deduplicate devices by address
+        const uniqueDevices = new Map();
+        found.forEach(d => {
+            if (!uniqueDevices.has(d.address) || (d.rssi > uniqueDevices.get(d.address).rssi)) {
+                uniqueDevices.set(d.address, d);
+            }
+        });
+        const deduplicated = Array.from(uniqueDevices.values());
+        
+        if (deduplicated.length === 0) {
+            list.innerHTML = '<div class="empty-state">No WristKey devices found. Make sure watch app is open and advertising.</div>';
         } else {
-            found.forEach(d => {
+            deduplicated.forEach(d => {
                 const div = document.createElement('div');
                 div.className = 'device-card';
-                div.innerHTML = `
-                    <div class="device-info">
+                const pinDisplay = d.pin ? `<span style="color:#00ff00;font-weight:bold;font-size:16px;">PIN: ${d.pin}</span>` : '';
+                div.innerHTML = `<div class="device-info">
                         <h4>${d.name}</h4>
-                        <p>RSSI: ${d.rssi} dBm • ${d.address}</p>
+                        <p>${pinDisplay} RSSI: ${d.rssi} dBm • ${d.address}</p>
                     </div>
-                    <button class="btn" onclick="pairDevice('${d.id}', '${d.name.replace(/'/g, "\\'")}', ${d.rssi}, '${d.address}')">🔗 Pair</button>
-                `;
+                    <button class="btn" onclick="pairDevice('${d.id}', '${d.name.replace(/'/g, "\\'")}', ${d.rssi}, '${d.address}', this)">🔗 Pair</button>`;
                 list.appendChild(div);
             });
         }
@@ -134,14 +143,23 @@ async function scanDevices() {
     }
 }
 
-async function pairDevice(id, name, rssi, address) {
+async function pairDevice(id, name, rssi, address, btnElement) {
     try {
+        // Show waiting state
+        const btn = btnElement || event.target;
+        btn.disabled = true;
+        btn.textContent = '⏳ Waiting for watch confirmation...';
+        
         await invoke('pair_device', { req: { id, name, rssi, address } });
         alert('✅ Paired successfully!');
         await refreshDevices();
         await refreshStatus();
     } catch (e) {
         alert('❌ Pairing failed: ' + e);
+    } finally {
+        const btn = btnElement || event.target;
+        btn.disabled = false;
+        btn.textContent = '🔗 Pair';
     }
 }
 

@@ -22,6 +22,17 @@ const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
 
+fn get_pc_name() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown PC".to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "Unknown PC".to_string())
+    }
+}
+
 #[derive(serde::Serialize)]
 struct StatusDto {
     state: String,
@@ -191,6 +202,7 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
     let service_uuid = uuid::Uuid::parse_str(SERVICE_UUID).unwrap();
     let challenge_char = uuid::Uuid::parse_str(CHALLENGE_CHAR).unwrap();
     let response_char = uuid::Uuid::parse_str(RESPONSE_CHAR).unwrap();
+    let pc_name_char = uuid::Uuid::parse_str("a1b2c3d4-e5f6-7890-abcd-ef1234567898").unwrap();
 
     let info = PeripheralInfo {
         id: req.address.clone(),
@@ -206,11 +218,26 @@ async fn pair_device(state: State<'_, Arc<AppState>>, req: PairRequest) -> Resul
     let conn = state.ble.connect(&info).await.map_err(|e| e.to_string())?;
     info!("Pairing: connected");
 
+    // Small delay to let GATT database stabilize
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Send PC name first so watch can display it in pairing confirmation
+    let pc_name = get_pc_name();
+    info!("Pairing: sending PC name: {}", pc_name);
+    state.ble.write(&conn, pc_name_char, pc_name.as_bytes()).await.map_err(|e| e.to_string())?;
+    info!("Pairing: PC name sent");
+
+    // Small delay before sending challenge
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
     let challenge = state.session.begin_pairing().await.map_err(|e| e.to_string())?;
     info!("Pairing: challenge generated");
 
     state.ble.write(&conn, challenge_char, &challenge.to_bytes()).await.map_err(|e| e.to_string())?;
     info!("Pairing: challenge written");
+
+    // Small delay before subscribing
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     let mut rx = state.ble.notify(&conn, response_char).await.map_err(|e| e.to_string())?;
     info!("Pairing: subscribed to response");

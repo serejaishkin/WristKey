@@ -8,9 +8,9 @@
 //!   WristKey service must be advertised or discovered after connection.
 
 use async_trait::async_trait;
-use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter, WriteType, CharPropFlags};
 use btleplug::platform::{Adapter, Manager, Peripheral};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::StreamExt;
@@ -121,6 +121,10 @@ impl BleAdapter for BtleplugAdapter {
                 Ok(events) => events,
                 Err(e) => { error!("BLE events unavailable: {}", e); return; }
             };
+            
+            // Use a set to track already sent devices to avoid duplicates
+            let mut sent_devices = HashSet::new();
+            
             while let Some(event) = events.next().await {
                 let id = match event {
                     // On Windows an already-known Galaxy Watch commonly comes
@@ -147,26 +151,33 @@ impl BleAdapter for BtleplugAdapter {
                 info!("BLE device: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={}",
                     peripheral.address(), props.local_name, props.rssi, is_wristkey_service,
                     is_wristkey_manufacturer, is_samsung, is_watch);
+                
+                // Only emit WristKey devices (with service or manufacturer data) or Samsung watches, and avoid duplicates
+                let device_key = peripheral.address().to_string();
+                if (is_wristkey_service || is_wristkey_manufacturer || is_watch) && !sent_devices.contains(&device_key) {
+                    sent_devices.insert(device_key);
 
-                // Samsung/watch is a candidate, not proof of WristKey. We still
-                // emit it so the higher layer can display/debug it, while the
-                // actual connection verifies the WristKey GATT service.
-                let pin = if manufacturer_data.len() >= 4 {
-                    String::from_utf8(manufacturer_data[..4].to_vec()).ok()
-                } else { None };
-                let device_id = if manufacturer_data.len() > 4 {
-                    Some(hex::encode(&manufacturer_data[manufacturer_data.len() - 4..]))
-                } else { None };
-                let info = PeripheralInfo {
-                    pin,
-                    device_id,
-                    id: peripheral.address().to_string(),
-                    name: props.local_name.clone(),
-                    rssi: props.rssi,
-                    service_uuids: props.services.clone(),
-                    raw_manufacturer_data: if is_wristkey_service || is_wristkey_manufacturer { Some(manufacturer_data) } else { None },
-                };
-                if tx.send(info).await.is_err() { break; }
+                    // Samsung/watch is a candidate, not proof of WristKey. We still
+                    // emit it so the higher layer can display/debug it, while the
+                    // actual connection verifies the WristKey GATT service.
+                    // Manufacturer data format: [0xFF, 0xFF, PIN_4_bytes...]
+                    let pin = if is_wristkey_manufacturer && manufacturer_data.len() >= 6 {
+                        String::from_utf8(manufacturer_data[2..6].to_vec()).ok()
+                    } else { None };
+                    let device_id = if manufacturer_data.len() > 6 {
+                        Some(hex::encode(&manufacturer_data[manufacturer_data.len() - 4..]))
+                    } else { None };
+                    let info = PeripheralInfo {
+                        pin,
+                        device_id,
+                        id: peripheral.address().to_string(),
+                        name: props.local_name.clone(),
+                        rssi: props.rssi,
+                        service_uuids: props.services.clone(),
+                        raw_manufacturer_data: if is_wristkey_service || is_wristkey_manufacturer { Some(manufacturer_data) } else { None },
+                    };
+                    if tx.send(info).await.is_err() { break; }
+                }
             }
         });
         Ok(rx)
@@ -242,6 +253,13 @@ impl BleAdapter for BtleplugAdapter {
         let chars = peripheral.characteristics();
         let ch = chars.iter().find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
+        
+        // Check if characteristic supports notify/indicate
+        if !ch.properties.contains(CharPropFlags::NOTIFY) && 
+           !ch.properties.contains(CharPropFlags::INDICATE) {
+            return Err(WristKeyError::Ble(format!("characteristic {} does not support notify/indicate", characteristic)));
+        }
+        
         peripheral.subscribe(ch).await.map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
         let mut notifications = peripheral.notifications().await.map_err(|e| WristKeyError::Ble(format!("notifications: {}", e)))?;
         let (tx, rx) = mpsc::channel(32);

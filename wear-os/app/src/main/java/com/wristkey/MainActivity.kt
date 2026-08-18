@@ -108,15 +108,24 @@ class MainActivity : ComponentActivity() {
     fun MainScreen() {
         var pin by remember { mutableStateOf("----") }
         var statusText by remember { mutableStateOf("Starting...") }
+        var macAddress by remember { mutableStateOf("") }
         var showResetConfirm by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             while (true) {
                 pin = bleService?.getAdvertisePin() ?: "----"
+                macAddress = bleService?.getCurrentBluetoothAddress() ?: ""
+                val pcName = bleService?.getRequestingPcName()
                 statusText = when {
                     bleService == null -> "Service connecting..."
-                    bleService?.pairingRequested?.get() == true -> "PC wants to pair!"
-                    bleService?.isPaired() == true -> "Paired with ${bleService?.getPairedDeviceName() ?: "PC"}"
+                    bleService?.pairingRequested?.get() == true -> {
+                        if (pcName != null) "PC '$pcName' wants to pair!" else "PC wants to pair!"
+                    }
+                    bleService?.isPaired() == true -> {
+                        val name = bleService?.getPairedDeviceName() ?: "PC"
+                        val address = bleService?.getPairedDeviceAddress() ?: ""
+                        if (address.isNotEmpty()) "Paired with $name\n$address" else "Paired with $name"
+                    }
                     else -> "Ready to pair"
                 }
                 delay(1000)
@@ -147,6 +156,11 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(12.dp))
                         Text("PIN", style = MaterialTheme.typography.caption3)
                         Text(pin, style = MaterialTheme.typography.display1, color = MaterialTheme.colors.primary)
+                    }
+                    item {
+                        if (macAddress.isNotEmpty()) {
+                            Text("MAC: $macAddress", style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
+                        }
                     }
                     item {
                         Button(onClick = {
