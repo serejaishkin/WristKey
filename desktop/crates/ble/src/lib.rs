@@ -201,7 +201,7 @@ impl BleAdapter for BtleplugAdapter {
             if let Err(e) = peripheral.discover_services().await {
                 warn!("GATT discovery attempt {} failed: {}", attempt, e);
             }
-            services = peripheral.services();
+            services = peripheral.services().into_iter().collect();
             if !services.is_empty() { break; }
             tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
         }
@@ -295,7 +295,8 @@ impl BleAdapter for MockBleAdapter {
     async fn write(&self, _conn: &Connection, _char: Uuid, _data: &[u8]) -> Result<()> { Ok(()) }
     async fn notify(&self, _conn: &Connection, _char: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> {
         let (tx, rx) = mpsc::channel(4);
-        if let Some(data) = self.scripted.lock().unwrap().pop() { let _ = tx.send(data).await; }
+        let data = self.scripted.lock().unwrap().pop();
+        if let Some(data) = data { let _ = tx.send(data).await; }
         Ok(rx)
     }
     async fn read_rssi(&self, _conn: &Connection) -> Result<i16> { Ok(self.scripted_rssi.lock().unwrap().pop().unwrap_or(-50)) }

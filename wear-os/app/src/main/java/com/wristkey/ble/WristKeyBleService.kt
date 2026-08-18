@@ -225,16 +225,18 @@ class WristKeyBleService : Service() {
         }
     }
 
-    fun confirmPairing(): Boolean = try {
-        val challenge = currentChallenge ?: return false
-        val response = keyStoreManager.signChallenge(challenge)
-        responseCharacteristic?.value = response
-        pairingDeviceAddress?.let { setPairedDevice(it, "PC") }
-        setPairingKey(UnlockProtocol.generatePasswordKey())
-        _pairingRequested.set(false)
-        gattServer?.notifyCharacteristicChanged(null, responseCharacteristic, false)
-        true
-    } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); false }
+    fun confirmPairing(): Boolean {
+        return try {
+            val challenge = currentChallenge ?: return false
+            val response = keyStoreManager.signChallenge(challenge)
+            responseCharacteristic?.value = response
+            pairingDeviceAddress?.let { setPairedDevice(it, "PC") }
+            setPairingKey(UnlockProtocol.generatePasswordKey())
+            _pairingRequested.set(false)
+            gattServer?.notifyCharacteristicChanged(null, responseCharacteristic, false)
+            true
+        } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); false }
+    }
 
     fun requestUserPresence(): Boolean { if (_userPresent.get()) return true; _userPresentCountdown.set(10); return false }
     fun setUserPresent(present: Boolean) { _userPresent.set(present) }
