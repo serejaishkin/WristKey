@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,15 +39,12 @@ class PairingActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? WristKeyBleService.LocalBinder)?.getService()
         }
-        override fun onServiceDisconnected(name: ComponentName?) {
-            service = null
-        }
+        override fun onServiceDisconnected(name: ComponentName?) { service = null }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val pcName = intent.getStringExtra("pcName") ?: "Windows PC"
-
         val serviceIntent = Intent(this, WristKeyBleService::class.java)
         startService(serviceIntent)
         bound = bindService(serviceIntent, connection, BIND_AUTO_CREATE)
@@ -65,37 +64,34 @@ class PairingActivity : ComponentActivity() {
 
             MaterialTheme {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text("Pair WristKey", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(8.dp))
-                    Text(pcName, textAlign = TextAlign.Center)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (ready) "Allow this PC to use your watch?" else "Waiting for the PC...",
-                        textAlign = TextAlign.Center
-                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(pcName, textAlign = TextAlign.Center, maxLines = 1)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (ready) "Allow this PC?" else "Waiting for PC...", textAlign = TextAlign.Center)
                     error?.let {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(3.dp))
                         Text(it, textAlign = TextAlign.Center)
                     }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(7.dp))
                     Button(
                         onClick = {
                             val ok = service?.confirmPairing() == true
-                            if (ok) finish() else error = "No pairing challenge received"
+                            if (ok) finish() else error = "No challenge"
                         },
                         enabled = ready,
-                        modifier = Modifier.fillMaxWidth(0.85f)
-                    ) { Text("Allow") }
-                    Spacer(Modifier.height(8.dp))
+                        modifier = Modifier.fillMaxWidth(0.9f).height(42.dp)
+                    ) { Text("ALLOW") }
+                    Spacer(Modifier.height(5.dp))
                     Button(
                         onClick = { service?.rejectPairing(); finish() },
                         colors = ButtonDefaults.secondaryButtonColors(),
-                        modifier = Modifier.fillMaxWidth(0.85f)
-                    ) { Text("Cancel") }
+                        modifier = Modifier.fillMaxWidth(0.9f).height(38.dp)
+                    ) { Text("CANCEL") }
                 }
             }
         }
