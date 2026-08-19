@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class WristKeyBleService : Service() {
     companion object {
         private const val TAG = "WristKeyBleService"
+        private const val DEBUG_TAG = "WristKeyBLE"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "wristkey_ble_channel"
         private const val PREFS_NAME = "WristKeyPrefs"
@@ -93,6 +94,8 @@ class WristKeyBleService : Service() {
 
     inner class LocalBinder : Binder() { fun getService(): WristKeyBleService = this@WristKeyBleService }
 
+    private fun debug(message: String) = Log.i(DEBUG_TAG, message)
+
     override fun onCreate() {
         super.onCreate()
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -110,6 +113,7 @@ class WristKeyBleService : Service() {
         startAdvertising()
         registerBluetoothStateReceiver()
         registerUnlockReceiver()
+        debug("BLE service created; advertising=${isAdvertising()} paired=${isPaired()}")
         Log.i(TAG, "WristKey BLE ready: GATT server + advertising active")
     }
 
@@ -157,7 +161,7 @@ class WristKeyBleService : Service() {
     fun forgetDevice() { clearPairedDevice(); stopGattServer(); resetPin(); startGattServer(); startAdvertising() }
     fun isPaired(): Boolean = pairedDeviceAddress != null
     fun resetPin() { currentPin = (1000..9999).random(); updateNotification() }
-    fun rejectPairing() { _pairingRequested.set(false); currentChallenge = null; pairingDeviceAddress = null; requestingPcName = null }
+    fun rejectPairing() { debug("Pairing rejected"); _pairingRequested.set(false); currentChallenge = null; pairingDeviceAddress = null; requestingPcName = null }
     fun getConnectedDeviceAddress(): String = pairedDeviceAddress ?: "--"
     fun isAdvertising(): Boolean = advertiseCallback != null
     fun getPairedDeviceCount(): Int = if (isPaired()) 1 else 0
@@ -166,6 +170,7 @@ class WristKeyBleService : Service() {
 
     private fun showPairingActivity() {
         try {
+            debug("Opening PairingActivity pc=${requestingPcName ?: "Windows PC"} address=${pairingDeviceAddress ?: "--"} challenge=${currentChallenge?.size ?: 0}")
             startActivity(Intent(this, PairingActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra("pcName", requestingPcName ?: "Windows PC")
@@ -183,7 +188,7 @@ class WristKeyBleService : Service() {
         val data = AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE_UUID)).setIncludeDeviceName(false).addManufacturerData(0xFFFF, manufacturerData).build()
         val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(true).build()
         val callback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) { Log.i(TAG, "Advertising started (UUID: $SERVICE_UUID, PIN: ${getAdvertisePin()})") }
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) { debug("Advertising started uuid=$SERVICE_UUID pin=${getAdvertisePin()}") }
             override fun onStartFailure(errorCode: Int) { Log.e(TAG, "Advertising failed: $errorCode"); advertiseCallback = null }
         }
         advertiser.startAdvertising(settings, data, scanResponse, callback)
@@ -212,7 +217,7 @@ class WristKeyBleService : Service() {
         pcNameCharacteristic = BluetoothGattCharacteristic(PC_NAME_CHAR_UUID, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE)
         service.addCharacteristic(challengeCharacteristic); service.addCharacteristic(responseCharacteristic); service.addCharacteristic(publicKeyCharacteristic); service.addCharacteristic(configCharacteristic)
         service.addCharacteristic(unlockRequestCharacteristic); service.addCharacteristic(unlockResponseCharacteristic); service.addCharacteristic(pairingKeyCharacteristic); service.addCharacteristic(pcNameCharacteristic)
-        if (gattServer?.addService(service) != true) Log.e(TAG, "GATT addService failed") else Log.i(TAG, "GATT server started: $SERVICE_UUID")
+        if (gattServer?.addService(service) != true) Log.e(TAG, "GATT addService failed") else { Log.i(TAG, "GATT server started: $SERVICE_UUID"); debug("GATT characteristics ready publicKey=$PUBLIC_KEY_CHAR_UUID response=$RESPONSE_CHAR_UUID") }
     }
 
     private fun stopGattServer() {
@@ -226,11 +231,13 @@ class WristKeyBleService : Service() {
                 BluetoothGatt.STATE_CONNECTED -> {
                     connectedDevice = device
                     pairingDeviceAddress = device?.address
+                    debug("PC connected address=${device?.address} status=$status paired=${pairedDeviceAddress != null}")
                     Log.i(TAG, "PC connected: ${device?.address}, status=$status")
                     if (pairedDeviceAddress == null) { _pairingRequested.set(true); showPairingActivity() }
                 }
                 BluetoothGatt.STATE_DISCONNECTED -> {
                     if (connectedDevice?.address == device?.address) connectedDevice = null
+                    debug("PC disconnected address=${device?.address} status=$status")
                     Log.i(TAG, "PC disconnected: ${device?.address}, status=$status")
                     _pairingRequested.set(false)
                 }
@@ -243,17 +250,17 @@ class WristKeyBleService : Service() {
                 return
             }
             descriptor.value = value
-            Log.i(TAG, "CCCD write ${descriptor.characteristic?.uuid}: ${value?.joinToString { String.format("%02X", it) }}")
+            debug("CCCD write char=${descriptor.characteristic?.uuid} value=${value?.joinToString { String.format("%02X", it) } ?: "null"}")
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
 
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
             when (characteristic?.uuid) {
-                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; _pairingRequested.set(true); Log.i(TAG, "Challenge received: ${value?.size ?: 0} bytes"); if (pairedDeviceAddress == null) showPairingActivity() }
-                CONFIG_CHAR_UUID -> Log.i(TAG, "Config write: ${value?.size ?: 0} bytes")
-                UNLOCK_REQUEST_UUID -> { handleUnlockRequest(value); Log.i(TAG, "Unlock request received") }
+                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; _pairingRequested.set(true); debug("Challenge received bytes=${value?.size ?: 0} address=${device?.address ?: "--"}"); if (pairedDeviceAddress == null) showPairingActivity() }
+                CONFIG_CHAR_UUID -> { Log.i(TAG, "Config write: ${value?.size ?: 0} bytes"); debug("Config write bytes=${value?.size ?: 0}") }
+                UNLOCK_REQUEST_UUID -> { handleUnlockRequest(value); Log.i(TAG, "Unlock request received"); debug("Unlock request bytes=${value?.size ?: 0}") }
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }
-                PC_NAME_CHAR_UUID -> value?.let { requestingPcName = String(it, Charsets.UTF_8).trim('\u0000'); Log.i(TAG, "PC name received: $requestingPcName") }
+                PC_NAME_CHAR_UUID -> value?.let { requestingPcName = String(it, Charsets.UTF_8).trim('\u0000'); Log.i(TAG, "PC name received: $requestingPcName"); debug("PC name received='$requestingPcName'") }
                 else -> { if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
             }
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
@@ -262,13 +269,12 @@ class WristKeyBleService : Service() {
         override fun onCharacteristicReadRequest(device: BluetoothDevice?, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic?) {
             when (characteristic?.uuid) {
                 PUBLIC_KEY_CHAR_UUID -> {
-                    val key = keyStoreManager.getPublicKey()
-                    if (offset >= key.size) {
-                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
-                    } else {
-                        val end = minOf(offset + 512, key.size)
-                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, key.copyOfRange(offset, end))
-                    }
+                    try {
+                        val key = keyStoreManager.getPublicKey()
+                        debug("Public key read requested offset=$offset size=${key.size}")
+                        if (offset >= key.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
+                        else { val end = minOf(offset + 512, key.size); gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, key.copyOfRange(offset, end)) }
+                    } catch (e: Exception) { Log.e(TAG, "Public key read failed", e); debug("Public key read FAILED: ${e.javaClass.simpleName}: ${e.message}"); gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null) }
                 }
                 CONFIG_CHAR_UUID -> {
                     val configData = byteArrayOf(0x01, (currentPin shr 8).toByte(), currentPin.toByte(), if (isPaired()) 0x01 else 0x00)
@@ -282,18 +288,23 @@ class WristKeyBleService : Service() {
 
     fun confirmPairing(): Boolean {
         return try {
-            val challenge = currentChallenge ?: return false
-            val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: return false
+            val challenge = currentChallenge ?: run { debug("ALLOW failed: no current challenge"); return false }
+            val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: run { debug("ALLOW failed: no connected PC"); return false }
+            debug("ALLOW: signing challenge bytes=${challenge.size} pc=${pc.address}")
             val signature = keyStoreManager.signChallenge(challenge)
+            debug("ALLOW: signature ready bytes=${signature.size}")
             val response = signature + byteArrayOf(1)
             responseCharacteristic?.value = response
+            debug("ALLOW: response prepared bytes=${response.size} subscribed=true")
             setPairedDevice(pc.address, requestingPcName ?: "Windows PC")
             setPairingKey(UnlockProtocol.generatePasswordKey())
             _userPresent.set(true); _pairingRequested.set(false)
-            gattServer?.notifyCharacteristicChanged(pc, responseCharacteristic, false)
+            val sent = gattServer?.notifyCharacteristicChanged(pc, responseCharacteristic, false) ?: false
+            debug("ALLOW: notifyCharacteristicChanged sent=$sent")
+            if (!sent) Log.w(TAG, "Pairing notification was not sent")
             Log.i(TAG, "Pairing confirmed for ${pc.address}")
             true
-        } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); false }
+        } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); debug("ALLOW FAILED: ${e.javaClass.simpleName}: ${e.message}"); false }
     }
 
     fun requestUserPresence(): Boolean { if (_userPresent.get()) return true; _userPresentCountdown.set(10); return false }
