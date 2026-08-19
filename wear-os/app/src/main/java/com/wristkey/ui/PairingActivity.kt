@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -32,19 +33,28 @@ import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
 
 class PairingActivity : ComponentActivity() {
+    companion object { private const val TAG = "WristKeyBLE" }
+
     private var service: WristKeyBleService? = null
     private var bound = false
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? WristKeyBleService.LocalBinder)?.getService()
+            Log.i(TAG, "PairingActivity: service connected")
         }
-        override fun onServiceDisconnected(name: ComponentName?) { service = null }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            Log.i(TAG, "PairingActivity: service disconnected")
+            service = null
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val pcName = intent.getStringExtra("pcName") ?: "Windows PC"
+        val pcAddress = intent.getStringExtra("pcAddress") ?: ""
+        Log.i(TAG, "PairingActivity opened: pcName=$pcName pcAddress=$pcAddress")
+
         val serviceIntent = Intent(this, WristKeyBleService::class.java)
         startService(serviceIntent)
         bound = bindService(serviceIntent, connection, BIND_AUTO_CREATE)
@@ -55,11 +65,15 @@ class PairingActivity : ComponentActivity() {
 
             LaunchedEffect(Unit) {
                 repeat(100) {
-                    ready = service?.hasPendingPairing() == true
+                    val pending = service?.hasPendingPairing() == true
+                    val challengeSize = service?.getCurrentChallengeSize() ?: 0
+                    if (pending != ready) Log.i(TAG, "PairingActivity state: pending=$pending challengeSize=$challengeSize")
+                    ready = pending
                     if (ready) return@LaunchedEffect
                     delay(100)
                 }
                 ready = service?.hasPendingPairing() == true
+                Log.i(TAG, "PairingActivity wait finished: ready=$ready challengeSize=${service?.getCurrentChallengeSize() ?: 0}")
             }
 
             MaterialTheme {
@@ -80,7 +94,9 @@ class PairingActivity : ComponentActivity() {
                     Spacer(Modifier.height(7.dp))
                     Button(
                         onClick = {
+                            Log.i(TAG, "ALLOW pressed: challengeSize=${service?.getCurrentChallengeSize() ?: 0}")
                             val ok = service?.confirmPairing() == true
+                            Log.i(TAG, "confirmPairing result=$ok")
                             if (ok) finish() else error = "No challenge"
                         },
                         enabled = ready,
@@ -88,7 +104,11 @@ class PairingActivity : ComponentActivity() {
                     ) { Text("ALLOW") }
                     Spacer(Modifier.height(5.dp))
                     Button(
-                        onClick = { service?.rejectPairing(); finish() },
+                        onClick = {
+                            Log.i(TAG, "CANCEL pressed")
+                            service?.rejectPairing()
+                            finish()
+                        },
                         colors = ButtonDefaults.secondaryButtonColors(),
                         modifier = Modifier.fillMaxWidth(0.9f).height(38.dp)
                     ) { Text("CANCEL") }
@@ -98,6 +118,7 @@ class PairingActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "PairingActivity destroyed")
         if (bound) unbindService(connection)
         bound = false
         super.onDestroy()
