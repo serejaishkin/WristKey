@@ -8,15 +8,12 @@ class WristKeyProvider;
 
 class WristKeyProviderCredential final : public ICredentialProviderCredential {
 public:
-    explicit WristKeyProviderCredential(WristKeyProvider* provider);
+    WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username);
     ~WristKeyProviderCredential() override = default;
 
-    // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
     ULONG STDMETHODCALLTYPE AddRef() override;
     ULONG STDMETHODCALLTYPE Release() override;
-
-    // ICredentialProviderCredential
     HRESULT STDMETHODCALLTYPE Advise(ICredentialProviderCredentialEvents* pcpce) override;
     HRESULT STDMETHODCALLTYPE UnAdvise() override;
     HRESULT STDMETHODCALLTYPE SetSelected(BOOL* pbAutoLogon) override;
@@ -27,8 +24,7 @@ public:
     HRESULT STDMETHODCALLTYPE GetBitmapValue(DWORD dwFieldID, HBITMAP* phbmp) override;
     HRESULT STDMETHODCALLTYPE GetCheckboxValue(DWORD dwFieldID, BOOL* pbChecked) override;
     HRESULT STDMETHODCALLTYPE GetComboBoxValueCount(DWORD dwFieldID, DWORD* pdwCount) override;
-    HRESULT STDMETHODCALLTYPE GetComboBoxValueAt(DWORD dwFieldID, DWORD dwItem,
-                                                  PWSTR* ppwszItem) override;
+    HRESULT STDMETHODCALLTYPE GetComboBoxValueAt(DWORD dwFieldID, DWORD dwItem, PWSTR* ppwszItem) override;
     HRESULT STDMETHODCALLTYPE GetSubmitButtonValue(DWORD dwFieldID, DWORD* pdwAdjacentTo) override;
     HRESULT STDMETHODCALLTYPE SetStringValue(DWORD dwFieldID, PCWSTR pwz) override;
     HRESULT STDMETHODCALLTYPE SetCheckboxValue(DWORD dwFieldID, BOOL bChecked) override;
@@ -42,10 +38,13 @@ public:
                                            PWSTR* ppwszOptionalStatusText,
                                            CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon) override;
 
+    const std::wstring& Username() const { return _username; }
+
 private:
     LONG _ref = 1;
     WristKeyProvider* _provider = nullptr;
     ICredentialProviderCredentialEvents* _events = nullptr;
+    std::wstring _username;
 };
 
 class WristKeyProvider final : public ICredentialProvider {
@@ -72,7 +71,7 @@ public:
 private:
     LONG _ref = 1;
     CREDENTIAL_PROVIDER_USAGE_SCENARIO _scenario = CPUS_INVALID;
-    WristKeyProviderCredential* _credential = nullptr;
+    std::vector<WristKeyProviderCredential*> _credentials;
     ICredentialProviderEvents* _events = nullptr;
     UINT_PTR _adviseContext = 0;
 };
