@@ -6,6 +6,11 @@
 # IDE
 .idea/
 .vscode/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
 *.swp
 *.swo
 *.sublime-*
