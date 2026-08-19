@@ -1,6 +1,8 @@
 #include "Provider.h"
 #include <new>
 #include <shlwapi.h>
+#include <lm.h>
+#include <string>
 
 extern const GUID CLSID_WristKeyCredentialProvider;
 
@@ -16,13 +18,44 @@ static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     return S_OK;
 }
 
+static std::vector<std::wstring> EnumerateLocalUsers() {
+    std::vector<std::wstring> users;
+    DWORD level = 1;
+    LPUSER_INFO_1 info = nullptr;
+    DWORD entries = 0, total = 0, resume = 0;
+    NET_API_STATUS status;
+    do {
+        status = NetUserEnum(nullptr, level, FILTER_NORMAL_ACCOUNT, reinterpret_cast<LPBYTE*>(&info),
+                             MAX_PREFERRED_LENGTH, &entries, &total, &resume);
+        if (status != NERR_Success && status != ERROR_MORE_DATA) break;
+        for (DWORD i = 0; i < entries; ++i) {
+            if (!info[i].usri1_name) continue;
+            if (info[i].usri1_flags & UF_ACCOUNTDISABLE) continue;
+            users.emplace_back(info[i].usri1_name);
+        }
+        if (info) {
+            NetApiBufferFree(info);
+            info = nullptr;
+        }
+    } while (status == ERROR_MORE_DATA);
+    if (info) NetApiBufferFree(info);
+    if (users.empty()) users.emplace_back(L"Current Windows user");
+    return users;
+}
+
 WristKeyProvider::WristKeyProvider() {
-    _credential = new (std::nothrow) WristKeyProviderCredential(this);
+    const auto users = EnumerateLocalUsers();
+    for (const auto& user : users) {
+        auto* credential = new (std::nothrow) WristKeyProviderCredential(this, user);
+        if (credential) _credentials.push_back(credential);
+    }
 }
 
 WristKeyProvider::~WristKeyProvider() {
     if (_events) _events->Release();
-    if (_credential) _credential->Release();
+    for (auto* credential : _credentials) {
+        if (credential) credential->Release();
+    }
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::QueryInterface(REFIID riid, void** ppv) {
@@ -73,27 +106,30 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorAt(DWORD index, IC
     d.cpft = (index == WristKeyFields::Tile) ? CPFT_LARGE_TEXT :
              (index == WristKeyFields::Status) ? CPFT_SMALL_TEXT : CPFT_SUBMIT_BUTTON;
     d.pszLabel = const_cast<PWSTR>(index == WristKeyFields::Tile ? L"WristKey" :
-                                    index == WristKeyFields::Status ? L"Waiting for watch..." : L"Unlock");
+                                    index == WristKeyFields::Status ? L"Select account and unlock with watch" : L"Unlock");
     return SHCreateCredentialProviderFieldDescriptor(&d, out);
 }
 HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialCount(DWORD* count, DWORD* def, BOOL* autoLogon) {
     if (!count || !def || !autoLogon) return E_POINTER;
-    *count = 1; *def = CREDENTIAL_PROVIDER_NO_DEFAULT; *autoLogon = FALSE;
+    *count = static_cast<DWORD>(_credentials.size());
+    *def = CREDENTIAL_PROVIDER_NO_DEFAULT;
+    *autoLogon = FALSE;
     return S_OK;
 }
 HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialAt(DWORD index, ICredentialProviderCredential** out) {
     if (!out) return E_POINTER;
     *out = nullptr;
-    if (index != 0 || !_credential) return E_INVALIDARG;
-    _credential->AddRef();
-    *out = _credential;
+    if (index >= _credentials.size() || !_credentials[index]) return E_INVALIDARG;
+    _credentials[index]->AddRef();
+    *out = _credentials[index];
     return S_OK;
 }
 void WristKeyProvider::SetEvents(ICredentialProviderCredentialEvents*, UINT_PTR) {}
 bool WristKeyProvider::WatchAvailable() const { return false; }
 void WristKeyProvider::RefreshStatus() {}
 
-WristKeyProviderCredential::WristKeyProviderCredential(WristKeyProvider* provider) : _provider(provider) {
+WristKeyProviderCredential::WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username)
+    : _provider(provider), _username(std::move(username)) {
     if (_provider) _provider->AddRef();
 }
 
@@ -129,8 +165,8 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetFieldState(DWORD id, CR
     return S_OK;
 }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetStringValue(DWORD id, PWSTR* value) {
-    if (id == WristKeyFields::Tile) return CopyString(L"WristKey", value);
-    if (id == WristKeyFields::Status) return CopyString(L"Waiting for watch...", value);
+    if (id == WristKeyFields::Tile) return CopyString(_username.c_str(), value);
+    if (id == WristKeyFields::Status) return CopyString(L"Select account and confirm on watch", value);
     return E_INVALIDARG;
 }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetBitmapValue(DWORD, HBITMAP* b) { if (b) *b = nullptr; return E_NOTIMPL; }
