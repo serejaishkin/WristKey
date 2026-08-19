@@ -21,8 +21,7 @@ target_compile_definitions(WristKeyCredentialProvider PRIVATE
 )
 
 target_include_directories(WristKeyCredentialProvider PRIVATE include)
-
-target_link_libraries(WristKeyCredentialProvider PRIVATE ole32 oleaut32 advapi32 user32)
+target_link_libraries(WristKeyCredentialProvider PRIVATE ole32 oleaut32 advapi32 user32 netapi32)
 
 set_target_properties(WristKeyCredentialProvider PROPERTIES
     OUTPUT_NAME "WristKeyCredentialProvider"
