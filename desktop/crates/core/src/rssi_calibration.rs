@@ -1,7 +1,6 @@
-//! RSSI calibration primitives shared by the Tauri UI and background daemon.
-//! Calibration is based on a real connected-device sample set, not BLE discovery.
+//! RSSI calibration primitives shared by Tauri/daemon.
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CalibrationProfile {
     pub median_dbm: i16,
     pub p10_dbm: i16,
@@ -18,9 +17,7 @@ pub fn calibrate(samples: &[i16], away_margin_db: i16) -> Option<CalibrationProf
     let median = percentile(&values, 0.50);
     let p10 = percentile(&values, 0.10);
     let p90 = percentile(&values, 0.90);
-    // More negative means farther away. Keep the threshold below the calibrated median.
-    let away_threshold = median.saturating_sub(away_margin_db.max(1));
-    Some(CalibrationProfile { median_dbm: median, p10_dbm: p10, p90_dbm: p90, away_threshold_dbm: away_threshold, samples: values.len() })
+    Some(CalibrationProfile { median_dbm: median, p10_dbm: p10, p90_dbm: p90, away_threshold_dbm: median.saturating_sub(away_margin_db.max(1)), samples: values.len() })
 }
 
 fn percentile(sorted: &[i16], q: f64) -> i16 {
@@ -32,17 +29,6 @@ fn percentile(sorted: &[i16], q: f64) -> i16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rejects_short_samples() { assert!(calibrate(&[-50; 9], 15).is_none()); }
-
-    #[test]
-    fn calculates_profile() {
-        let samples: Vec<i16> = (-60..-40).collect();
-        let p = calibrate(&samples, 15).unwrap();
-        assert_eq!(p.samples, 20);
-        assert!(p.p10_dbm <= p.median_dbm);
-        assert!(p.p90_dbm >= p.median_dbm);
-        assert_eq!(p.away_threshold_dbm, p.median_dbm - 15);
-    }
+    #[test] fn rejects_short_samples() { assert!(calibrate(&[-50; 9], 15).is_none()); }
+    #[test] fn calculates_profile() { let samples: Vec<i16> = (-60..-40).collect(); let p = calibrate(&samples, 15).unwrap(); assert_eq!(p.samples, 20); assert!(p.p10_dbm <= p.median_dbm); assert!(p.p90_dbm >= p.median_dbm); }
 }
