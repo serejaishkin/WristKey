@@ -79,30 +79,15 @@ async function measureRssi() {
     btn.disabled = true; btn.textContent = '⏳ Measuring...';
     const stateEl = document.getElementById('diagState');
     try {
-        const devices = await invoke('get_paired_devices');
-        if (!devices.length) throw new Error('No paired Watch');
-        const paired = devices[0];
-        const found = await invoke('scan_devices');
-        const candidates = found.filter(d => d.address === paired.address || d.id === paired.address);
-        if (!candidates.length) {
-            document.getElementById('diagWatch').textContent = paired.name;
-            document.getElementById('diagAddress').textContent = paired.address;
-            document.getElementById('diagRssi').textContent = '—';
-            document.getElementById('diagBaseline').textContent = `${paired.baseline_rssi}`;
-            document.getElementById('diagDelta').textContent = '—';
-            stateEl.textContent = 'AWAY / not visible in scan'; stateEl.className = 'status-warn';
-            return;
-        }
-        const sample = candidates.reduce((best, d) => d.rssi > best.rssi ? d : best, candidates[0]);
-        const delta = sample.rssi - paired.baseline_rssi;
-        document.getElementById('diagWatch').textContent = paired.name;
-        document.getElementById('diagAddress').textContent = paired.address;
-        document.getElementById('diagRssi').textContent = `${sample.rssi}`;
-        document.getElementById('diagBaseline').textContent = `${paired.baseline_rssi}`;
-        document.getElementById('diagDelta').textContent = `${delta > 0 ? '+' : ''}${delta}`;
-        if (delta >= -5) { stateEl.textContent = 'PRESENT / strong'; stateEl.className = 'status-ok'; }
-        else if (delta >= -15) { stateEl.textContent = 'NEAR / usable'; stateEl.className = 'status-ok'; }
-        else { stateEl.textContent = 'WEAK / candidate away'; stateEl.className = 'status-warn'; }
+        const d = await invoke('get_proximity_status');
+        document.getElementById('diagWatch').textContent = d.watch || '—';
+        document.getElementById('diagAddress').textContent = d.address || '—';
+        document.getElementById('diagRssi').textContent = d.raw_rssi == null ? '—' : `${d.raw_rssi}`;
+        document.getElementById('diagBaseline').textContent = d.baseline_rssi == null ? '—' : `${d.baseline_rssi}`;
+        document.getElementById('diagDelta').textContent = d.delta_db == null ? '—' : `${d.delta_db > 0 ? '+' : ''}${d.delta_db.toFixed(1)}`;
+        if (d.proximity_state === 'PRESENT' || d.proximity_state === 'NEAR') stateEl.className = 'status-ok';
+        else stateEl.className = 'status-warn';
+        stateEl.textContent = d.connected ? `${d.proximity_state} • filtered ${d.filtered_rssi == null ? '—' : d.filtered_rssi.toFixed(1)} dBm` : `${d.proximity_state} / link unavailable`;
     } catch (e) {
         stateEl.textContent = 'Measurement failed: ' + e; stateEl.className = 'status-warn';
     } finally { btn.disabled = false; btn.textContent = '📡 Measure RSSI'; }
@@ -181,5 +166,5 @@ document.addEventListener('DOMContentLoaded', () => {
     const cpUnregBtn = document.getElementById('cpUnregisterBtn'); if (cpUnregBtn) cpUnregBtn.addEventListener('click', unregisterCP);
     const winPwdBtn = document.getElementById('winPasswordBtn'); if (winPwdBtn) winPwdBtn.addEventListener('click', setWindowsPassword);
     const copyLogBtn = document.getElementById('copyLogDirBtn'); if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogDir);
-    refreshStatus(); refreshDevices(); loadConfig(); loadLogDir(); setInterval(refreshStatus, 3000);
+    refreshStatus(); refreshDevices(); loadConfig(); loadLogDir(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000);
 });
