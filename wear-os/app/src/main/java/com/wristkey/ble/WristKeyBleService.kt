@@ -218,8 +218,15 @@ class WristKeyBleService : Service() {
             }
         }
         override fun onDescriptorWriteRequest(device: BluetoothDevice?, requestId: Int, descriptor: BluetoothGattDescriptor?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
-            if (descriptor?.uuid != CCCD_UUID) { if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
-            descriptor.value = value
+            val desc = descriptor ?: run {
+                if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
+                return
+            }
+            if (desc.uuid != CCCD_UUID) {
+                if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
+                return
+            }
+            desc.value = value
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
@@ -243,19 +250,21 @@ class WristKeyBleService : Service() {
         }
     }
 
-    fun confirmPairing(): Boolean = try {
-        val challenge = currentChallenge ?: return false
-        val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: return false
-        val signature = keyStoreManager.signChallenge(challenge)
-        responseCharacteristic?.value = signature + byteArrayOf(1)
-        setPairedDevice(pc.address, requestingPcName ?: "Windows PC")
-        setPairingKey(UnlockProtocol.generatePasswordKey())
-        _userPresent.set(true); _pairingRequested.set(false)
-        proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null
-        gattServer?.notifyCharacteristicChanged(pc, responseCharacteristic, false)
-        debug("Pairing confirmed for ${pc.address}; pairing persisted")
-        true
-    } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); false }
+    fun confirmPairing(): Boolean {
+        return try {
+            val challenge = currentChallenge ?: return false
+            val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: return false
+            val signature = keyStoreManager.signChallenge(challenge)
+            responseCharacteristic?.value = signature + byteArrayOf(1)
+            setPairedDevice(pc.address, requestingPcName ?: "Windows PC")
+            setPairingKey(UnlockProtocol.generatePasswordKey())
+            _userPresent.set(true); _pairingRequested.set(false)
+            proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null
+            gattServer?.notifyCharacteristicChanged(pc, responseCharacteristic, false)
+            debug("Pairing confirmed for ${pc.address}; pairing persisted")
+            true
+        } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); false }
+    }
 
     fun requestUserPresence(): Boolean { if (_userPresent.get()) return true; _userPresentCountdown.set(10); return false }
     fun setUserPresent(present: Boolean) { _userPresent.set(present) }
@@ -268,11 +277,11 @@ class WristKeyBleService : Service() {
     }
     private fun sendUnlockResponse(passwordKey: ByteArray?, error: String? = null) {
         val key = getPairingKey() ?: return
-        val response = JSONObject().apply { put("token", "wristkey_unlock"); if (passwordKey != null) put("password_key", Base64.encodeToString(passwordKey, Base64.NO_WRAP)) else put("error", error ?: "UNKNOWN") }
+        val response = JSONObject().apply { put("token", "wristkey_unlock"); if (passwordKey != null) put("password_key", android.util.Base64.encodeToString(passwordKey, android.util.Base64.NO_WRAP)) else put("error", error ?: "UNKNOWN") }
         try { unlockResponseCharacteristic?.value = UnlockProtocol.encrypt(response.toString().toByteArray(), key); connectedDevice?.let { gattServer?.notifyCharacteristicChanged(it, unlockResponseCharacteristic, false) } } catch (e: Exception) { Log.e(TAG, "Unlock response failed", e) }
     }
-    private fun getPairingKey() = prefs.getString(PREFS_PAIRING_KEY, null)?.let { Base64.decode(it, Base64.DEFAULT) }
-    private fun setPairingKey(key: ByteArray) { prefs.edit().putString(PREFS_PAIRING_KEY, Base64.encodeToString(key, Base64.DEFAULT)).apply() }
+    private fun getPairingKey() = prefs.getString(PREFS_PAIRING_KEY, null)?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
+    private fun setPairingKey(key: ByteArray) { prefs.edit().putString(PREFS_PAIRING_KEY, android.util.Base64.encodeToString(key, android.util.Base64.DEFAULT)).apply() }
 
     private fun registerUnlockReceiver() {
         val filter = IntentFilter("com.wristkey.UNLOCK_ACTION")
