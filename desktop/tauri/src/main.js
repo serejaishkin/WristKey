@@ -27,32 +27,25 @@ async function refreshStatus() {
         document.getElementById('deviceCount').textContent = status.device_count;
         document.getElementById('daemonToggle').checked = status.daemon_enabled;
 
-        // Windows CP tab visibility
         const cpTabBtn = document.getElementById('tab-btn-cp');
-        if (cpTabBtn) {
-            cpTabBtn.classList.remove('hidden');
-        }
+        if (cpTabBtn) cpTabBtn.classList.remove('hidden');
         const cpStatus = document.getElementById('cpStatus');
         if (cpStatus) {
             cpStatus.textContent = cpRegistered ? '✅ Registered' : '❌ Not registered';
             cpStatus.className = cpRegistered ? 'status-ok' : 'status-warn';
         }
         const cpBtn = document.getElementById('cpRegisterBtn');
-        if (cpBtn) {
-            cpBtn.textContent = cpRegistered ? '🔁 Re-register CP' : '📝 Register Credential Provider';
-        }
-        // Storage type badge
+        if (cpBtn) cpBtn.textContent = cpRegistered ? '🔁 Re-register CP' : '📝 Register Credential Provider';
+
         const storageType = document.getElementById('storageType');
         if (storageType && status.storage_type) {
             storageType.textContent = status.storage_type;
-            if (status.storage_type.includes('TPM')) {
-                storageType.innerHTML = '🔒 TPM 2.0';
-            } else if (status.storage_type.includes('Software')) {
-                storageType.innerHTML = '💻 Software';
-            }
+            if (status.storage_type.includes('TPM')) storageType.innerHTML = '🔒 TPM 2.0';
+            else if (status.storage_type.includes('Software')) storageType.innerHTML = '💻 Software';
         }
     } catch (e) {
-        document.getElementById('statusState').textContent = 'Error: ' + e;
+        const el = document.getElementById('statusState');
+        if (el) el.textContent = 'Error: ' + e;
     }
 }
 
@@ -68,7 +61,6 @@ async function refreshDevices() {
             list.innerHTML = '<div class="empty-state">No paired devices. Scan to pair.</div>';
         } else {
             devices.forEach(d => {
-                // Paired list with Calibrate + Forget buttons
                 const div = document.createElement('div');
                 div.className = 'device-card';
                 div.innerHTML = `
@@ -77,22 +69,19 @@ async function refreshDevices() {
                         <p>${d.address} • RSSI baseline: ${d.baseline_rssi} dBm</p>
                     </div>
                     <div>
-                        <button class="btn btn-secondary" onclick="calibrateDevice('${d.id}')">📡 Calibrate</button>
+                        <button class="btn btn-secondary" onclick="calibrateDevice('${d.id}', this)">📡 Calibrate</button>
                         <button class="btn btn-danger" onclick="forgetDevice('${d.id}')" style="margin-left:6px;">🗑</button>
-                    </div>
-                `;
+                    </div>`;
                 list.appendChild(div);
 
-                // Calibration list in Settings
                 if (calList) {
                     const cdiv = document.createElement('div');
                     cdiv.style.marginBottom = '8px';
                     cdiv.innerHTML = `
                         <div style="display:flex;justify-content:space-between;align-items:center;">
                             <span style="font-size:14px;">${d.name}</span>
-                            <button class="btn btn-secondary" onclick="calibrateDevice('${d.id}')">📡 Calibrate</button>
-                        </div>
-                    `;
+                            <button class="btn btn-secondary" onclick="calibrateDevice('${d.id}', this)">📡 Calibrate</button>
+                        </div>`;
                     calList.appendChild(cdiv);
                 }
             });
@@ -121,8 +110,7 @@ async function scanDevices() {
                         <h4>${d.name}</h4>
                         <p>RSSI: ${d.rssi} dBm • ${d.address}</p>
                     </div>
-                    <button class="btn" onclick="pairDevice('${d.id}', '${d.name.replace(/'/g, "\\'")}', ${d.rssi}, '${d.address}')">🔗 Pair</button>
-                `;
+                    <button class="btn" onclick="pairDevice('${d.id}', '${d.name.replace(/'/g, "\\'")}', ${d.rssi}, '${d.address}')">🔗 Pair</button>`;
                 list.appendChild(div);
             });
         }
@@ -156,18 +144,25 @@ async function forgetDevice(id) {
     }
 }
 
-async function calibrateDevice(id) {
-    const btn = event.target;
-    btn.disabled = true;
-    btn.textContent = '⏳ Calibrating...';
+// Calibration is deliberately wired to the actual Rust command name.
+// The returned sample count is displayed instead of faking progress in JS.
+async function calibrateDevice(id, button) {
+    const btn = button || (typeof event !== 'undefined' ? event.target : null);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Measuring...';
+    }
     try {
-        const result = await invoke('calibrate_proximity', { id });
-        alert(`📡 Calibration complete!\nMedian: ${result.avg} dBm\nThreshold: ${result.threshold} dBm\nSamples: ${result.samples}`);
+        const result = await invoke('calibrate_device', { id });
+        alert(`📡 Calibration complete!\nMedian/average: ${result.avg} dBm\nThreshold: ${result.threshold} dBm\nSamples: ${result.samples}`);
+        await refreshDevices();
     } catch (e) {
         alert('Calibration failed: ' + e);
     } finally {
-        btn.disabled = false;
-        btn.textContent = '📡 Calibrate';
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '📡 Calibrate';
+        }
     }
 }
 
@@ -180,9 +175,7 @@ async function loadConfig() {
         document.getElementById('logFileToggle').checked = cfg.log_to_file;
         document.getElementById('logConsoleToggle').checked = cfg.log_to_console;
         document.getElementById('logLevelSelect').value = cfg.log_level;
-    } catch (e) {
-        console.error('loadConfig failed:', e);
-    }
+    } catch (e) { console.error('loadConfig failed:', e); }
 }
 
 async function saveConfig() {
@@ -195,18 +188,17 @@ async function saveConfig() {
             log_to_console: document.getElementById('logConsoleToggle').checked,
             log_level: document.getElementById('logLevelSelect').value,
         };
-        await invoke('set_config', { config: cfg });
+        await invoke('update_config', { newConfig: cfg });
         alert('💾 Saved!');
-    } catch (e) {
-        alert('❌ Save failed: ' + e);
-    }
+    } catch (e) { alert('❌ Save failed: ' + e); }
 }
 
 async function toggleDaemon() {
     const enabled = document.getElementById('daemonToggle').checked;
     try {
-        await invoke('toggle_daemon', { enabled });
+        await invoke(enabled ? 'start_daemon' : 'stop_daemon');
         daemonEnabled = enabled;
+        await refreshStatus();
     } catch (e) {
         alert('Toggle daemon failed: ' + e);
         document.getElementById('daemonToggle').checked = !enabled;
@@ -214,57 +206,32 @@ async function toggleDaemon() {
 }
 
 async function lockNow() {
-    try {
-        await invoke('lock_screen');
-    } catch (e) {
-        alert('Lock failed: ' + e);
-    }
+    // lock_screen is not currently exposed by the Rust Tauri command set.
+    // Keep the button honest instead of invoking a nonexistent command.
+    alert('Lock command will be connected after the platform command is exposed.');
 }
 
 async function setWindowsPassword() {
     const pwd = document.getElementById('winPasswordInput').value;
-    if (!pwd) {
-        alert('Enter your Windows password');
-        return;
-    }
+    if (!pwd) { alert('Enter your Windows password'); return; }
     try {
         await invoke('set_windows_password', { password: pwd });
         alert('💾 Windows password encrypted and saved!');
         document.getElementById('winPasswordInput').value = '';
-    } catch (e) {
-        alert('❌ Failed: ' + e);
-    }
+    } catch (e) { alert('❌ Failed: ' + e); }
 }
 
 async function registerCP() {
-    try {
-        await invoke('register_credential_provider');
-        alert('✅ Credential Provider registered! Restart PC to apply.');
-        await refreshStatus();
-    } catch (e) {
-        alert('❌ Registration failed: ' + e);
-    }
+    alert('Credential Provider registration is not exposed by the current Tauri command set yet.');
 }
-
-async function unregisterCP() {
-    if (!confirm('Unregister Credential Provider?')) return;
-    try {
-        await invoke('unregister_credential_provider');
-        alert('✅ Unregistered. Restart PC to apply.');
-        await refreshStatus();
-    } catch (e) {
-        alert('❌ Failed: ' + e);
-    }
-}
+async function unregisterCP() { alert('Credential Provider removal is not exposed by the current Tauri command set yet.'); }
 
 async function loadLogDir() {
     try {
         const path = await invoke('get_log_dir');
         const el = document.getElementById('logDirPath');
         if (el) el.textContent = path;
-    } catch (e) {
-        console.error('loadLogDir failed:', e);
-    }
+    } catch (e) { console.error('loadLogDir failed:', e); }
 }
 
 function copyLogDir() {
@@ -278,33 +245,25 @@ function copyLogDir() {
     });
 }
 
-// Tab switching
 function showTab(tab) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tab).classList.add('active');
-    document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+    const content = document.getElementById('tab-' + tab);
+    const button = document.querySelector(`[data-tab="${tab}"]`);
+    if (content) content.classList.add('active');
+    if (button) button.classList.add('active');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => showTab(btn.dataset.tab));
-    });
-
-    document.getElementById('daemonToggle').addEventListener('change', toggleDaemon);
-    document.getElementById('scanBtn').addEventListener('click', scanDevices);
-    document.getElementById('saveConfigBtn').addEventListener('click', saveConfig);
-    document.getElementById('lockNowBtn').addEventListener('click', lockNow);
-
-    const cpBtn = document.getElementById('cpRegisterBtn');
-    if (cpBtn) cpBtn.addEventListener('click', registerCP);
-    const cpUnregBtn = document.getElementById('cpUnregisterBtn');
-    if (cpUnregBtn) cpUnregBtn.addEventListener('click', unregisterCP);
-    const winPwdBtn = document.getElementById('winPasswordBtn');
-    if (winPwdBtn) winPwdBtn.addEventListener('click', setWindowsPassword);
-    const copyLogBtn = document.getElementById('copyLogDirBtn');
-    if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogDir);
-
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
+    document.getElementById('daemonToggle')?.addEventListener('change', toggleDaemon);
+    document.getElementById('scanBtn')?.addEventListener('click', scanDevices);
+    document.getElementById('saveConfigBtn')?.addEventListener('click', saveConfig);
+    document.getElementById('lockNowBtn')?.addEventListener('click', lockNow);
+    document.getElementById('cpRegisterBtn')?.addEventListener('click', registerCP);
+    document.getElementById('cpUnregisterBtn')?.addEventListener('click', unregisterCP);
+    document.getElementById('winPasswordBtn')?.addEventListener('click', setWindowsPassword);
+    document.getElementById('copyLogDirBtn')?.addEventListener('click', copyLogDir);
     refreshStatus();
     refreshDevices();
     loadConfig();
