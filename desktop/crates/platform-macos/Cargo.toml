@@ -10,3 +10,7 @@ async-trait = "0.1"
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2.11"
 libc = "0.2"
+
+[[bin]]
+name = "wristkey-auth"
+path = "src/bin/wristkey-auth.rs"
