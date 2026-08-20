@@ -253,7 +253,7 @@ mod pipe_server {
         let response = match request.get("action").and_then(|v| v.as_str()).unwrap_or("") {
             "unlock" => match do_ble_unlock(session, ble, conn_mgr).await {
                 Ok(password) => serde_json::json!({"status":"success","password":password}),
-                Err(e) => serde_json::json!({"status":"error","message":e}),
+                Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
             },
             _ => serde_json::json!({"status":"error","message":"unknown action"}),
         };
