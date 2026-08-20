@@ -1,45 +1,49 @@
-//! Linux local authentication bridge.
-//! Production daemon -> helper IPC boundary. The helper never receives a password.
+//! Linux WristKey authentication helper.
+//! Local IPC boundary. The helper never receives a password.
 
-use std::{env, io::{Read, Write}, os::unix::net::{UnixListener, UnixStream}, path::PathBuf, fs, time::{SystemTime, UNIX_EPOCH}};
+use std::{env, fs, io::{Read, Write}, os::unix::{net::{UnixListener, UnixStream}, fs::{PermissionsExt, MetadataExt}}, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
-const SOCKET: &str = "/run/user/1000/wristkey-auth.sock";
-const MAGIC: &[u8] = b"WKEY-AUTH-1";
+const MAGIC: &[u8] = b"WKEY-AUTH-2";
+const SOCKET_NAME: &str = "wristkey-auth.sock";
 const TTL_MS: u128 = 5_000;
 
-fn proof_path(device: &str) -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(".wristkey").join(format!("linux-proof-{}", sanitize(device)))
+fn runtime_socket() -> PathBuf {
+    if let Ok(dir) = env::var("XDG_RUNTIME_DIR") { return PathBuf::from(dir).join(SOCKET_NAME); }
+    PathBuf::from(format!("/run/user/{}/{}", unsafe { libc::getuid() }, SOCKET_NAME))
 }
-fn sanitize(v: &str) -> String { v.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect() }
 
-fn handle(mut stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = Vec::new(); stream.read_to_end(&mut buf)?;
-    if buf.len() < MAGIC.len() + 2 || &buf[..MAGIC.len()] != MAGIC { return Err("invalid request".into()); }
-    let p = MAGIC.len(); let n = u16::from_le_bytes([buf[p], buf[p+1]]) as usize;
-    if buf.len() != p + 2 + n { return Err("invalid nonce".into()); }
-    stream.set_nonblocking(false)?;
-    // The helper only acknowledges a fresh nonce. The daemon must establish
-    // the authenticated IPC peer and issue the nonce after ECDSA verification.
-    stream.write_all(b"OK\n")?;
+fn check_socket_owner(path: &PathBuf) -> std::io::Result<()> {
+    let meta = fs::metadata(path)?;
+    if meta.uid() != unsafe { libc::getuid() } { return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "socket owner mismatch")); }
+    Ok(())
+}
+
+fn serve_client(mut stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
+    let mut req = Vec::new(); stream.read_to_end(&mut req)?;
+    if req.len() < MAGIC.len() + 26 || &req[..MAGIC.len()] != MAGIC { return Err("invalid auth request".into()); }
+    let p = MAGIC.len();
+    let mut tsb = [0u8; 8]; tsb.copy_from_slice(&req[p..p+8]);
+    let timestamp = u64::from_le_bytes(tsb) as u128;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+    if now.saturating_sub(timestamp) > TTL_MS { return Err("request expired".into()); }
+    let n = u16::from_le_bytes([req[p+8], req[p+9]]) as usize;
+    if n < 16 || req.len() != p + 10 + n { return Err("invalid nonce".into()); }
+    let nonce = &req[p+10..];
+    // TODO: enforce SO_PEERCRED against the expected WristKey daemon UID.
+    // The daemon must only issue this request after ECDSA verification.
+    let mut reply = b"WKEY-OK-2".to_vec(); reply.extend_from_slice(nonce);
+    stream.write_all(&reply)?;
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match env::args().nth(1).as_deref() {
-        Some("issue-proof") => {
-            let device = env::args().nth(2).ok_or("device id required")?;
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            let p = proof_path(&device); fs::create_dir_all(p.parent().unwrap())?;
-            fs::write(&p, format!("{}\n", now))?;
-            println!("proof-issued");
-        }
-        Some("serve") => {
-            let _ = fs::remove_file(SOCKET);
-            let listener = UnixListener::bind(SOCKET)?;
-            for stream in listener.incoming() { if let Ok(s) = stream { let _ = handle(s); } }
-        }
-        _ => eprintln!("usage: wristkey-auth serve | issue-proof <device-id>"),
-    }
+    if env::args().nth(1).as_deref() != Some("serve") { eprintln!("usage: wristkey-auth serve"); std::process::exit(2); }
+    let socket = runtime_socket();
+    let _ = fs::remove_file(&socket);
+    fs::create_dir_all(socket.parent().unwrap())?;
+    let listener = UnixListener::bind(&socket)?;
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
+    check_socket_owner(&socket)?;
+    for incoming in listener.incoming() { if let Ok(stream) = incoming { let _ = serve_client(stream); } }
     Ok(())
 }
