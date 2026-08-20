@@ -28,7 +28,7 @@ pub async fn run<R: tauri::Runtime>(app: &tauri::AppHandle<R>, session: Arc<Sess
             Ok(Some(info)) => {
                 let same = info.id == address || info.device_id.as_deref() == Some(device_id.as_str());
                 let rssi = info.rssi.unwrap_or(-127);
-                if same && (-127..=0).contains(&rssi) {
+                if same && (-126..=0).contains(&rssi) {
                     values.push(rssi);
                     let _ = app.emit("calibration-progress", CalibrationProgress { device_id: device_id.clone(), samples: values.len(), target, rssi: rssi as i32 });
                 }
