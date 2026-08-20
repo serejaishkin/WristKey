@@ -1,128 +1,85 @@
 # WristKey — AI Roadmap / Handoff checkpoint
 
-**Дата:** 2026-08-20  
-**Ветка:** `fix/wristkey-20260818`
+**Дата: 2026-08-20**  
+**Ветка: `fix/wristkey-20260818`**
 
-## Текущий фокус
+## Текущий этап
 
-Сейчас работаем **только с Wear OS APK, BLE pairing/reconnect и proximity foundation**.
+### Сделано в Git
 
-### Credential Provider DLL — ЗАМОРОЖЕНО
+- Wear OS `MainActivity` держит экран включённым через `FLAG_KEEP_SCREEN_ON` во время открытой Activity. Это предназначено прежде всего для pairing/challenge UI.
+- Pairing сохраняется в `SharedPreferences` на Wear OS: address, name и pairing key.
+- При повторном подключении уже известного paired PC Wear OS больше не должен открывать новый Pairing UI.
+- Добавлен `ProximityRssiTracker` со state machine:
+  `UNKNOWN → NEAR → PRESENT → SUSPECTED_AWAY → AWAY`.
+- Есть smoothing, hysteresis-пороги, несколько подтверждающих samples и recovery.
+- RSSI не считается authentication.
+- Desktop `ConnectionManager` уже переиспользует существующее BLE connection и перед reconnect останавливает scan.
+- Desktop daemon теперь получает RSSI **через живое подключение** `ConnectionManager`/`BleAdapter::read_rssi()`, а не из scan advertisement. Это важно для реального RSSI именно текущего paired Watch и не требует второго BLE adapter.
+- Desktop daemon и BLE abstraction уже имеют `read_rssi()`.
 
-Пока не делаем:
-- сборку DLL;
-- установку/регистрацию DLL;
-- тест Windows LogonUI;
-- реальный Windows unlock.
+## Важное архитектурное решение: где считать proximity
 
-Возвращаемся к DLL только отдельной командой.
+После проверки текущего BLE протокола выяснилось, что Wear OS работает как GATT server. Android `BluetoothGattServerCallback` не предоставляет peer RSSI в `onConnectionStateChange`.
 
-## Уже сделано
-
-### Wear OS screen awake
-
-В `MainActivity` добавлен `FLAG_KEEP_SCREEN_ON`, чтобы экран WristKey не гас во время интерактивного pairing/challenge flow.
-
-### Persistent pairing
-
-`WristKeyBleService` загружает paired device из `SharedPreferences` при старте и сохраняет address/name после pairing. Этот механизм не ломаем.
-
-### BLE reconnect policy — добавлено
-
-Добавлен:
+Поэтому не надо пытаться делать:
 
 ```text
-wear-os/app/src/main/java/com/wristkey/ble/BleReconnectPolicy.kt
+Watch GATT server → сам узнаёт RSSI PC
 ```
 
-Policy отделяет известный paired BLE address от нового устройства:
+Правильная схема:
 
 ```text
-known address
-    ↓
-reconnect path / no pairing UI
-
-unknown address
-    ↓
-new pairing flow
+Windows PC / btleplug
+        ↓
+active GATT connection
+        ↓
+read_rssi()
+        ↓
+proximity filter
+        ↓
+NEAR / PRESENT / SUSPECTED_AWAY / AWAY
 ```
 
-Добавлены unit tests:
+Watch остаётся endpoint/authenticator. PC является стороной proximity measurement.
+
+Это также лучше соответствует реальной физике BLE: RSSI измеряется со стороны принимающего радио.
+
+## Текущий статус auto-lock/auto-unlock
+
+**НЕ включать новые автоматические действия только из RSSI на этом этапе.**
+
+RSSI должен быть диагностическим/proximity signal. Перед включением auto-lock/auto-unlock необходимо отдельно завершить policy layer и сохранить правило:
 
 ```text
-wear-os/app/src/test/java/com/wristkey/ble/BleReconnectPolicyTest.kt
+RSSI → proximity evidence
+ECDSA challenge/response → identity/authentication
 ```
 
-**Важно:** policy пока является отдельным безопасным слоем. Фактический `WristKeyBleService.onConnectionStateChange()` ещё нужно подключить к нему, чтобы полностью убрать повторное открытие PairingActivity для известного устройства.
+Никакого unlock только потому, что RSSI высокий.
 
-### Proximity RSSI — добавлено
+## Следующий шаг
 
-Добавлен:
+1. Собрать/проверить desktop workspace после изменения live RSSI.
+2. Убедиться, что `read_rssi()` стабильно работает на реальном Galaxy Watch4.
+3. Вывести в diagnostics текущие значения:
+   - raw RSSI;
+   - filtered RSSI;
+   - proximity state;
+   - paired device address.
+4. Только после этого настраивать baseline/calibration.
+5. Затем отдельно подключать proximity policy к crypto flow.
 
-```text
-wear-os/app/src/main/java/com/wristkey/ble/ProximityRssiTracker.kt
-```
+## DLL
 
-Состояния:
+Credential Provider DLL **не собирать и не тестировать**, пока пользователь отдельно не даст команду.
 
-```text
-UNKNOWN → NEAR → PRESENT → SUSPECTED_AWAY → AWAY
-```
+## Безопасность
 
-Есть:
-- EMA smoothing RSSI;
-- подтверждение близости несколькими samples;
-- подтверждение ухода несколькими samples;
-- hysteresis через разные near/away thresholds;
-- восстановление из `SUSPECTED_AWAY`;
-- reset;
-- определение резкого изменения RSSI;
-- unit tests для основных переходов.
-
-Тесты:
-
-```text
-wear-os/app/src/test/java/com/wristkey/ble/ProximityRssiTrackerTest.kt
-```
-
-### Важно
-
-`ProximityRssiTracker` пока **ничего не блокирует и не разблокирует**.
-
-RSSI не является authentication и не является доказательством identity.
-
-Целевая схема:
-
-```text
-BLE RSSI → ProximityRssiTracker → proximity state
-                         ↓
-                 crypto verification
-                         ↓
-                  security action
-```
-
-## Следующий этап
-
-1. Подключить `BleReconnectPolicy` непосредственно в `WristKeyBleService`.
-2. При disconnect сохранить состояние paired device и разрешить нормальный GATT reconnect без нового pairing.
-3. Подключить `ProximityRssiTracker` к реальному RSSI источнику BLE.
-4. Обновлять `lastRssi` и proximity state только для debug/UI; никаких auto-lock/unlock.
-5. Проверить реальные RSSI samples на Galaxy Watch4.
-6. При необходимости откалибровать thresholds/EMA/Kalman после реальных данных.
-7. Только после стабильного proximity слоя обсуждать auto-lock/auto-unlock.
-
-## Reference
-
-Proximity reference: `https://proximitylock.app/`
-
-Берём общие идеи filtering/hysteresis/grace/cooldown, но не копируем реализацию.
-
-## Правила
-
-- Не хранить Windows password.
-- Не делать BLE внутри Credential Provider.
-- Не использовать RSSI как proof identity.
-- Не считать MAC адрес криптографической identity.
-- Не делать auto-unlock на одном факте близости.
-- Не считать build успешным тестом функциональности.
-- После каждого существенного изменения: commit → roadmap.
+- Windows password не хранить.
+- RSSI не является доказательством identity.
+- MAC/address не является криптографической identity.
+- BLE discovery не является authentication.
+- Для unlock обязателен crypto challenge/response.
+- Не создавать дополнительные BLE adapters для proximity без необходимости: текущий daemon должен использовать один живой adapter/ConnectionManager.
