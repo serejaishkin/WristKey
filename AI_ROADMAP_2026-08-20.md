@@ -21,6 +21,9 @@
 - Tauri GUI diagnostics теперь показывает raw RSSI, filtered RSSI, baseline, delta, address и proximity state.
 - GUI больше не использует BLE scan для live RSSI diagnostics.
 - Tauri и background daemon используют **один общий `ConnectionManager`**, чтобы диагностика и daemon переиспользовали одно соединение.
+- Добавлен `desktop/crates/core/src/rssi_calibration.rs`: общий алгоритм калибровки с median, P10, P90 и away threshold, с unit tests.
+- Linux platform теперь умеет получать реальное состояние lock через `loginctl show-session ... LockedHint`; unlock намеренно не эмулирует ввод пароля.
+- macOS platform переведён на системный `CGSession -suspend` для lock; добавлена попытка определения lock state через CoreGraphics session hint; pairing secret хранится в Keychain.
 
 ## Важное архитектурное решение: где считать proximity
 
@@ -29,18 +32,18 @@ Wear OS работает как GATT server. Android `BluetoothGattServerCallbac
 Правильная схема:
 
 ```text
-Windows PC / btleplug
+Windows / macOS / Linux BLE client
         ↓
 active GATT connection
         ↓
 read_rssi()
         ↓
-Tauri Rust command
+Tauri Rust / daemon
         ↓
-GUI diagnostics / proximity filter
+calibration + proximity filter
 ```
 
-Watch остаётся endpoint/authenticator. PC является стороной proximity measurement.
+Watch остаётся endpoint/authenticator. Desktop OS является стороной proximity measurement.
 
 ## Tauri GUI правило
 
@@ -53,10 +56,96 @@ ConnectionManager
     ↓
 BleAdapter
     ↓
-btleplug / Windows BLE
+btleplug / native BLE backend
 ```
 
 Не использовать Web Bluetooth API для WristKey BLE.
+
+## RSSI calibration
+
+Цель калибровки — не выбрать один случайный RSSI, а получить профиль конкретных часов на конкретном BLE adapter/PC:
+
+```text
+samples
+  ↓
+validation
+  ↓
+sort
+  ├── P10
+  ├── median
+  └── P90
+       ↓
+away_threshold = median - margin
+```
+
+Минимум: 10 валидных samples. В production UI лучше собирать 30–60 samples.
+
+**Важно:** calibration profile должен быть привязан к device identity/adapter context. Не использовать один baseline для всех Watch или всех ПК.
+
+`rssi_calibration.rs` сейчас является чистым алгоритмическим слоем; Tauri UI wiring для длительного sample collection остаётся следующим шагом.
+
+## Linux
+
+Текущее направление:
+
+```text
+Tauri
+ ↓
+Rust daemon
+ ↓
+BLE
+ ↓
+PlatformSecurity(Linux)
+ ↓
+loginctl / PAM
+```
+
+Уже есть:
+
+- `loginctl lock-session`;
+- реальный `LockedHint`;
+- PAM entry point;
+- user-owned proof file с коротким TTL.
+
+Следующий Linux этап:
+
+1. вынести PAM proof из простого timestamp-файла в подписанный/одноразовый proof;
+2. сделать install package для PAM без автоматической установки из приложения;
+3. проверить GNOME/KDE/Wayland/X11;
+4. затем подключать crypto challenge/response к PAM.
+
+Не считать текущий `.last_auth` полноценной криптографической authentication boundary.
+
+## macOS
+
+Текущее направление:
+
+```text
+Tauri
+ ↓
+Rust daemon
+ ↓
+BLE
+ ↓
+Keychain + macOS session APIs
+```
+
+Уже есть:
+
+- Keychain-backed pairing secret;
+- системный lock через `CGSession -suspend`;
+- lock-state probe;
+- PAM-compatible entry points как задел.
+
+Следующий macOS этап:
+
+1. привязать Keychain item к конкретному WristKey device, а не глобальному `pairing_key`;
+2. определить стабильный способ account/user mapping;
+3. заменить временный proof-file flow на signed one-time authentication proof;
+4. проверить macOS login/unlock ограничения отдельно от обычного screen lock;
+5. только после этого делать полноценный authentication integration.
+
+**Не обещать программный unlock macOS простым вызовом API:** screen lock и login authentication — разные уровни.
 
 ## Текущий статус auto-lock/auto-unlock
 
@@ -73,12 +162,14 @@ ECDSA challenge/response → identity/authentication
 
 ## Следующий шаг
 
-1. Проверить сборку desktop/Tauri после live RSSI integration.
-2. Проверить `get_proximity_status` на реальном Galaxy Watch4.
-3. Собрать несколько минут RSSI в разных положениях/расстояниях.
-4. Настроить baseline/calibration по реальным данным.
-5. Проверить reconnect: diagnostics → disconnect → reconnect без нового pairing.
-6. Только после этого подключать proximity policy к crypto flow.
+1. Подключить `rssi_calibration` к Tauri command.
+2. Добавить в Tauri GUI режим `Calibrate` на 30–60 samples.
+3. Показывать median/P10/P90 и сохранять baseline для конкретного Watch.
+4. Проверить сборку desktop/Tauri.
+5. Проверить calibration на реальном Galaxy Watch4.
+6. Проверить reconnect: diagnostics → disconnect → reconnect без нового pairing.
+7. После этого отдельно продолжить Linux PAM и macOS authentication integration.
+8. Только затем подключать proximity policy к crypto flow.
 
 ## DLL
 
