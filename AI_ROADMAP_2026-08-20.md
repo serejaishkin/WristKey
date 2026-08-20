@@ -27,13 +27,40 @@
 
 `WristKeyBleService` загружает paired device из `SharedPreferences` при старте и сохраняет address/name после pairing. Этот механизм не ломаем.
 
-## Новый этап — proximity foundation
+### BLE reconnect policy — добавлено
 
-Добавлены:
+Добавлен:
 
 ```text
-wear-os/app/src/main/java/com/wristkey/ble/ProximityEngine.kt
-wear-os/app/src/main/java/com/wristkey/ble/ProximityEngineTest.kt
+wear-os/app/src/main/java/com/wristkey/ble/BleReconnectPolicy.kt
+```
+
+Policy отделяет известный paired BLE address от нового устройства:
+
+```text
+known address
+    ↓
+reconnect path / no pairing UI
+
+unknown address
+    ↓
+new pairing flow
+```
+
+Добавлены unit tests:
+
+```text
+wear-os/app/src/test/java/com/wristkey/ble/BleReconnectPolicyTest.kt
+```
+
+**Важно:** policy пока является отдельным безопасным слоем. Фактический `WristKeyBleService.onConnectionStateChange()` ещё нужно подключить к нему, чтобы полностью убрать повторное открытие PairingActivity для известного устройства.
+
+### Proximity RSSI — добавлено
+
+Добавлен:
+
+```text
+wear-os/app/src/main/java/com/wristkey/ble/ProximityRssiTracker.kt
 ```
 
 Состояния:
@@ -43,24 +70,31 @@ UNKNOWN → NEAR → PRESENT → SUSPECTED_AWAY → AWAY
 ```
 
 Есть:
-- подтверждение близости несколькими RSSI samples;
-- несколько samples для ухода;
-- hysteresis между near/away thresholds;
+- EMA smoothing RSSI;
+- подтверждение близости несколькими samples;
+- подтверждение ухода несколькими samples;
+- hysteresis через разные near/away thresholds;
 - восстановление из `SUSPECTED_AWAY`;
 - reset;
-- последний RSSI;
+- определение резкого изменения RSSI;
 - unit tests для основных переходов.
+
+Тесты:
+
+```text
+wear-os/app/src/test/java/com/wristkey/ble/ProximityRssiTrackerTest.kt
+```
 
 ### Важно
 
-`ProximityEngine` пока **ничего не блокирует и не разблокирует**.
+`ProximityRssiTracker` пока **ничего не блокирует и не разблокирует**.
 
 RSSI не является authentication и не является доказательством identity.
 
 Целевая схема:
 
 ```text
-BLE RSSI → ProximityEngine → proximity state
+BLE RSSI → ProximityRssiTracker → proximity state
                          ↓
                  crypto verification
                          ↓
@@ -69,11 +103,13 @@ BLE RSSI → ProximityEngine → proximity state
 
 ## Следующий этап
 
-1. Проверить текущую persistent pairing логику по коду и не вызывать pairing UI для уже известного device.
-2. Добавить контролируемый BLE reconnect/recovery после disconnect.
-3. Подключить `ProximityEngine` к BLE RSSI только для debug/state.
-4. После реальных RSSI samples добавить EMA/Kalman filtering при необходимости.
-5. Только после стабильного proximity слоя обсуждать auto-lock/auto-unlock.
+1. Подключить `BleReconnectPolicy` непосредственно в `WristKeyBleService`.
+2. При disconnect сохранить состояние paired device и разрешить нормальный GATT reconnect без нового pairing.
+3. Подключить `ProximityRssiTracker` к реальному RSSI источнику BLE.
+4. Обновлять `lastRssi` и proximity state только для debug/UI; никаких auto-lock/unlock.
+5. Проверить реальные RSSI samples на Galaxy Watch4.
+6. При необходимости откалибровать thresholds/EMA/Kalman после реальных данных.
+7. Только после стабильного proximity слоя обсуждать auto-lock/auto-unlock.
 
 ## Reference
 
