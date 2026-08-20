@@ -65,4 +65,7 @@ dependencies {
     implementation("androidx.compose.material:material")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+
+    // Local unit tests
+    testImplementation("junit:junit:4.13.2")
 }
