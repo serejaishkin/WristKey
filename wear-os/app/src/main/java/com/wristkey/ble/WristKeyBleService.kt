@@ -49,6 +49,7 @@ class WristKeyBleService : Service() {
         val SERVICE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
         val RESPONSE_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567892")
+        val PUBLIC_KEY_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567893")
         val CONFIG_CHAR_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567894")
         val UNLOCK_REQUEST_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567895")
         val UNLOCK_RESPONSE_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567896")
@@ -61,6 +62,7 @@ class WristKeyBleService : Service() {
     private var advertiseCallback: AdvertiseCallback? = null
     private var challengeCharacteristic: BluetoothGattCharacteristic? = null
     private var responseCharacteristic: BluetoothGattCharacteristic? = null
+    private var publicKeyCharacteristic: BluetoothGattCharacteristic? = null
     private var configCharacteristic: BluetoothGattCharacteristic? = null
     private var unlockRequestCharacteristic: BluetoothGattCharacteristic? = null
     private var unlockResponseCharacteristic: BluetoothGattCharacteristic? = null
@@ -111,10 +113,9 @@ class WristKeyBleService : Service() {
         Log.i(TAG, "WakeLock acquired")
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        if (pairedDeviceAddress != null) {
-            Log.i(TAG, "Paired device restored -- starting GATT server immediately")
-            startGattServer()
-        }
+        // GATT must exist before the first pairing. The desktop initiates pairing
+        // by connecting to this service, so do not gate the server on paired state.
+        startGattServer()
         startAdvertising()
         registerBluetoothStateReceiver()
         registerUnlockReceiver()
@@ -206,24 +207,22 @@ class WristKeyBleService : Service() {
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .build()
 
-        // Primary advertisement data — только UUID (31 байт лимит)
         val data = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
-            .setIncludeDeviceName(false)  // Имя в scan response, не здесь
+            .setIncludeDeviceName(false)
             .build()
 
-        // Scan response — имя устройства + PIN
         val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
             .addServiceData(ParcelUuid(SERVICE_UUID), getAdvertisePin().toByteArray())
             .build()
 
         val callback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) { 
-                Log.i(TAG, "Advertising started (UUID: $SERVICE_UUID)") 
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                Log.i(TAG, "Advertising started (UUID: $SERVICE_UUID)")
             }
-            override fun onStartFailure(errorCode: Int) { 
-                Log.e(TAG, "Advertising failed: $errorCode") 
+            override fun onStartFailure(errorCode: Int) {
+                Log.e(TAG, "Advertising failed: $errorCode")
             }
         }
 
@@ -238,6 +237,7 @@ class WristKeyBleService : Service() {
 
     private fun startGattServer() {
         val manager = getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
+        gattServer?.close()
         gattServer = manager.openGattServer(this, gattServerCallback)
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         challengeCharacteristic = BluetoothGattCharacteristic(CHALLENGE_CHAR_UUID,
@@ -245,6 +245,8 @@ class WristKeyBleService : Service() {
             BluetoothGattCharacteristic.PERMISSION_WRITE)
         responseCharacteristic = BluetoothGattCharacteristic(RESPONSE_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_NOTIFY, BluetoothGattCharacteristic.PERMISSION_READ)
+        publicKeyCharacteristic = BluetoothGattCharacteristic(PUBLIC_KEY_CHAR_UUID,
+            BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ)
         configCharacteristic = BluetoothGattCharacteristic(CONFIG_CHAR_UUID,
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
             BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE)
@@ -256,6 +258,7 @@ class WristKeyBleService : Service() {
             BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE)
         service.addCharacteristic(challengeCharacteristic)
         service.addCharacteristic(responseCharacteristic)
+        service.addCharacteristic(publicKeyCharacteristic)
         service.addCharacteristic(configCharacteristic)
         service.addCharacteristic(unlockRequestCharacteristic)
         service.addCharacteristic(unlockResponseCharacteristic)
@@ -266,7 +269,7 @@ class WristKeyBleService : Service() {
 
     private fun stopGattServer() {
         gattServer?.close(); gattServer = null
-        challengeCharacteristic = null; responseCharacteristic = null; configCharacteristic = null
+        challengeCharacteristic = null; responseCharacteristic = null; publicKeyCharacteristic = null; configCharacteristic = null
         unlockRequestCharacteristic = null; unlockResponseCharacteristic = null; pairingKeyCharacteristic = null
         Log.i(TAG, "GATT server stopped")
     }
@@ -319,6 +322,19 @@ class WristKeyBleService : Service() {
                 val configData = byteArrayOf(0x01, (currentPin shr 8).toByte(), currentPin.toByte(),
                     if (isPaired()) 0x01 else 0x00)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, configData)
+            } else if (characteristic?.uuid == PUBLIC_KEY_CHAR_UUID) {
+                val publicKey = keyStoreManager.getPublicKey()
+                if (offset >= publicKey.size) {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null)
+                } else {
+                    gattServer?.sendResponse(
+                        device,
+                        requestId,
+                        BluetoothGatt.GATT_SUCCESS,
+                        offset,
+                        publicKey.copyOfRange(offset, publicKey.size)
+                    )
+                }
             } else {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
             }
