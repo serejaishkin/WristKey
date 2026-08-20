@@ -40,8 +40,12 @@ class ProximityRssiTracker(
         filtered = filtered?.let { it + smoothingAlpha * (rssi - it) } ?: rssi.toDouble()
         val f = filtered ?: rssi.toDouble()
 
+        // Confirmation is deliberately based on consecutive raw RSSI samples.
+        // The EMA remains useful for diagnostics/UI, but using it for the state
+        // thresholds would delay transitions too much and make recovery depend
+        // on the previous RSSI history.
         when {
-            f >= nearThreshold -> {
+            rssi >= nearThreshold -> {
                 nearSamples++
                 awaySamples = 0
                 if (state == State.SUSPECTED_AWAY || state == State.AWAY) {
@@ -54,7 +58,7 @@ class ProximityRssiTracker(
                     state = if (state == State.UNKNOWN) State.NEAR else State.PRESENT
                 }
             }
-            f <= awayThreshold -> {
+            rssi <= awayThreshold -> {
                 awaySamples++
                 nearSamples = 0
                 recoverSamples = 0
