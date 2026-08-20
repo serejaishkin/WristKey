@@ -1,40 +1,58 @@
-#[cfg(target_os = "macos")]
-use wristkey_core::vault::KeyProtector;
 use wristkey_core::{PlatformSecurity, Result, SessionManager};
-#[cfg(target_os = "macos")]
-use security_framework::os::macos::keychain::SecKeychain;
 use async_trait::async_trait;
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
-const SERVICE: &str = "com.wristkey.pairing";
+use security_framework::os::macos::keychain::SecKeychain;
+
+/// macOS-local credential vault. The password never enters BLE or the Watch.
 #[cfg(target_os = "macos")]
-const ACCOUNT: &str = "pairing_key";
+pub struct MacosVault;
 
 #[cfg(target_os = "macos")]
-pub struct MacosKeyProtector;
-#[cfg(target_os = "macos")]
-impl KeyProtector for MacosKeyProtector {
-    fn protect(&self, key: &[u8]) -> Vec<u8> {
-        let _ = SecKeychain::default().and_then(|kc| kc.find_generic_password(SERVICE, ACCOUNT)).and_then(|(_, item)| item.delete());
-        let _ = SecKeychain::default().and_then(|kc| kc.add_generic_password(SERVICE, ACCOUNT, key));
-        // The actual secret lives in Keychain; the serialized value is only a marker.
-        vec![1]
+impl MacosVault {
+    fn service(device_id: &str) -> String { format!("com.wristkey.unlock.{}", device_id) }
+    fn account() -> &'static str { "login_password" }
+
+    pub fn set_password(device_id: &str, password: &str) -> Result<()> {
+        let service = Self::service(device_id);
+        let keychain = SecKeychain::default().map_err(|e| wristkey_core::WristKeyError::Platform(e.to_string()))?;
+        if let Ok((_, item)) = keychain.find_generic_password(&service, Self::account()) {
+            let _ = item.delete();
+        }
+        keychain.add_generic_password(&service, Self::account(), password.as_bytes())
+            .map_err(|e| wristkey_core::WristKeyError::Platform(e.to_string()))?;
+        Ok(())
     }
-    fn unprotect(&self, _data: &[u8]) -> Option<Vec<u8>> {
-        let keychain = SecKeychain::default().ok()?;
-        let (password, _) = keychain.find_generic_password(SERVICE, ACCOUNT).ok()?;
-        Some(password.as_ref().to_vec())
+
+    pub fn get_password(device_id: &str) -> Result<String> {
+        let service = Self::service(device_id);
+        let keychain = SecKeychain::default().map_err(|e| wristkey_core::WristKeyError::Platform(e.to_string()))?;
+        let (password, _) = keychain.find_generic_password(&service, Self::account())
+            .map_err(|e| wristkey_core::WristKeyError::Platform(e.to_string()))?;
+        String::from_utf8(password.as_ref().to_vec())
+            .map_err(|_| wristkey_core::WristKeyError::Platform("Keychain password is not UTF-8".into()))
+    }
+
+    pub fn delete_password(device_id: &str) -> Result<()> {
+        let service = Self::service(device_id);
+        let keychain = SecKeychain::default().map_err(|e| wristkey_core::WristKeyError::Platform(e.to_string()))?;
+        if let Ok((_, item)) = keychain.find_generic_password(&service, Self::account()) {
+            let _ = item.delete();
+        }
+        Ok(())
     }
 }
+
 #[cfg(not(target_os = "macos"))]
-pub struct MacosKeyProtector;
+pub struct MacosVault;
+
 #[cfg(not(target_os = "macos"))]
-impl wristkey_core::vault::KeyProtector for MacosKeyProtector {
-    fn protect(&self, key: &[u8]) -> Vec<u8> { key.to_vec() }
-    fn unprotect(&self, data: &[u8]) -> Option<Vec<u8>> { Some(data.to_vec()) }
+impl MacosVault {
+    pub fn set_password(_device_id: &str, _password: &str) -> Result<()> { Err(wristkey_core::WristKeyError::Platform("macOS vault unavailable on this platform".into())) }
+    pub fn get_password(_device_id: &str) -> Result<String> { Err(wristkey_core::WristKeyError::Platform("macOS vault unavailable on this platform".into())) }
+    pub fn delete_password(_device_id: &str) -> Result<()> { Err(wristkey_core::WristKeyError::Platform("macOS vault unavailable on this platform".into())) }
 }
-pub fn create_protector() -> MacosKeyProtector { MacosKeyProtector }
 
 pub struct MacosSecurity;
 impl Default for MacosSecurity { fn default() -> Self { Self::new() } }
@@ -54,15 +72,16 @@ impl PlatformSecurity for MacosSecurity {
         }
         Ok(())
     }
+
     async fn unlock_screen(&self) -> Result<()> {
-        // Do not automate password entry. macOS authentication must be integrated through
-        // the platform authentication/PAM-equivalent flow in a later phase.
+        // The daemon must not synthesize keystrokes. Authentication is performed by
+        // the dedicated macOS authentication/helper layer after Watch verification.
         Ok(())
     }
+
     async fn is_locked(&self) -> Result<bool> {
         #[cfg(target_os = "macos")]
         {
-            // ioreg exposes the current CoreGraphics session lock hint on supported macOS builds.
             let out = tokio::process::Command::new("ioreg").args(["-n", "Root", "-d", "1"]).output().await;
             if let Ok(out) = out {
                 let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
@@ -72,9 +91,12 @@ impl PlatformSecurity for MacosSecurity {
         }
         Ok(false)
     }
+
     async fn register_as_authenticator(&self) -> Result<()> { Ok(()) }
 }
 
+/// Temporary PAM bridge: it only consumes a short-lived local proof.
+/// The proof is created only after the daemon has verified the Watch signature.
 #[cfg(target_os = "macos")]
 const PAM_SUCCESS: libc::c_int = 0;
 #[cfg(target_os = "macos")]
@@ -83,8 +105,7 @@ const PAM_IGNORE: libc::c_int = 25;
 #[cfg(target_os = "macos")]
 #[no_mangle]
 pub extern "C" fn pam_sm_authenticate(_pamh: *mut libc::c_void, _flags: libc::c_int, _argc: libc::c_int, _argv: *const *const libc::c_char) -> libc::c_int {
-    let uid = unsafe { libc::getuid() };
-    let home = std::env::var("HOME").unwrap_or_else(|_| format!("/Users/{}", uid));
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/unknown".to_string());
     let proof_path = std::path::PathBuf::from(home).join(".wristkey/.last_auth");
     let contents = match std::fs::read_to_string(&proof_path) { Ok(c) => c, Err(_) => return PAM_IGNORE };
     let timestamp: u64 = contents.lines().next().unwrap_or("0").parse().unwrap_or(0);
