@@ -2,7 +2,12 @@ name: Build Wear OS APK
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - fix/wristkey-20260818
+    paths:
+      - 'wear-os/**'
+  pull_request:
     paths:
       - 'wear-os/**'
   workflow_dispatch:
@@ -12,23 +17,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        
+
       - name: Grant execute permission for gradlew
         run: chmod +x wear-os/gradlew
-        
-      - name: Build APK
+
+      - name: Build Wear OS debug APK
         working-directory: wear-os
         run: ./gradlew assembleDebug
-        
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
