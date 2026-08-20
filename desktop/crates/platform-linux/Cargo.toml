@@ -6,6 +6,11 @@ edition = "2021"
 [dependencies]
 wristkey-core = { path = "../core" }
 async-trait = "0.1"
+tokio = { version = "1", features = ["process", "rt", "macros"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[[bin]]
+name = "wristkey-auth"
+path = "src/bin/wristkey-auth.rs"
