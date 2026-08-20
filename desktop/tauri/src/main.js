@@ -4,6 +4,7 @@ let currentState = 'disconnected';
 let currentDeviceCount = 0;
 let daemonEnabled = false;
 let cpRegistered = false;
+let calibrationListenersReady = false;
 
 async function invoke(cmd, args = {}) {
     try {
@@ -12,6 +13,36 @@ async function invoke(cmd, args = {}) {
         console.error(`Invoke ${cmd} failed:`, e);
         throw e;
     }
+}
+
+function updateCalibrationProgress(deviceId, current, total, rssi) {
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    const cards = document.querySelectorAll(`[data-calibration-device="${CSS.escape(deviceId)}"]`);
+    cards.forEach(card => {
+        const progress = card.querySelector('.calibration-progress');
+        const text = card.querySelector('.calibration-progress-text');
+        if (progress) progress.value = percent;
+        if (text) text.textContent = `⏳ ${current}/${total} • ${rssi} dBm`;
+    });
+}
+
+async function setupCalibrationListeners() {
+    if (calibrationListenersReady || !window.__TAURI__?.event) return;
+    calibrationListenersReady = true;
+    await window.__TAURI__.event.listen('calibration-progress', event => {
+        const p = event.payload || {};
+        updateCalibrationProgress(String(p.device_id ?? ''), Number(p.current ?? 0), Number(p.total ?? 0), Number(p.rssi ?? -100));
+    });
+    await window.__TAURI__.event.listen('calibration-done', event => {
+        const p = event.payload || {};
+        const cards = document.querySelectorAll(`[data-calibration-device="${CSS.escape(String(p.device_id ?? ''))}"]`);
+        cards.forEach(card => {
+            const progress = card.querySelector('.calibration-progress');
+            const text = card.querySelector('.calibration-progress-text');
+            if (progress) progress.value = 100;
+            if (text) text.textContent = `✅ ${Number(p.samples ?? 0)} samples • median ${Number(p.median ?? 0)} dBm • threshold ${Number(p.threshold ?? 0)} dBm`;
+        });
+    });
 }
 
 async function refreshStatus() {
@@ -77,11 +108,14 @@ async function refreshDevices() {
                 if (calList) {
                     const cdiv = document.createElement('div');
                     cdiv.style.marginBottom = '8px';
+                    cdiv.dataset.calibrationDevice = d.id;
                     cdiv.innerHTML = `
                         <div style="display:flex;justify-content:space-between;align-items:center;">
                             <span style="font-size:14px;">${d.name}</span>
                             <button class="btn btn-secondary" onclick="calibrateDevice('${d.id}', this)">📡 Calibrate</button>
-                        </div>`;
+                        </div>
+                        <progress class="calibration-progress" value="0" max="100" style="width:100%;margin-top:6px;"></progress>
+                        <div class="calibration-progress-text" style="font-size:12px;opacity:.75;margin-top:3px;">Ready</div>`;
                     calList.appendChild(cdiv);
                 }
             });
@@ -144,8 +178,6 @@ async function forgetDevice(id) {
     }
 }
 
-// Calibration is deliberately wired to the actual Rust command name.
-// The returned sample count is displayed instead of faking progress in JS.
 async function calibrateDevice(id, button) {
     const btn = button || (typeof event !== 'undefined' ? event.target : null);
     if (btn) {
@@ -206,8 +238,6 @@ async function toggleDaemon() {
 }
 
 async function lockNow() {
-    // lock_screen is not currently exposed by the Rust Tauri command set.
-    // Keep the button honest instead of invoking a nonexistent command.
     alert('Lock command will be connected after the platform command is exposed.');
 }
 
@@ -255,6 +285,7 @@ function showTab(tab) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    setupCalibrationListeners();
     document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
     document.getElementById('daemonToggle')?.addEventListener('change', toggleDaemon);
     document.getElementById('scanBtn')?.addEventListener('click', scanDevices);
