@@ -1,0 +1,680 @@
+2026-08-20T10:38:28.798332Z  INFO wristkey_tauri: WristKey starting up...
+2026-08-20T10:38:28.822433Z  INFO wristkey_ble: BLE adapter candidate: WinRT
+2026-08-20T10:38:28.822457Z  INFO wristkey_ble: BLE adapter selected
+2026-08-20T10:45:17.993694Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:18.486906Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:18.488875Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:18.734921Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:18.736922Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:19.063217Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=None rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:19.065435Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:19.076787Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:19.078463Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:20.601014Z  INFO wristkey_ble: BLE device: addr=D8:C8:0C:A5:A5:53 name=None rssi=Some(-62) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.023851Z  INFO wristkey_ble: BLE device: addr=78:8B:72:3B:F5:92 name=None rssi=Some(-61) wristkey_service=false wristkey_manufacturer=false samsung=true watch=false
+2026-08-20T10:45:21.026217Z  INFO wristkey_ble: BLE device: addr=78:8B:72:3B:F5:92 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-61) wristkey_service=false wristkey_manufacturer=false samsung=true watch=true
+2026-08-20T10:45:21.144199Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.146529Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.490039Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-62) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.492018Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-62) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.661102Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.663323Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.743142Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.745194Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.856058Z  INFO wristkey_ble: BLE device: addr=78:8B:72:3B:F5:92 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=true watch=true
+2026-08-20T10:45:21.858095Z  INFO wristkey_ble: BLE device: addr=78:8B:72:3B:F5:92 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=true watch=true
+2026-08-20T10:45:21.970691Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:21.972276Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:22.446232Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-74) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:22.448447Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:22.554085Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T10:45:22.556495Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.947547Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.947547Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.947604Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.947620Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.949775Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.949780Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.949782Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:33.949791Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.701111Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.701127Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.701148Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.701155Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.703017Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.703025Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.703024Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:34.703030Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.850397Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.850394Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.850411Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.850440Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.852581Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.852588Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.852586Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.852593Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.954198Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.954216Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.954219Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.954228Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.956488Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.956493Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.956497Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:35.956503Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-86) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:36.072379Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=None rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:18:36.072399Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=None rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:18:36.072411Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=None rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:18:36.074328Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:36.074336Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:36.314235Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:36.314251Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:36.316143Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:36.316151Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.220359Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.220374Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.222408Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.222416Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.233139Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.233151Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.235413Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.235422Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.341278Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.341293Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.343515Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.343523Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.572278Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.572293Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.574173Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.574181Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.695184Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.695200Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.697076Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.697084Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.703132Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-54) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.703142Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-54) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.705122Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-55) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.705132Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-55) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:37.819675Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:37.819691Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.050377Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.050392Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.052672Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.052681Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.066068Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.066082Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.067957Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.067964Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.444095Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.444112Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.445951Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.445956Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:18:38.640280Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.640301Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.642397Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.642405Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.767290Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-54) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.767307Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-54) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.769196Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-54) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:38.769206Z  INFO wristkey_ble: BLE device: addr=4E:F2:DB:26:BD:DC name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-54) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:18:47.165101Z  INFO wristkey_tauri: Pairing: connecting to Unknown (4E:F2:DB:26:BD:DC)
+2026-08-20T11:51:27.931369Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.931418Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.931435Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.931438Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.931444Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.931450Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.933829Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.933831Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.933837Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.962158Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.962158Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:27.962177Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.052643Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:28.052655Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:28.052665Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:28.052668Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:28.054609Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:28.054616Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:28.054619Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:28.057405Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-84) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.057417Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-84) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.057420Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-84) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.059413Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-84) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.059422Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-84) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.059426Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-84) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.165361Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.165378Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.165382Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.167573Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.167580Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.167583Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-69) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.761113Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.761128Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.761131Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.763305Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.763315Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:28.763319Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.308003Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.308019Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.308022Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.309963Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.309972Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.309974Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-67) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.554233Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.554248Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.554251Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.556080Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.556087Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.556090Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.778286Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.778303Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.778306Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-60) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.801999Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.802013Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.802016Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:29.911681Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.911696Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.911699Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.913555Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.913560Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:29.913562Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.141388Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:30.141404Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:30.141407Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:30.143653Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:30.143661Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:30.143664Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:30.849380Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.849395Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.849398Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.851346Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.851353Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.851357Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.979332Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.979349Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.979354Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.981251Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.981259Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:30.981261Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-58) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.111446Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.111461Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.111464Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.113311Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.113318Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.113320Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.513262Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.513277Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.513280Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:31.689571Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.689588Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.689592Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.691479Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.691488Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.691491Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.930409Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-80) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.930425Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-80) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.930427Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-80) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.932607Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-80) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.932612Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-80) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.932615Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-80) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.941991Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.942007Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.942013Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.943906Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.943914Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:31.943917Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:32.040460Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:32.040477Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:32.040479Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:32.042325Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:32.042335Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:32.042338Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:32.270062Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:32.270080Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:32.270082Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:32.271638Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:32.271643Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:32.271645Z  INFO wristkey_ble: BLE device: addr=6C:42:C8:13:6F:7F name=None rssi=Some(-60) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:34.839855Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839863Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839875Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839875Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839879Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839880Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839881Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.839883Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841807Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841812Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841814Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841816Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841815Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841822Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841826Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:34.841830Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-59) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670468Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670483Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670475Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670489Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670491Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670492Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670495Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.670498Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672361Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672369Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672372Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672374Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672374Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672381Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672384Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.672387Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:35.686143Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686156Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686154Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686160Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686161Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686162Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686164Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:35.686166Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:36.733237Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733258Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733261Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733237Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733263Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733268Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733274Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:36.733278Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-56) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076673Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076684Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076690Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076693Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076694Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076697Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076697Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.076700Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078637Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078639Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078645Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078646Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078648Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078650Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078650Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.078653Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607927Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607937Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607944Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607944Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607947Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607948Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607949Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.607950Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609818Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609825Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609826Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609828Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609829Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609831Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609831Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:37.609834Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411645Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411657Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411663Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411664Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411666Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411668Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411669Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.411671Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413603Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413602Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413610Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413611Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413613Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413615Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413615Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.413618Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543764Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543772Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543779Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543779Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543783Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543783Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543785Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.543786Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:38.690676Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690686Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690692Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690695Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690697Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690696Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690702Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.690707Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692649Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692659Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692662Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692665Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692665Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692672Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692677Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.692683Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773384Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773396Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773404Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773405Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773410Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773409Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773414Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.773415Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776334Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776343Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776354Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776354Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776359Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776360Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776364Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:38.776364Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-77) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187560Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187556Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187572Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187572Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187575Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187575Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187578Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.187578Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313721Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313738Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313728Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313743Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313745Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313745Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313748Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.313751Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315596Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315599Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315603Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315602Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315605Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315606Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315607Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:39.315608Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-83) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:51:41.255424Z  INFO wristkey_tauri: Pairing: connecting to Galaxy Watch4 (N5XN) (42:B1:27:FC:8B:79)
+2026-08-20T11:51:44.033498Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T11:51:44.033514Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T11:51:44.033516Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T11:51:44.033517Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T11:51:44.033518Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T11:51:44.033519Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T11:51:44.864633Z  INFO wristkey_core: pairing started
+2026-08-20T11:51:46.752482Z  INFO wristkey_core: saved device 98cc697d-5ba7-4a58-aaea-2c7c935cc463
+2026-08-20T11:51:46.752495Z  INFO wristkey_core: pairing completed for 98cc697d-5ba7-4a58-aaea-2c7c935cc463
+2026-08-20T11:51:46.971040Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971048Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971056Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971058Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971060Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971062Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971063Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971064Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971065Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.971067Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:51:46.972911Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972919Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972922Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972920Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972924Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972926Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972927Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972930Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972933Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:46.972936Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:51:49.113089Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T11:51:49.113100Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T11:51:49.113101Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T11:51:49.113102Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T11:51:49.113102Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T11:51:49.113103Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T11:53:48.811105Z  INFO wristkey_tauri: WristKey starting up...
+2026-08-20T11:53:48.835586Z  INFO wristkey_ble: BLE adapter candidate: WinRT
+2026-08-20T11:53:48.835612Z  INFO wristkey_ble: BLE adapter selected
+2026-08-20T11:59:40.165011Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-67) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T11:59:40.166825Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-67) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:40.927710Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=None rssi=Some(-71) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:40.929965Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-71) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:41.037771Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:41.040236Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:41.729590Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:41.731518Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:43.138274Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-77) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:43.140227Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-76) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:43.271463Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:43.273697Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-67) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:44.363410Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:44.365346Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.247029Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.247041Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.247046Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.247049Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.368883Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.368891Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.368899Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.368900Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-82) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.371196Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.371205Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.371206Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.371212Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-81) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.494919Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-95) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.494935Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-95) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.494938Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-95) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:55.494945Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-95) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.232168Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.232176Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.232185Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.232186Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.234614Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.234621Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.234622Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.234628Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-75) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:56.315905Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.315915Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.315923Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.315926Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.317812Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.317819Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.317823Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.317829Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.580289Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.580305Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.580305Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.580315Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.582286Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.582293Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.582300Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:56.582308Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-65) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.086948Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.086964Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.086963Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.086971Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.089240Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.089249Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.089249Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.089255Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:58.094680Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.094687Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.094693Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.094693Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.096546Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.096550Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.096558Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.096564Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-63) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.907690Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.907690Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.907711Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.907711Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.910025Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.910025Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.910038Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:58.910039Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-69) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T11:59:59.500163Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.500170Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.500178Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.500179Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.502764Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.502774Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.502773Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.502779Z  INFO wristkey_ble: BLE device: addr=38:2C:E5:47:69:BB name=Some("TY") rssi=Some(-70) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.505417Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.505423Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.505433Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.505439Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.507340Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.507352Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.507353Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.507357Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-64) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.622890Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.622901Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.622907Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.622908Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.624932Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.624944Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.624949Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.624956Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-68) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.867353Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.867370Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.867372Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.867381Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.869343Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.869348Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.869351Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T11:59:59.869354Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-63) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:00.099202Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.099209Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.099219Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.099222Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.101735Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.101741Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.101746Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:00.101747Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-66) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:03.132787Z  INFO wristkey_tauri: Pairing: connecting to Galaxy Watch4 (N5XN) (42:B1:27:FC:8B:79)
+2026-08-20T12:00:05.519721Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T12:00:05.519733Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T12:00:05.519734Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T12:00:05.519735Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T12:00:05.519735Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T12:00:05.519736Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T12:00:06.073661Z  INFO wristkey_core: pairing started
+2026-08-20T12:00:48.775613Z  INFO wristkey_tauri: Pairing: connecting to Galaxy Watch4 (N5XN) (42:B1:27:FC:8B:79)
+2026-08-20T12:00:49.180444Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:49.180452Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:49.180461Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:49.180462Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:49.180465Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:49.180466Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:49.182483Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:49.182484Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:49.182492Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:49.182493Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:49.182494Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:49.182496Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:51.962367Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T12:00:51.962378Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T12:00:51.962379Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T12:00:51.962379Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T12:00:51.962380Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T12:00:51.962380Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T12:00:52.524165Z  INFO wristkey_core: pairing started
+2026-08-20T12:00:55.261749Z  INFO wristkey_core: saved device d27ebade-acdf-4dbc-9aec-1fd4e34e39ac
+2026-08-20T12:00:55.261763Z  INFO wristkey_core: pairing completed for d27ebade-acdf-4dbc-9aec-1fd4e34e39ac
+2026-08-20T12:00:58.213714Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213720Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213730Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213731Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213733Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213735Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213736Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.213738Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:00:58.215576Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215585Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215589Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215592Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215634Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215672Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215677Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:58.215682Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-57) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:00:59.736934Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736944Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736955Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736956Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736960Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736960Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736964Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736965Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736968Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.736968Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739239Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739250Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739254Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739257Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739260Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739261Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739265Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739265Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739268Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:00:59.739270Z  INFO wristkey_ble: BLE device: addr=E8:22:81:C8:AB:5F name=Some("midea") rssi=Some(-91) wristkey_service=false wristkey_manufacturer=false samsung=false watch=false
+2026-08-20T12:01:00.491955Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:00.491966Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:00.491967Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:00.491967Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T12:01:00.491968Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T12:01:00.491968Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T12:01:07.265970Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265979Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265987Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265988Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265991Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265992Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265994Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265995Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265997Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265998Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.265999Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.266001Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.266002Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.266004Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.266005Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.266006Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=None rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=false
+2026-08-20T12:01:07.267838Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267846Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267849Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267851Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267850Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267854Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267856Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267857Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267859Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267861Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267861Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267863Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267866Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267870Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267872Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.267875Z  INFO wristkey_ble: BLE device: addr=42:B1:27:FC:8B:79 name=Some("Galaxy Watch4 (N5XN)") rssi=Some(-70) wristkey_service=true wristkey_manufacturer=true samsung=false watch=true
+2026-08-20T12:01:07.350837Z  INFO wristkey_ble: BLE peripheral already connected: 42:B1:27:FC:8B:79
+2026-08-20T12:01:08.608671Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:08.608683Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:08.608685Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:08.608685Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T12:01:08.608686Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T12:01:08.608686Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T12:01:09.016665Z  INFO wristkey_ble: GATT service: 00001800-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:09.016676Z  INFO wristkey_ble: GATT service: 00001801-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:09.016677Z  INFO wristkey_ble: GATT service: 0000180a-0000-1000-8000-00805f9b34fb
+2026-08-20T12:01:09.016678Z  INFO wristkey_ble: GATT service: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+2026-08-20T12:01:09.016679Z  INFO wristkey_ble: GATT service: e73e0001-ef1b-4e74-8291-2e4f3164f3b5
+2026-08-20T12:01:09.016679Z  INFO wristkey_ble: GATT service: eed6d5cc-c3b2-4d7b-8c6b-7acbf7965bb6
+2026-08-20T13:28:16.833113Z  INFO wristkey_tauri: WristKey starting up...
+2026-08-20T13:28:16.860833Z  INFO wristkey_ble: BLE adapter candidate: WinRT
+2026-08-20T13:28:16.860857Z  INFO wristkey_ble: BLE adapter selected
+2026-08-20T13:29:22.753765Z  INFO wristkey_tauri: WristKey starting up...
+2026-08-20T13:29:22.774673Z  INFO wristkey_ble: BLE adapter candidate: WinRT
+2026-08-20T13:29:22.774696Z  INFO wristkey_ble: BLE adapter selected
+2026-08-20T17:24:41.858159Z  INFO wristkey_tauri: WristKey starting up...
+2026-08-20T17:24:41.948010Z  INFO wristkey_ble: BLE adapter candidate: WinRT
+2026-08-20T17:24:41.948029Z  INFO wristkey_ble: BLE adapter selected
