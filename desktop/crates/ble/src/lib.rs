@@ -4,6 +4,7 @@
 //! * listen for both DeviceDiscovered and DeviceUpdated; Windows often reports
 //!   already-known peripherals through DeviceUpdated only;
 //! * keep the adapter alive for the whole daemon lifetime;
+//! * keep the adapter alive for the whole daemon lifetime;
 //! * never treat "Samsung" or "Galaxy Watch" alone as WristKey. The custom
 //!   WristKey service must be advertised or discovered after connection.
 
@@ -63,9 +64,6 @@ impl BtleplugAdapter {
         if adapters.is_empty() {
             return Err(WristKeyError::Ble("no BLE adapter".into()));
         }
-
-        // Prefer an adapter that is explicitly Bluetooth-capable on Windows,
-        // but keep a deterministic fallback for machines with one adapter.
         let mut selected = None;
         for candidate in &adapters {
             match candidate.adapter_info().await {
@@ -121,14 +119,34 @@ impl BleAdapter for BtleplugAdapter {
                 Ok(events) => events,
                 Err(e) => { error!("BLE events unavailable: {}", e); return; }
             };
-            
-            // Use a set to track already sent devices to avoid duplicates
-            let mut sent_devices = HashSet::new();
-            
+
+            // Windows may already know the watch before this scan starts.
+            // Enumerate the current adapter cache immediately instead of relying
+            // exclusively on DeviceDiscovered.
+            let mut sent_devices: HashSet<String> = HashSet::new();
+            if let Ok(peripherals) = adapter.peripherals().await {
+                for peripheral in peripherals {
+                    if let Ok(Some(props)) = peripheral.properties().await {
+                        let device_key = peripheral.address().to_string();
+                        info!("BLE existing device: addr={} name={:?} rssi={:?} services={:?}",
+                            peripheral.address(), props.local_name, props.rssi, props.services);
+                        sent_devices.insert(device_key.clone());
+                        let info = PeripheralInfo {
+                            pin: None,
+                            device_id: None,
+                            id: device_key,
+                            name: props.local_name.clone(),
+                            rssi: props.rssi,
+                            service_uuids: props.services.clone(),
+                            raw_manufacturer_data: None,
+                        };
+                        if tx.send(info).await.is_err() { return; }
+                    }
+                }
+            }
+
             while let Some(event) = events.next().await {
                 let id = match event {
-                    // On Windows an already-known Galaxy Watch commonly comes
-                    // through DeviceUpdated rather than DeviceDiscovered.
                     CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => id,
                     _ => continue,
                 };
@@ -147,20 +165,17 @@ impl BleAdapter for BtleplugAdapter {
                 let is_wristkey_manufacturer = props.manufacturer_data.contains_key(&0xFFFF);
                 let is_samsung = props.manufacturer_data.contains_key(&SAMSUNG_MANUF_ID);
                 let is_watch = is_likely_watch(&props.local_name, &props.services);
+                let device_key = peripheral.address().to_string();
 
-                info!("BLE device: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={}",
+                info!("BLE device update: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={}",
                     peripheral.address(), props.local_name, props.rssi, is_wristkey_service,
                     is_wristkey_manufacturer, is_samsung, is_watch);
-                
-                // Only emit WristKey devices (with service or manufacturer data) or Samsung watches, and avoid duplicates
-                let device_key = peripheral.address().to_string();
-                if (is_wristkey_service || is_wristkey_manufacturer || is_watch) && !sent_devices.contains(&device_key) {
-                    sent_devices.insert(device_key);
 
-                    // Samsung/watch is a candidate, not proof of WristKey. We still
-                    // emit it so the higher layer can display/debug it, while the
-                    // actual connection verifies the WristKey GATT service.
-                    // Manufacturer data format: [0xFF, 0xFF, PIN_4_bytes...]
+                // Discovery is intentionally broad. The actual WristKey GATT
+                // service is verified during connect/pairing, so showing a real
+                // BLE peripheral here is safe and makes Windows discovery usable.
+                if !sent_devices.contains(&device_key) || is_wristkey_service || is_wristkey_manufacturer || is_watch || is_samsung {
+                    sent_devices.insert(device_key.clone());
                     let pin = if is_wristkey_manufacturer && manufacturer_data.len() >= 6 {
                         String::from_utf8(manufacturer_data[2..6].to_vec()).ok()
                     } else { None };
@@ -170,7 +185,7 @@ impl BleAdapter for BtleplugAdapter {
                     let info = PeripheralInfo {
                         pin,
                         device_id,
-                        id: peripheral.address().to_string(),
+                        id: device_key,
                         name: props.local_name.clone(),
                         rssi: props.rssi,
                         service_uuids: props.services.clone(),
@@ -205,8 +220,6 @@ impl BleAdapter for BtleplugAdapter {
             peripheral.connect().await.map_err(|e| WristKeyError::Ble(format!("connect: {}", e)))?;
         }
 
-        // Samsung Wear OS can take a moment before its GATT database becomes
-        // visible. Retry discovery instead of accepting an empty database.
         let mut services = Vec::new();
         for attempt in 1..=8 {
             if let Err(e) = peripheral.discover_services().await {
@@ -217,8 +230,7 @@ impl BleAdapter for BtleplugAdapter {
             tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
         }
 
-        let has_wristkey = services.iter().any(|s| s.uuid == info.service_uuids.iter().copied().find(|u| u.to_string().eq_ignore_ascii_case("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).unwrap_or_else(|| Uuid::nil()))
-            || services.iter().any(|s| s.uuid.to_string().eq_ignore_ascii_case("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
+        let has_wristkey = services.iter().any(|s| s.uuid.to_string().eq_ignore_ascii_case("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
         for svc in &services {
             info!("GATT service: {}", svc.uuid);
             for ch in &svc.characteristics { debug!("  characteristic {} props={:?}", ch.uuid, ch.properties); }
@@ -253,13 +265,9 @@ impl BleAdapter for BtleplugAdapter {
         let chars = peripheral.characteristics();
         let ch = chars.iter().find(|c| c.uuid == characteristic)
             .ok_or_else(|| WristKeyError::Ble(format!("characteristic {} not found", characteristic)))?;
-        
-        // Check if characteristic supports notify/indicate
-        if !ch.properties.contains(CharPropFlags::NOTIFY) && 
-           !ch.properties.contains(CharPropFlags::INDICATE) {
+        if !ch.properties.contains(CharPropFlags::NOTIFY) && !ch.properties.contains(CharPropFlags::INDICATE) {
             return Err(WristKeyError::Ble(format!("characteristic {} does not support notify/indicate", characteristic)));
         }
-        
         peripheral.subscribe(ch).await.map_err(|e| WristKeyError::Ble(format!("subscribe: {}", e)))?;
         let mut notifications = peripheral.notifications().await.map_err(|e| WristKeyError::Ble(format!("notifications: {}", e)))?;
         let (tx, rx) = mpsc::channel(32);
