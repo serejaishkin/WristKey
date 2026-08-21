@@ -5,61 +5,67 @@
 
 ## Текущий этап
 
-### Сделано в Git
+### Сделано
 
 - Wear OS pairing сохраняется на часах.
 - `ProximityRssiTracker` использует подтверждение по последовательным raw RSSI samples.
 - Desktop proximity loop использует paired-device identity и cryptographic challenge/response для unlock.
 - Tauri desktop GUI остаётся текущим desktop entry point.
-- Desktop pairing ранее создавал `PairedDevice` только в `MemoryStorage`, поэтому после убийства процесса список paired devices исчезал.
-- Исправлено: Tauri desktop теперь открывает persistent `SqliteStorage` при старте.
-- SQLite storage используется для paired devices, baseline RSSI, device identity и локального encrypted credential field.
-- Если persistent SQLite storage не открывается, приложение теперь завершает запуск с ошибкой вместо тихого перехода на volatile memory storage.
+- Desktop pairing переведён на persistent `SqliteStorage`; paired devices переживают перезапуск процесса.
+- Если persistent SQLite storage не открывается, приложение завершается с ошибкой вместо silent volatile fallback.
+- Desktop daemon автоматически запускается при старте Tauri.
+- При старте daemon пытается выполнить silent reconnect/authenticate для сохранённого paired device.
+- `ConnectionManager` теперь удаляет stale connection после неудачного RSSI probe и выполняет до 6 свежих reconnect attempts с backoff.
+- GUI daemon toggle исправлен: использует зарегистрированные `start_daemon` / `stop_daemon`, а не несуществующий `toggle_daemon`.
+- GUI pairing исправлен: передаёт BLE `address`, который Rust-команда требует явно.
+- Ошибка `Command calibrate_proximity not found` исправлена: GUI теперь вызывает зарегистрированный `calibrate_device`.
+- Calibration больше не возвращает фиктивные 10 samples: desktop собирает 20 реальных RSSI samples, требует минимум 10 валидных samples, вычисляет average и сохраняет новый `baseline_rssi` в SQLite.
+- Desktop больше не молча переходит на `MockBleAdapter`, если реальный BLE adapter не инициализировался.
 
-### Последний commit
+### Последние commits
 
 - `83dcb98` — `Use persistent SQLite storage for desktop pairing`
+- `c4b5da9` — `Fix Tauri calibration command and BLE pairing address`
+- `24b97ee` — `Harden BLE reconnect after desktop restart`
+- `896cb56` — `Implement real RSSI calibration and require real BLE adapter`
 
 ## Следующая проверка — desktop restart / reconnect
 
-После сборки проверить строго этот сценарий:
+После `git pull` и сборки проверить строго:
 
 1. Запустить desktop WristKey.
 2. Выполнить pairing с часами.
-3. Убедиться, что paired device отображается в GUI.
-4. Полностью завершить desktop процесс.
+3. Убедиться, что paired device отображается.
+4. Полностью убить desktop процесс.
 5. Запустить desktop снова.
-6. Проверить, что paired device всё ещё отображается.
-7. Проверить, что daemon начинает BLE discovery без нового pairing.
-8. Проверить automatic reconnect / `get_or_connect()` для известного устройства.
-9. Проверить cryptographic unlock после reconnect.
+6. Убедиться, что paired device НЕ исчез.
+7. Посмотреть log: должен появиться `Daemon started` / `Silent reconnect`.
+8. Убедиться, что BLE соединение создаётся без нового pairing.
+9. Проверить cryptographic challenge/response.
+10. Проверить unlock.
 
-Важно: сохранение `PairedDevice` и восстановление списка устройств теперь отделены от lifetime desktop процесса. Само BLE connection состояние намеренно не сохраняется — после restart соединение должно быть создано заново через discovery + known-device matching.
+Если reconnect не произойдёт, нужен именно новый runtime log с момента запуска до `Silent reconnect failed`; кодовая цепочка теперь существует и должна быть диагностируема.
 
-## Calibration — отдельный блок
+## Calibration — теперь реальная
 
-Текущая ошибка:
+GUI должен:
 
-`Calibration failed: Command calibrate_proximity not found`
+- вызвать `calibrate_device`;
+- подключиться к сохранённым часам через `ConnectionManager`;
+- снять 20 RSSI readings примерно за 6 секунд;
+- отбросить значения вне `-127..0`;
+- потребовать минимум 10 валидных samples;
+- записать среднее как новый baseline;
+- вернуть average / threshold / sample count.
 
-Это не проблема SQLite/reconnect. Нужно отдельно проверить GATT `CONFIG_CHAR` и Wear OS command handling.
-
-План:
-
-1. Проверить фактический UUID `CONFIG_CHAR` на Wear OS.
-2. Проверить, что desktop пишет именно ожидаемую команду.
-3. Проверить command parser на Wear OS.
-4. Проверить ответ/notification после `START_CALIBRATION`.
-5. Только после этого возвращать calibration UI в рабочий статус.
-
-Не маскировать `Command calibrate_proximity not found` изменением текста ошибки: сначала исправить protocol mismatch.
+Никаких `calibrate_proximity` или `START_CALIBRATION` command protocol для этой операции больше не требуется: calibration выполняется desktop-side по RSSI существующего BLE GATT connection.
 
 ## RSSI
 
 - RSSI остаётся proximity evidence, а не authentication.
-- Baseline RSSI должен храниться в persistent storage.
-- Proximity thresholds должны использовать baseline конкретного paired device.
-- Не создавать второй независимый BLE adapter для calibration без необходимости.
+- Baseline RSSI хранится в persistent storage.
+- Threshold считается относительно baseline конкретного paired device.
+- Не создавать второй независимый BLE adapter для calibration.
 
 ## Security invariants
 
