@@ -3,25 +3,17 @@ if (!window.__TAURI__?.core?.invoke) {
 }
 const invoke = window.__TAURI__?.core?.invoke;
 
-// Navigation
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    // Hide all tabs
     document.querySelectorAll('.tab').forEach(t => t.classList.add('hidden'));
-    // Show selected tab
     const tab = document.getElementById('tab-' + btn.dataset.tab);
     if (tab) tab.classList.remove('hidden');
-    // Update active button
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    // Load devices when switching to devices tab
-    if (btn.dataset.tab === 'devices') {
-      loadDevices();
-    }
+    if (btn.dataset.tab === 'devices') loadDevices();
   });
 });
 
-// Status polling
 async function refreshStatus() {
   try {
     const st = await invoke('get_status');
@@ -29,39 +21,26 @@ async function refreshStatus() {
     const title = document.getElementById('statusTitle');
     const detail = document.getElementById('statusDetail');
     const daemonToggle = document.getElementById('daemonToggle');
-
     title.textContent = st.state.charAt(0).toUpperCase() + st.state.slice(1);
     detail.textContent = st.detail;
-
-    if (st.state === 'locked') {
-      icon.textContent = '🔒';
-      icon.classList.add('locked');
-    } else if (st.state === 'authenticated') {
-      icon.textContent = '🔓';
-      icon.classList.remove('locked');
-    } else {
-      icon.textContent = '⏳';
-      icon.classList.remove('locked');
-    }
-
+    if (st.state === 'locked') { icon.textContent = '🔒'; icon.classList.add('locked'); }
+    else if (st.state === 'authenticated') { icon.textContent = '🔓'; icon.classList.remove('locked'); }
+    else { icon.textContent = '⏳'; icon.classList.remove('locked'); }
     if (daemonToggle) daemonToggle.checked = st.daemon_enabled;
-  } catch (e) {
-    console.error('Status error:', e);
-  }
+  } catch (e) { console.error('Status error:', e); }
 }
 setInterval(refreshStatus, 2000);
 refreshStatus();
 
-// Daemon toggle
 document.getElementById('daemonToggle')?.addEventListener('change', async (e) => {
   try {
-    await invoke('toggle_daemon', { enabled: e.target.checked });
+    await invoke(e.target.checked ? 'start_daemon' : 'stop_daemon');
   } catch (err) {
+    e.target.checked = !e.target.checked;
     console.error('Toggle daemon error:', err);
   }
 });
 
-// Paired devices
 async function loadDevices() {
   try {
     const devices = await invoke('get_paired_devices');
@@ -85,12 +64,9 @@ async function loadDevices() {
         </div>
       </div>
     `).join('');
-  } catch (e) {
-    console.error('Devices error:', e);
-  }
+  } catch (e) { console.error('Devices error:', e); }
 }
 
-// Scan
 document.getElementById('scanBtn').addEventListener('click', async () => {
   const btn = document.getElementById('scanBtn');
   const res = document.getElementById('scanResults');
@@ -122,7 +98,6 @@ document.getElementById('scanBtn').addEventListener('click', async () => {
   btn.textContent = '🔍 Scan for 30 seconds';
 });
 
-// Settings
 document.getElementById('saveBtn').addEventListener('click', async () => {
   const cfg = {
     auto_lock_timeout_sec: parseInt(document.getElementById('timeoutInput').value),
@@ -133,27 +108,14 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     await invoke('set_config', { config: cfg });
     document.getElementById('saveStatus').textContent = '✅ Saved';
     setTimeout(() => document.getElementById('saveStatus').textContent = '', 2000);
-  } catch (e) {
-    document.getElementById('saveStatus').textContent = '❌ ' + e;
-  }
+  } catch (e) { document.getElementById('saveStatus').textContent = '❌ ' + e; }
 });
 
-// Lock button
 document.getElementById('lockBtn').addEventListener('click', async () => {
-  try {
-    await invoke('lock_screen');
-  } catch (e) {
-    alert('Lock failed: ' + e);
-  }
+  try { await invoke('lock_screen'); } catch (e) { alert('Lock failed: ' + e); }
 });
-
-// Unlock button
 document.getElementById('unlockBtn')?.addEventListener('click', async () => {
-  try {
-    await invoke('unlock_screen');
-  } catch (e) {
-    alert('Unlock failed: ' + e);
-  }
+  try { await invoke('unlock_screen'); } catch (e) { alert('Unlock failed: ' + e); }
 });
 
 function escapeHtml(text) {
@@ -164,12 +126,8 @@ function escapeHtml(text) {
 
 async function forgetDevice(id) {
   if (!confirm('Remove this device?')) return;
-  try {
-    await invoke('forget_device', { id });
-    loadDevices();
-  } catch (e) {
-    alert('Forget failed: ' + e);
-  }
+  try { await invoke('forget_device', { id }); loadDevices(); }
+  catch (e) { alert('Forget failed: ' + e); }
 }
 
 async function pairDevice(id, name, rssi) {
@@ -178,24 +136,21 @@ async function pairDevice(id, name, rssi) {
   btn.disabled = true;
   btn.textContent = '⏳ Pairing…';
   try {
-    await invoke('pair_device', { req: { id, name, rssi } });
+    // scan_devices exposes the BLE address as id; Rust requires it explicitly.
+    await invoke('pair_device', { req: { id, name, rssi, address: id } });
     alert('✅ Paired successfully!');
     loadDevices();
-  } catch (e) {
-    alert('❌ Pair failed: ' + e);
-  }
+  } catch (e) { alert('❌ Pair failed: ' + e); }
   btn.disabled = false;
   btn.textContent = '🔗 Pair';
 }
 
 async function calibrateDevice(id, name) {
   if (!confirm(`Calibrate proximity for ${name}?\nHold watch near PC for 10s.`)) return;
-
   const progressDiv = document.getElementById('calibrateProgress');
   const progressBar = document.getElementById('calibrateBar');
   const progressText = document.getElementById('calibrateText');
   progressDiv.classList.remove('hidden');
-
   let progress = 0;
   const interval = setInterval(() => {
     progress += 10;
@@ -203,9 +158,10 @@ async function calibrateDevice(id, name) {
     progressText.textContent = `Calibrating… ${progress}%`;
     if (progress >= 100) clearInterval(interval);
   }, 1000);
-
   try {
-    const result = await invoke('calibrate_proximity', { id });
+    // Tauri registers `calibrate_device`; the old `calibrate_proximity` name
+    // caused the exact "Command calibrate_proximity not found" failure.
+    const result = await invoke('calibrate_device', { id });
     clearInterval(interval);
     progressBar.style.width = '100%';
     progressText.textContent = `✅ Calibrated! Avg: ${result.avg} dBm, Threshold: ${result.threshold} dBm`;
@@ -218,9 +174,7 @@ async function calibrateDevice(id, name) {
   }
 }
 
-// macOS password management
 document.addEventListener('DOMContentLoaded', async () => {
-  // Show macOS password row only on macOS
   const isMac = navigator.platform.toLowerCase().includes('mac');
   if (isMac) {
     document.getElementById('macosPasswordRow').style.display = 'block';
@@ -232,43 +186,24 @@ async function checkMacosAccessibility() {
   try {
     const granted = await invoke('check_macos_accessibility');
     const status = document.getElementById('macosAccessibilityStatus');
-    if (granted) {
-      status.textContent = '✅ Accessibility permission granted';
-      status.style.color = '#10b981';
-    } else {
-      status.innerHTML = '⚠️ Accessibility permission REQUIRED. <a href="#" onclick="openAccessibilitySettings()">Open Settings</a>';
-    }
-  } catch (e) {
-    console.error('Accessibility check error:', e);
-  }
+    if (granted) { status.textContent = '✅ Accessibility permission granted'; status.style.color = '#10b981'; }
+    else status.innerHTML = '⚠️ Accessibility permission REQUIRED. <a href="#" onclick="openAccessibilitySettings()">Open Settings</a>';
+  } catch (e) { console.error('Accessibility check error:', e); }
 }
-
-function openAccessibilitySettings() {
-  // macOS URL scheme for opening System Settings
-  window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-}
+function openAccessibilitySettings() { window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'); }
 
 document.getElementById('saveMacosPasswordBtn')?.addEventListener('click', async () => {
   const pwd = document.getElementById('macosPasswordInput').value;
-  if (!pwd) {
-    document.getElementById('macosPasswordStatus').textContent = '❌ Enter password first';
-    return;
-  }
+  if (!pwd) { document.getElementById('macosPasswordStatus').textContent = '❌ Enter password first'; return; }
   try {
     await invoke('set_macos_password', { password: pwd });
     document.getElementById('macosPasswordStatus').textContent = '✅ Password saved to Keychain';
     document.getElementById('macosPasswordInput').value = '';
     checkMacosAccessibility();
-  } catch (e) {
-    document.getElementById('macosPasswordStatus').textContent = '❌ ' + e;
-  }
+  } catch (e) { document.getElementById('macosPasswordStatus').textContent = '❌ ' + e; }
 });
 
 document.getElementById('deleteMacosPasswordBtn')?.addEventListener('click', async () => {
-  try {
-    await invoke('delete_macos_password');
-    document.getElementById('macosPasswordStatus').textContent = '✅ Password deleted from Keychain';
-  } catch (e) {
-    document.getElementById('macosPasswordStatus').textContent = '❌ ' + e;
-  }
+  try { await invoke('delete_macos_password'); document.getElementById('macosPasswordStatus').textContent = '✅ Password deleted from Keychain'; }
+  catch (e) { document.getElementById('macosPasswordStatus').textContent = '❌ ' + e; }
 });
