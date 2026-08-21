@@ -10,6 +10,9 @@ use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
+mod sqlite_storage;
+pub use sqlite_storage::SqliteStorage;
+
 pub type Result<T> = std::result::Result<T, WristKeyError>;
 
 #[derive(thiserror::Error, Debug, Clone)]
