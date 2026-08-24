@@ -62,13 +62,30 @@ impl ConnectionManager {
                         _ => false,
                     };
 
-                    if address_match || device_id_match || name_match {
+                    // A Galaxy Watch can expose several BLE endpoints. Matching
+                    // the saved name alone is not sufficient: only a peripheral
+                    // that advertises WristKey's custom service/manufacturer data
+                    // is eligible for silent reconnect. The final GATT check in
+                    // BleAdapter::connect remains the authoritative validation.
+                    let wristkey_advertised =
+                        candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
+                            || candidate.raw_manufacturer_data.is_some()
+                            || candidate.device_id.is_some();
+
+                    if (address_match || device_id_match || name_match) && wristkey_advertised {
                         info!(
-                            "BLE reconnect resolved: saved_id={} -> current_id={} name={:?} address={}",
+                            "BLE reconnect resolved: saved_id={} -> current_id={} name={:?} address={} wristkey_advertised=true",
                             info.id, candidate.id, candidate.name, candidate.id
                         );
                         let _ = adapter.stop_scan().await;
                         return Ok(candidate);
+                    }
+
+                    if (address_match || device_id_match || name_match) && !wristkey_advertised {
+                        debug!(
+                            "BLE reconnect candidate rejected: id={} name={:?} matched saved device but has no WristKey advertisement",
+                            candidate.id, candidate.name
+                        );
                     }
                 }
                 Ok(None) => break,
@@ -78,7 +95,7 @@ impl ConnectionManager {
 
         let _ = adapter.stop_scan().await;
         Err(WristKeyError::Ble(format!(
-            "paired BLE peripheral not discovered (saved id {}, name {:?})",
+            "paired BLE peripheral not discovered with WristKey advertisement (saved id {}, name {:?})",
             info.id, info.name
         )))
     }
