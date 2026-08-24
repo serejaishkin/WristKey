@@ -1,5 +1,5 @@
 use wristkey_core::vault::{DeviceVault, KeyProtector};
-use wristkey_core::{PlatformSecurity, WristKeyError, Result, SessionManager};
+use wristkey_core::{PlatformSecurity, Result, SessionManager};
 use wristkey_crypto::generate_key;
 use std::sync::Arc;
 use windows::Win32::Security::Cryptography::{
