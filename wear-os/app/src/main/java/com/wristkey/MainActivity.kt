@@ -57,12 +57,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // WristKey is an interactive security/pairing screen. Keep the watch display
-        // awake while this Activity is visible so pairing/challenge confirmation is
-        // not interrupted by the normal screen timeout.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         if (!hasRequiredPermissions()) requestPermissions() else bindAndStartService()
         setContent { MaterialTheme { MainScreen() } }
     }
@@ -103,37 +98,36 @@ class MainActivity : ComponentActivity() {
     private fun bindAndStartService() {
         Intent(this, WristKeyBleService::class.java).also { intent ->
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+            else startService(intent)
         }
     }
 
     @Composable
     fun MainScreen() {
         var pin by remember { mutableStateOf("----") }
-        var statusText by remember { mutableStateOf("Starting...") }
+        var statusText by remember { mutableStateOf("Запуск...") }
         var macAddress by remember { mutableStateOf("") }
-        var showResetConfirm by remember { mutableStateOf(false) }
+        var paired by remember { mutableStateOf(false) }
+        var showNewPcConfirm by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
             while (true) {
-                pin = bleService?.getAdvertisePin() ?: "----"
-                macAddress = bleService?.getCurrentBluetoothAddress() ?: ""
-                val pcName = bleService?.getRequestingPcName()
+                val svc = bleService
+                paired = svc?.isPaired() == true
+                pin = if (!paired) svc?.getAdvertisePin() ?: "----" else "----"
+                macAddress = svc?.getCurrentBluetoothAddress() ?: ""
+                val pcName = svc?.getRequestingPcName()
                 statusText = when {
-                    bleService == null -> "Service connecting..."
-                    bleService?.pairingRequested?.get() == true -> {
-                        if (pcName != null) "PC '$pcName' wants to pair!" else "PC wants to pair!"
+                    svc == null -> "Подключение службы..."
+                    svc.pairingRequested.get() -> {
+                        if (pcName != null) "ПК «$pcName»\nзапрашивает сопряжение" else "ПК запрашивает\nсопряжение"
                     }
-                    bleService?.isPaired() == true -> {
-                        val name = bleService?.getPairedDeviceName() ?: "PC"
-                        val address = bleService?.getPairedDeviceAddress() ?: ""
-                        if (address.isNotEmpty()) "Paired with $name\n$address" else "Paired with $name"
+                    paired -> {
+                        val name = svc.getPairedDeviceName() ?: "ПК"
+                        "Последний ПК:\n$name"
                     }
-                    else -> "Ready to pair"
+                    else -> "ПК не настроен"
                 }
                 delay(1000)
             }
@@ -159,67 +153,91 @@ class MainActivity : ComponentActivity() {
                         Text(statusText, style = MaterialTheme.typography.caption2,
                             textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp))
                     }
-                    item {
-                        Spacer(Modifier.height(12.dp))
-                        Text("PIN", style = MaterialTheme.typography.caption3)
-                        Text(pin, style = MaterialTheme.typography.display1, color = MaterialTheme.colors.primary)
-                    }
-                    item {
-                        if (macAddress.isNotEmpty()) {
-                            Text("MAC: $macAddress", style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
+
+                    if (!paired || bleService?.pairingRequested?.get() == true) {
+                        item {
+                            Spacer(Modifier.height(10.dp))
+                            Text("Код настройки", style = MaterialTheme.typography.caption3)
+                            Text(pin, style = MaterialTheme.typography.display1,
+                                color = MaterialTheme.colors.primary)
                         }
                     }
-                    item {
-                        Button(onClick = {
-                            val svc = bleService
-                            if (svc != null && svc.pairingRequested.get()) {
-                                val ok = svc.confirmPairing()
-                                Toast.makeText(this@MainActivity, if (ok) "Paired!" else "Pairing failed", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(this@MainActivity, "No pairing request", Toast.LENGTH_SHORT).show()
+
+                    if (macAddress.isNotEmpty()) {
+                        item {
+                            Text("MAC: $macAddress", style = MaterialTheme.typography.caption2,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 8.dp))
+                        }
+                    }
+
+                    if (bleService?.pairingRequested?.get() == true) {
+                        item {
+                            Button(onClick = {
+                                val svc = bleService
+                                if (svc != null) {
+                                    val ok = svc.confirmPairing()
+                                    Toast.makeText(this@MainActivity,
+                                        if (ok) "ПК сохранён" else "Сопряжение не удалось",
+                                        Toast.LENGTH_SHORT).show()
+                                }
+                            }, modifier = Modifier.fillMaxWidth(0.8f)) {
+                                Text("Подтвердить")
                             }
-                        }, modifier = Modifier.fillMaxWidth(0.8f)) { Text("Confirm Pairing") }
+                        }
                     }
+
                     item {
-                        Chip(label = { Text("⚙ Settings") },
+                        Chip(
+                            label = { Text("⚙ Настройки") },
                             onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
-                            modifier = Modifier.fillMaxWidth(0.8f))
+                            modifier = Modifier.fillMaxWidth(0.8f)
+                        )
                     }
+
                     item {
-                        Chip(label = { Text("🔄 Reset pairing") },
-                            onClick = { showResetConfirm = true },
+                        Chip(
+                            label = { Text("＋ Настроить новый ПК") },
+                            onClick = { showNewPcConfirm = true },
                             colors = ChipDefaults.secondaryChipColors(),
-                            modifier = Modifier.fillMaxWidth(0.8f))
+                            modifier = Modifier.fillMaxWidth(0.8f)
+                        )
                     }
                 }
             }
-            if (showResetConfirm) {
+
+            if (showNewPcConfirm) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.85f)),
+                        .background(Color.Black.copy(alpha = 0.9f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(16.dp)
                     ) {
-                        Text("Reset pairing?", style = MaterialTheme.typography.title3)
-                        Spacer(Modifier.height(8.dp))
-                        Text("This will generate a new PIN. You'll need to re-pair with your PC.",
-                            style = MaterialTheme.typography.body2,
+                        Text("Настроить новый ПК?", style = MaterialTheme.typography.title3,
                             textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Будет создан новый код настройки.\nПосле подтверждения новый ПК станет последним подключённым.",
+                            style = MaterialTheme.typography.body2,
+                            textAlign = TextAlign.Center
+                        )
                         Spacer(Modifier.height(16.dp))
                         Button(onClick = {
                             bleService?.forgetDevice()
-                            Toast.makeText(this@MainActivity, "Pairing reset", Toast.LENGTH_SHORT).show()
-                            showResetConfirm = false
-                        }) { Text("Reset") }
+                            Toast.makeText(this@MainActivity,
+                                "Режим настройки включён",
+                                Toast.LENGTH_SHORT).show()
+                            showNewPcConfirm = false
+                        }) { Text("Начать") }
                         Spacer(Modifier.height(8.dp))
                         Button(
-                            onClick = { showResetConfirm = false },
+                            onClick = { showNewPcConfirm = false },
                             colors = ButtonDefaults.secondaryButtonColors()
-                        ) { Text("Cancel") }
+                        ) { Text("Отмена") }
                     }
                 }
             }
