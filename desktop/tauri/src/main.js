@@ -112,8 +112,9 @@ async function forgetDevice(id) {
 async function calibrateDevice(id) {
     const btn = event.target; btn.disabled = true; btn.textContent = '⏳ Calibrating...';
     try {
-        const result = await invoke('calibrate_proximity', { id });
-        alert(`📡 Calibration complete!\nMedian: ${result.avg} dBm\nThreshold: ${result.threshold} dBm\nSamples: ${result.samples}`);
+        const result = await invoke('calibrate_device', { id });
+        alert(`📡 Calibration complete!\nAverage: ${result.avg} dBm\nThreshold: ${result.threshold} dBm\nSamples: ${result.samples}`);
+        await refreshDevices();
     } catch (e) { alert('Calibration failed: ' + e); }
     finally { btn.disabled = false; btn.textContent = '📡 Calibrate'; }
 }
@@ -139,7 +140,7 @@ async function saveConfig() {
 
 async function toggleDaemon() {
     const enabled = document.getElementById('daemonToggle').checked;
-    try { await invoke('toggle_daemon', { enabled }); daemonEnabled = enabled; }
+    try { await invoke(enabled ? 'start_daemon' : 'stop_daemon'); daemonEnabled = enabled; await refreshStatus(); }
     catch (e) { alert('Toggle daemon failed: ' + e); document.getElementById('daemonToggle').checked = !enabled; }
 }
 async function lockNow() { try { await invoke('lock_screen'); } catch (e) { alert('Lock failed: ' + e); } }
