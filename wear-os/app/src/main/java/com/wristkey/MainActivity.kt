@@ -137,27 +137,15 @@ class MainActivity : ComponentActivity() {
                 paired = svc?.isPaired() == true
                 pairingRequested = svc?.pairingRequested?.get() == true
                 advertising = svc?.isAdvertising() == true
-
-                // The 4-digit setup code is persistent. It is regenerated only
-                // when the user explicitly starts setup for a new PC.
-                pin = if (!paired || newSetupMode) {
-                    svc?.getAdvertisePin() ?: "----"
-                } else {
-                    "----"
-                }
+                pin = if (!paired || newSetupMode) svc?.getAdvertisePin() ?: "----" else "----"
 
                 val pcName = svc?.getRequestingPcName()
                 statusText = when {
                     svc == null -> "Подключение службы…"
-                    pairingRequested -> if (pcName != null) {
-                        "ПК «$pcName»\nзапрашивает сопряжение"
-                    } else {
-                        "ПК запрашивает\nсопряжение"
-                    }
+                    pairingRequested -> if (pcName != null) "ПК «$pcName»\nзапрашивает сопряжение" else "ПК запрашивает\nсопряжение"
                     paired -> "Последний ПК:\n${svc.getPairedDeviceName() ?: "ПК"}"
                     else -> "ПК не настроен"
                 }
-
                 delay(500)
             }
         }
@@ -168,122 +156,60 @@ class MainActivity : ComponentActivity() {
             Scaffold(
                 timeText = { TimeText() },
                 vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
-                positionIndicator = {
-                    PositionIndicator(scalingLazyListState = listState)
-                }
-            ) { scaffoldPadding ->
+                positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
+            ) {
                 ScalingLazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(scaffoldPadding),
+                    modifier = Modifier.fillMaxSize(),
                     state = listState,
-                    contentPadding = PaddingValues(
-                        top = 10.dp,
-                        bottom = 28.dp,
-                        start = 6.dp,
-                        end = 6.dp
-                    ),
+                    contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp, start = 6.dp, end = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     item {
-                        Text(
-                            "⌚ WristKey",
-                            style = MaterialTheme.typography.title2,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
+                        Text("⌚ WristKey", style = MaterialTheme.typography.title2, modifier = Modifier.padding(vertical = 4.dp))
                     }
-
                     item {
-                        Text(
-                            statusText,
-                            style = MaterialTheme.typography.caption2,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 12.dp)
-                        )
+                        Text(statusText, style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 12.dp))
                     }
-
                     if (!paired || newSetupMode) {
-                        item {
-                            Text(
-                                "Код настройки",
-                                style = MaterialTheme.typography.caption3
-                            )
-                        }
-                        item {
-                            Text(
-                                pin,
-                                style = MaterialTheme.typography.display1,
-                                color = MaterialTheme.colors.primary
-                            )
-                        }
+                        item { Text("Код настройки", style = MaterialTheme.typography.caption3) }
+                        item { Text(pin, style = MaterialTheme.typography.display1, color = MaterialTheme.colors.primary) }
                     }
-
                     if (pairingRequested) {
                         item {
                             Button(
                                 onClick = {
-                                    val svc = bleService
-                                    val ok = svc?.confirmPairing() == true
+                                    val ok = bleService?.confirmPairing() == true
                                     if (ok) {
                                         newSetupMode = false
-                                        Toast.makeText(
-                                            this@MainActivity,
-                                            "ПК сохранён",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        Toast.makeText(this@MainActivity, "ПК сохранён", Toast.LENGTH_SHORT).show()
                                     } else {
-                                        Toast.makeText(
-                                            this@MainActivity,
-                                            "Сопряжение не удалось",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        Toast.makeText(this@MainActivity, "Сопряжение не удалось", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(0.82f)
-                            ) {
-                                Text("Подтвердить")
-                            }
+                            ) { Text("Подтвердить") }
                         }
                     }
-
                     if (paired) {
                         item {
                             Chip(
-                                label = {
-                                    Text(
-                                        if (advertising) {
-                                            "↻ Подключить последний ПК"
-                                        } else {
-                                            "▶ Подключить последний ПК"
-                                        }
-                                    )
-                                },
+                                label = { Text(if (advertising) "↻ Подключить последний ПК" else "▶ Подключить последний ПК") },
                                 onClick = {
                                     bleService?.startAdvertising()
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "Ожидаю подключение последнего ПК",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                    Toast.makeText(this@MainActivity, "Ожидаю подключение последнего ПК", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.fillMaxWidth(0.92f)
                             )
                         }
                     }
-
                     item {
                         Chip(
                             label = { Text("⚙ Настройки") },
-                            onClick = {
-                                startActivity(
-                                    Intent(this@MainActivity, SettingsActivity::class.java)
-                                )
-                            },
+                            onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
                             modifier = Modifier.fillMaxWidth(0.82f)
                         )
                     }
-
                     item {
                         Chip(
                             label = { Text("＋ Настроить новый ПК") },
@@ -297,52 +223,29 @@ class MainActivity : ComponentActivity() {
 
             if (showNewPcConfirm) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.92f)),
+                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.92f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp)
-                    ) {
-                        Text(
-                            "Настроить новый ПК?",
-                            style = MaterialTheme.typography.title3,
-                            textAlign = TextAlign.Center
-                        )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("Настроить новый ПК?", style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Будет создан новый код настройки.\nТекущий ПК будет заменён новым.",
-                            style = MaterialTheme.typography.body2,
-                            textAlign = TextAlign.Center
-                        )
+                        Text("Будет создан новый код настройки.\nТекущий ПК будет заменён новым.", style = MaterialTheme.typography.body2, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(14.dp))
                         Button(
                             onClick = {
                                 bleService?.forgetDevice()
                                 newSetupMode = true
                                 showNewPcConfirm = false
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Новый код создан",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                Toast.makeText(this@MainActivity, "Новый код создан", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.fillMaxWidth(0.78f)
-                        ) {
-                            Text("Начать")
-                        }
+                        ) { Text("Начать") }
                         Spacer(Modifier.height(7.dp))
                         Button(
                             onClick = { showNewPcConfirm = false },
                             colors = ButtonDefaults.secondaryButtonColors(),
                             modifier = Modifier.fillMaxWidth(0.78f)
-                        ) {
-                            Text("Отмена")
-                        }
+                        ) { Text("Отмена") }
                     }
                 }
             }
