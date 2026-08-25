@@ -66,9 +66,6 @@ class WristKeyBleService : Service() {
     private val proximityTracker = ProximityRssiTracker()
     private var proximityState = ProximityRssiTracker.State.UNKNOWN
     private var knownDeviceConnected = false
-
-    // New-PC pairing is an explicit mode. Normal service startup never opens
-    // a fresh pairing window and never exposes a new PIN.
     private val pairingMode = AtomicBoolean(false)
     private val _pairingRequested = AtomicBoolean(false)
     val pairingRequested get() = _pairingRequested
@@ -85,9 +82,7 @@ class WristKeyBleService : Service() {
         pairedDeviceAddress = prefs.getString(PREFS_PAIRED_ADDRESS, null)
         pairedDeviceName = prefs.getString(PREFS_PAIRED_NAME, null)
         currentPin = prefs.getInt(PREFS_PAIRING_PIN, 0).let { saved ->
-            if (saved in 1000..9999) saved else (1000..9999).random().also {
-                prefs.edit().putInt(PREFS_PAIRING_PIN, it).apply()
-            }
+            if (saved in 1000..9999) saved else (1000..9999).random().also { prefs.edit().putInt(PREFS_PAIRING_PIN, it).apply() }
         }
         val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = manager.adapter
@@ -98,19 +93,14 @@ class WristKeyBleService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         startGattServer()
-        // Existing pairing: advertise only so the last known PC can reconnect.
-        // No PIN is exposed. New pairing is started explicitly from the watch UI.
         if (isPaired()) startAdvertising()
-        registerBluetoothStateReceiver()
-        registerUnlockReceiver()
-        debug("BLE service created; paired=${isPaired()} reconnectAdvertising=${isAdvertising()} newPairingMode=${pairingMode.get()}")
+        registerBluetoothStateReceiver(); registerUnlockReceiver()
+        debug("BLE service created; paired=${isPaired()} advertising=${isAdvertising()} pinPersisted=true pairingMode=${pairingMode.get()}")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         wakeLock?.let { if (!it.isHeld) it.acquire(10 * 60 * 1000L) }
         if (gattServer == null) startGattServer()
-        // Do not start advertising for an unpaired watch. It must be explicitly
-        // put into new-PC setup mode by the user.
         if (isPaired() && advertiseCallback == null) startAdvertising()
         return START_STICKY
     }
@@ -119,25 +109,13 @@ class WristKeyBleService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW)
-            )
+            getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW))
         }
     }
-
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
         .setContentTitle("WristKey")
-        .setContentText(
-            when {
-                pairingMode.get() -> "New PC setup -- PIN: ${getAdvertisePin()}"
-                isPaired() -> "Paired: ${getPairedDeviceAddress()}"
-                else -> "Not paired -- setup required"
-            }
-        )
-        .setSmallIcon(R.drawable.ic_launcher)
-        .setOngoing(true)
-        .build()
-
+        .setContentText(if (isPaired()) "Paired: ${getPairedDeviceAddress()}" else "New PC setup -- PIN: ${getAdvertisePin()}")
+        .setSmallIcon(R.drawable.ic_launcher).setOngoing(true).build()
     fun updateNotification() = getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
     fun getAdvertisePin() = String.format("%04d", currentPin)
     fun getPairedDeviceAddress() = pairedDeviceAddress
@@ -152,132 +130,47 @@ class WristKeyBleService : Service() {
     fun getFilteredRssi(): Double? = proximityTracker.snapshot().filteredRssi
     fun isPaired() = pairedDeviceAddress != null
     fun isAdvertising() = advertiseCallback != null
-    fun isNewPairingMode() = pairingMode.get()
     fun getPairedDeviceCount() = if (isPaired()) 1 else 0
     fun getConnectedDeviceAddress() = connectedDevice?.address ?: "--"
     fun getDeviceName() = pairedDeviceName ?: pairedDeviceAddress ?: "Unknown"
 
     fun setPairedDevice(address: String, name: String) {
-        pairedDeviceAddress = address
-        pairedDeviceName = name
-        pairingMode.set(false)
+        pairedDeviceAddress = address; pairedDeviceName = name; pairingMode.set(false)
         prefs.edit().putString(PREFS_PAIRED_ADDRESS, address).putString(PREFS_PAIRED_NAME, name).apply()
-        stopAdvertising()
-        // Re-enable advertising in reconnect-only mode. The paired path never
-        // publishes the PIN, so reconnecting does not create a new pairing flow.
-        startAdvertising()
-        updateNotification()
+        stopAdvertising(); startAdvertising(); updateNotification()
     }
-
-    fun setPairedDeviceAddress(address: String) {
-        pairedDeviceAddress = address
-        pairingMode.set(false)
-        prefs.edit().putString(PREFS_PAIRED_ADDRESS, address).apply()
-        updateNotification()
-    }
-
-    fun clearPairedDevice() {
-        pairedDeviceAddress = null
-        pairedDeviceName = null
-        prefs.edit()
-            .remove(PREFS_PAIRED_ADDRESS)
-            .remove(PREFS_PAIRED_NAME)
-            .remove(PREFS_PAIRING_KEY)
-            .apply()
-        proximityTracker.reset()
-        proximityState = ProximityRssiTracker.State.UNKNOWN
-        updateNotification()
-    }
-
-    /** Explicitly enter the new-PC pairing flow. */
-    fun startNewPairing() {
-        stopAdvertising()
-        clearPairedDevice()
-        resetPin()
-        pairingMode.set(true)
-        _pairingRequested.set(false)
-        pairingDeviceAddress = null
-        requestingPcName = null
-        currentChallenge = null
-        startGattServer()
-        startAdvertising()
-        updateNotification()
-        debug("New PC pairing mode enabled; new PIN=${getAdvertisePin()}")
-    }
-
-    fun forgetDevice() = startNewPairing()
-
+    fun setPairedDeviceAddress(address: String) { pairedDeviceAddress = address; prefs.edit().putString(PREFS_PAIRED_ADDRESS, address).apply() }
+    fun clearPairedDevice() { pairedDeviceAddress = null; pairedDeviceName = null; prefs.edit().remove(PREFS_PAIRED_ADDRESS).remove(PREFS_PAIRED_NAME).remove(PREFS_PAIRING_KEY).apply(); proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; updateNotification() }
+    fun forgetDevice() { stopAdvertising(); clearPairedDevice(); stopGattServer(); resetPin(); pairingMode.set(true); startGattServer(); startAdvertising(); updateNotification(); debug("New PC pairing mode enabled") }
     fun resetPin() {
         currentPin = (1000..9999).random()
         prefs.edit().putInt(PREFS_PAIRING_PIN, currentPin).apply()
         updateNotification()
         debug("Pairing PIN regenerated for new PC setup")
     }
-
-    fun rejectPairing() {
-        _pairingRequested.set(false)
-        currentChallenge = null
-        pairingDeviceAddress = null
-        requestingPcName = null
-        if (pairingMode.get()) stopAdvertising()
-    }
+    fun rejectPairing() { _pairingRequested.set(false); currentChallenge = null; pairingDeviceAddress = null; requestingPcName = null }
 
     private fun showPairingActivity() {
-        if (!pairingMode.get()) return
-        try {
-            startActivity(Intent(this, PairingActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra("pcName", requestingPcName ?: "Windows PC")
-                putExtra("pcAddress", pairingDeviceAddress ?: "")
-            })
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open pairing UI", e)
-        }
+        if (!pairingMode.get() || isPaired()) return
+        try { startActivity(Intent(this, PairingActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP; putExtra("pcName", requestingPcName ?: "Windows PC"); putExtra("pcAddress", pairingDeviceAddress ?: "") }) }
+        catch (e: Exception) { Log.e(TAG, "Failed to open pairing UI", e) }
     }
 
     fun startAdvertising() {
         val adapter = bluetoothAdapter ?: return
         if (advertiseCallback != null || !adapter.isEnabled) return
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
-
-        val dataBuilder = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(SERVICE_UUID))
-            .setIncludeDeviceName(false)
-
-        // PIN is broadcast only during explicit new-PC setup.
-        if (pairingMode.get() && !isPaired()) {
-            dataBuilder.addManufacturerData(0xFFFF, getAdvertisePin().toByteArray())
-        }
-
+        val builder = AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE_UUID)).setIncludeDeviceName(false)
+        if (pairingMode.get() && !isPaired()) builder.addManufacturerData(0xFFFF, getAdvertisePin().toByteArray())
+        val data = builder.build()
         val callback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                debug("Advertising started mode=${if (pairingMode.get()) "NEW_PAIRING" else "RECONNECT"} pinVisible=${pairingMode.get() && !isPaired()}")
-            }
-            override fun onStartFailure(errorCode: Int) {
-                Log.e(TAG, "Advertising failed: $errorCode")
-                advertiseCallback = null
-            }
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) { debug("Advertising started mode=${if (pairingMode.get()) "NEW_PAIRING" else "RECONNECT"} pinVisible=${pairingMode.get() && !isPaired()}") }
+            override fun onStartFailure(errorCode: Int) { Log.e(TAG, "Advertising failed: $errorCode"); advertiseCallback = null }
         }
-
-        advertiser.startAdvertising(
-            AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                .setConnectable(true)
-                .setTimeout(0)
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                .build(),
-            dataBuilder.build(),
-            AdvertiseData.Builder().setIncludeDeviceName(true).build(),
-            callback
-        )
+        advertiser.startAdvertising(AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).setConnectable(true).setTimeout(0).setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH).build(), data, AdvertiseData.Builder().setIncludeDeviceName(true).build(), callback)
         advertiseCallback = callback
     }
-
-    fun stopAdvertising() {
-        advertiseCallback?.let { bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(it) }
-        advertiseCallback = null
-    }
-
+    fun stopAdvertising() { advertiseCallback?.let { bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(it) }; advertiseCallback = null }
     private fun cccd() = BluetoothGattDescriptor(CCCD_UUID, BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE)
 
     private fun startGattServer() {
@@ -318,83 +211,89 @@ class WristKeyBleService : Service() {
             if (device == null) return
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
-                    connectedDevice = device
-                    pairingDeviceAddress = device.address
+                    connectedDevice = device; pairingDeviceAddress = device.address
                     knownDeviceConnected = isPaired() && device.address == pairedDeviceAddress
                     debug("PC connected address=${device.address} paired=$knownDeviceConnected pairingMode=${pairingMode.get()}")
-                    if (!knownDeviceConnected && pairingMode.get()) {
-                        _pairingRequested.set(true)
-                        showPairingActivity()
-                    } else if (knownDeviceConnected) {
-                        _pairingRequested.set(false)
-                        currentChallenge = null
-                        proximityTracker.reset()
-                        proximityState = ProximityRssiTracker.State.UNKNOWN
-                        previousRssi = null
-                        debug("Known device reconnected; pairing UI suppressed")
-                    } else {
-                        // A random/new PC cannot turn a normal reconnect advertisement
-                        // into a pairing session.
-                        _pairingRequested.set(false)
-                        debug("Unknown device rejected because new pairing mode is disabled")
-                    }
+                    if (!knownDeviceConnected && pairingMode.get()) { _pairingRequested.set(true); showPairingActivity() }
+                    else if (knownDeviceConnected) { _pairingRequested.set(false); currentChallenge = null; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device reconnected; pairing UI suppressed") }
+                    else { _pairingRequested.set(false); debug("Unknown device ignored outside new pairing mode") }
                 }
                 BluetoothGatt.STATE_DISCONNECTED -> {
                     if (connectedDevice?.address == device.address) connectedDevice = null
-                    if (device.address == pairedDeviceAddress) {
-                        knownDeviceConnected = false
-                        proximityTracker.reset()
-                        proximityState = ProximityRssiTracker.State.UNKNOWN
-                        previousRssi = null
-                        debug("Known device disconnected; proximity reset, pairing retained")
-                    }
+                    if (device.address == pairedDeviceAddress) { knownDeviceConnected = false; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device disconnected; proximity reset, pairing retained") }
                     if (pairingDeviceAddress == device.address) pairingDeviceAddress = null
                     _pairingRequested.set(false)
                 }
             }
         }
-
         override fun onDescriptorWriteRequest(device: BluetoothDevice?, requestId: Int, descriptor: BluetoothGattDescriptor?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
-            val desc = descriptor ?: run {
-                if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
-                return
-            }
-            if (desc.uuid != CCCD_UUID) {
-                if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
-                return
-            }
+            val desc = descriptor ?: run { if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
+            if (desc.uuid != CCCD_UUID) { if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
             desc.value = value
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
-
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
             when (characteristic?.uuid) {
-                CHALLENGE_CHAR_UUID -> {
-                    currentChallenge = value
-                    pairingDeviceAddress = device?.address ?: pairingDeviceAddress
-                    connectedDevice = device ?: connectedDevice
-                    if (!isPaired() && pairingMode.get()) {
-                        _pairingRequested.set(true)
-                        showPairingActivity()
-                    } else if (isPaired()) {
-                        debug("Challenge received from known paired device; pairing UI suppressed")
-                    } else {
-                        debug("Challenge ignored: no paired device and new pairing mode disabled")
-                    }
-                }
+                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; if (!isPaired() && pairingMode.get()) { _pairingRequested.set(true); showPairingActivity() } else if (isPaired()) debug("Challenge received from known paired device; pairing UI suppressed") else debug("Challenge ignored outside new pairing mode") }
                 CONFIG_CHAR_UUID -> debug("Config write bytes=${value?.size ?: 0}")
                 UNLOCK_REQUEST_UUID -> handleUnlockRequest(value)
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }
                 PC_NAME_CHAR_UUID -> value?.let { requestingPcName = String(it, Charsets.UTF_8).trim('\u0000') }
-                else -> {
-                    if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
-                    return
-                }
+                else -> { if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
             }
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
+        override fun onCharacteristicReadRequest(device: BluetoothDevice?, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic?) {
+            when (characteristic?.uuid) {
+                PUBLIC_KEY_CHAR_UUID -> try { val key = keyStoreManager.getPublicKey(); if (offset >= key.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null) else gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, key.copyOfRange(offset, minOf(offset + 512, key.size))) } catch (e: Exception) { gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null) }
+                CONFIG_CHAR_UUID -> { val data = byteArrayOf(1, (currentPin shr 8).toByte(), currentPin.toByte(), if (isPaired()) 1 else 0); if (offset >= data.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null) else gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data.copyOfRange(offset, data.size)) }
+                else -> gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
+            }
+        }
     }
 
-    // Existing implementation below remains unchanged.
-    // The pairing/reconnect state machine above is the only part changed here.
+    fun confirmPairing(): Boolean {
+        return try {
+            val challenge = currentChallenge ?: return false
+            val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: return false
+            val signature = keyStoreManager.signChallenge(challenge)
+            responseCharacteristic?.value = signature + byteArrayOf(1)
+            setPairedDevice(pc.address, requestingPcName ?: "Windows PC")
+            setPairingKey(UnlockProtocol.generatePasswordKey())
+            _userPresent.set(true); _pairingRequested.set(false)
+            proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null
+            gattServer?.notifyCharacteristicChanged(pc, responseCharacteristic, false)
+            debug("Pairing confirmed for ${pc.address}; pairing persisted")
+            true
+        } catch (e: Exception) { Log.e(TAG, "Pairing confirmation failed", e); false }
+    }
+
+    fun requestUserPresence(): Boolean { if (_userPresent.get()) return true; _userPresentCountdown.set(10); return false }
+    fun setUserPresent(present: Boolean) { _userPresent.set(present) }
+
+    private fun handleUnlockRequest(data: ByteArray?) {
+        if (data == null) return
+        val pairingKey = getPairingKey() ?: run { sendUnlockResponse(null, "NO_PAIRING_KEY"); return }
+        try { val request = JSONObject(String(UnlockProtocol.decrypt(data, pairingKey))); val user = request.optString("user", "Unknown PC"); startActivity(Intent(this, UnlockActivity::class.java).apply { putExtra("user", user); flags = Intent.FLAG_ACTIVITY_NEW_TASK }) }
+        catch (e: Exception) { Log.e(TAG, "Unlock request failed", e); sendUnlockResponse(null, "DECRYPT_ERROR") }
+    }
+    private fun sendUnlockResponse(passwordKey: ByteArray?, error: String? = null) {
+        val key = getPairingKey() ?: return
+        val response = JSONObject().apply { put("token", "wristkey_unlock"); if (passwordKey != null) put("password_key", android.util.Base64.encodeToString(passwordKey, android.util.Base64.NO_WRAP)) else put("error", error ?: "UNKNOWN") }
+        try { unlockResponseCharacteristic?.value = UnlockProtocol.encrypt(response.toString().toByteArray(), key); connectedDevice?.let { gattServer?.notifyCharacteristicChanged(it, unlockResponseCharacteristic, false) } } catch (e: Exception) { Log.e(TAG, "Unlock response failed", e) }
+    }
+    private fun getPairingKey() = prefs.getString(PREFS_PAIRING_KEY, null)?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
+    private fun setPairingKey(key: ByteArray) { prefs.edit().putString(PREFS_PAIRING_KEY, android.util.Base64.encodeToString(key, android.util.Base64.DEFAULT)).apply() }
+
+    private fun registerUnlockReceiver() {
+        val filter = IntentFilter("com.wristkey.UNLOCK_ACTION")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(unlockReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(unlockReceiver, filter)
+    }
+    private val unlockReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { if (intent?.getBooleanExtra("approved", false) == true) sendUnlockResponse(getPairingKey(), null) else sendUnlockResponse(null, "CANCEL") } }
+    private fun registerBluetoothStateReceiver() {
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(bluetoothStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(bluetoothStateReceiver, filter)
+    }
+    private val bluetoothStateReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) { BluetoothAdapter.STATE_OFF -> { stopAdvertising(); stopGattServer() }; BluetoothAdapter.STATE_ON -> { startGattServer(); if (isPaired() || pairingMode.get()) startAdvertising() } } } }
+    override fun onDestroy() { stopAdvertising(); stopGattServer(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
 }
