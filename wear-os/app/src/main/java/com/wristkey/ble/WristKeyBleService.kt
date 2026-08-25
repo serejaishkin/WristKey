@@ -26,6 +26,7 @@ class WristKeyBleService : Service() {
         private const val PREFS_PAIRED_ADDRESS = "paired_device_address"
         private const val PREFS_PAIRED_NAME = "paired_device_name"
         private const val PREFS_PAIRING_KEY = "pairing_key"
+        private const val PREFS_PAIRING_PIN = "pairing_pin"
         private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
@@ -59,7 +60,7 @@ class WristKeyBleService : Service() {
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private var pairedDeviceAddress: String? = null
     private var pairedDeviceName: String? = null
-    private var currentPin = (1000..9999).random()
+    private var currentPin = 0
     private var lastRssi = 0
     private var previousRssi: Int? = null
     private val proximityTracker = ProximityRssiTracker()
@@ -79,6 +80,11 @@ class WristKeyBleService : Service() {
         super.onCreate()
         pairedDeviceAddress = prefs.getString(PREFS_PAIRED_ADDRESS, null)
         pairedDeviceName = prefs.getString(PREFS_PAIRED_NAME, null)
+        currentPin = prefs.getInt(PREFS_PAIRING_PIN, 0).let { saved ->
+            if (saved in 1000..9999) saved else (1000..9999).random().also {
+                prefs.edit().putInt(PREFS_PAIRING_PIN, it).apply()
+            }
+        }
         val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = manager.adapter
         if (bluetoothAdapter == null) { stopSelf(); return }
@@ -88,7 +94,7 @@ class WristKeyBleService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         startGattServer(); startAdvertising(); registerBluetoothStateReceiver(); registerUnlockReceiver()
-        debug("BLE service created; paired=${isPaired()} advertising=${isAdvertising()}")
+        debug("BLE service created; paired=${isPaired()} advertising=${isAdvertising()} pinPersisted=true")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -137,7 +143,12 @@ class WristKeyBleService : Service() {
     fun setPairedDeviceAddress(address: String) { pairedDeviceAddress = address; prefs.edit().putString(PREFS_PAIRED_ADDRESS, address).apply() }
     fun clearPairedDevice() { pairedDeviceAddress = null; pairedDeviceName = null; prefs.edit().remove(PREFS_PAIRED_ADDRESS).remove(PREFS_PAIRED_NAME).remove(PREFS_PAIRING_KEY).apply(); proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; updateNotification() }
     fun forgetDevice() { clearPairedDevice(); stopGattServer(); resetPin(); startGattServer(); startAdvertising() }
-    fun resetPin() { currentPin = (1000..9999).random(); updateNotification() }
+    fun resetPin() {
+        currentPin = (1000..9999).random()
+        prefs.edit().putInt(PREFS_PAIRING_PIN, currentPin).apply()
+        updateNotification()
+        debug("Pairing PIN regenerated for new PC setup")
+    }
     fun rejectPairing() { _pairingRequested.set(false); currentChallenge = null; pairingDeviceAddress = null; requestingPcName = null }
 
     private fun showPairingActivity() {
