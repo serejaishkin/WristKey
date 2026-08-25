@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
         var statusText by remember { mutableStateOf("Запуск...") }
         var macAddress by remember { mutableStateOf("") }
         var paired by remember { mutableStateOf(false) }
+        var advertising by remember { mutableStateOf(false) }
         var showNewPcConfirm by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
@@ -116,6 +117,7 @@ class MainActivity : ComponentActivity() {
                 val svc = bleService
                 paired = svc?.isPaired() == true
                 pin = if (!paired) svc?.getAdvertisePin() ?: "----" else "----"
+                advertising = svc?.isAdvertising() == true
                 macAddress = svc?.getCurrentBluetoothAddress() ?: ""
                 val pcName = svc?.getRequestingPcName()
                 statusText = when {
@@ -154,6 +156,8 @@ class MainActivity : ComponentActivity() {
                             textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 16.dp))
                     }
 
+                    // The four-digit code is only a setup code. It is not shown
+                    // once a PC is already paired.
                     if (!paired || bleService?.pairingRequested?.get() == true) {
                         item {
                             Spacer(Modifier.height(10.dp))
@@ -187,6 +191,24 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // Normal path: the watch already knows the last PC. The PC
+                    // daemon is the BLE central and performs the actual reconnect;
+                    // this action simply makes sure the watch is advertising.
+                    if (paired) {
+                        item {
+                            Chip(
+                                label = { Text(if (advertising) "↻ Подключиться к последнему ПК" else "▶ Подключиться к последнему ПК") },
+                                onClick = {
+                                    bleService?.startAdvertising()
+                                    Toast.makeText(this@MainActivity,
+                                        "Ожидаю подключение последнего ПК",
+                                        Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                            )
+                        }
+                    }
+
                     item {
                         Chip(
                             label = { Text("⚙ Настройки") },
@@ -195,6 +217,8 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    // Pairing a different PC is an explicit operation. It must
+                    // never be triggered by an ordinary launch/reconnect.
                     item {
                         Chip(
                             label = { Text("＋ Настроить новый ПК") },
@@ -221,7 +245,7 @@ class MainActivity : ComponentActivity() {
                             textAlign = TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Будет создан новый код настройки.\nПосле подтверждения новый ПК станет последним подключённым.",
+                            "Будет создан новый код настройки.\nТекущий ПК будет заменён новым.",
                             style = MaterialTheme.typography.body2,
                             textAlign = TextAlign.Center
                         )
