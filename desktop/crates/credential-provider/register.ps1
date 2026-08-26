@@ -24,11 +24,12 @@ if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
 
-if (-not (Test-Path $DllPath)) {
-    if (Test-Path (Join-Path $SourceDir "WristKeyCredentialProvider.dll")) {
-        Copy-Item -Path (Join-Path $SourceDir "*.dll") -Destination $dir -Force
-        Write-Host "Copied DLLs from $SourceDir to $dir"
-    }
+# Always refresh the installed DLLs from the build output so a re-run
+# updates an existing installation and its dependencies (Newtonsoft.Json).
+$builtDll = Join-Path $SourceDir "WristKeyCredentialProvider.dll"
+if (Test-Path $builtDll) {
+    Copy-Item -Path (Join-Path $SourceDir "*.dll") -Destination $dir -Force
+    Write-Host "Copied DLLs from $SourceDir to $dir"
 }
 
 if (-not (Test-Path $DllPath)) {
