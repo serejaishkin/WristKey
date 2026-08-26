@@ -641,3 +641,37 @@ connect
 - `cargo check -p wristkey-daemon`, `cargo test -p wristkey-daemon` — OK.
 - `./gradlew :app:assembleDebug` (через wrapper jar, нет gradlew.bat; создан gitignored `wear-os/local.properties` → SDK `C:\Users\sergejj\android-sdk`) — BUILD SUCCESSFUL.
 - **На реальных часах НЕ протестировано.** Тест: обучить точку → unlock тапом мимо/в точку → закрыть ПК-приложение → переоткрыть → silent reconnect должен найти часы. Если снова fail — смотреть лог `BLE reconnect resolved ... wristkey_advertised=` и `Advertising restarted after peer disconnect`.
+
+### 6.13 2026-08-26 — Credential Provider: найдена корневая причина «плитка не появляется»
+
+#### 6.13.1 Причина
+
+В актуальном CP (`desktop/crates/credential-provider/WristKeyCredentialProvider.cs`) все четыре COM interface IID были выдуманными (например `ICredentialProvider = D27C3481-5A1C-4B2E-9BDA-...`). LogonUI делает QueryInterface по РЕАЛЬНЫМ IID из Windows SDK, поэтому DLL не загружалась как provider в принципе. Это объясняет §3.4/§6.10.5: регистрация CLSID проходила, а плитки быть не могло.
+
+Дополнительно в корневой копии `WristKeyCredentialProvider.cs` (legacy) vtable `ICredentialProviderCredential` была испорчена: после `GetComboBoxValueAt` шли методы из Events-интерфейса и отсутствовал `SetStringValue` → LogonUI вызывал не те слоты.
+
+Эталонные IID (проверены по winsdk credentialprovider.idl):
+
+```text
+ICredentialProvider:                 d27c3481-5a1c-45b2-8aaa-c20ebbe8229e
+ICredentialProviderCredential:       63913a93-40c1-481a-818d-4072ff8c70cc
+ICredentialProviderEvents:           34201e5a-a787-41a3-a5a4-bd6dcf2a854e
+ICredentialProviderCredentialEvents: be089de6-cf2e-4a43-ac96-6c38d8fd34d8
+```
+
+CLSID провайдера остаётся `{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}` (совпадает во всех версиях и register.ps1).
+
+#### 6.13.2 Что сделано
+
+- crates CP переписан: реальные IID + правильный vtable (включая `SetStringValue` на своём слоте) + аллокация `CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR` через CoTaskMem (раньше возвращался `IntPtr.Zero`) + убраны лишние поля из `CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION`.
+- Pipe client исправлен на имя канала daemon `\\.\pipe\wristkey` (было `WristKeyUnlock`, которое daemon никогда не создавал).
+- csproj: убран WinForms, добавлен `Newtonsoft.Json 13.0.1` (оффлайн-фид VS), OutputType Library.
+- register.ps1: автоматически копирует `bin\Release\net48\*.dll` (включая Newtonsoft.Json.dll) рядом с целевым DLL.
+- Устаревший предсобранный DLL удалён из репозитория; `bin/`, `obj/` в .gitignore.
+- `dotnet build -c Release` — OK (net48, x64): `WristKeyCredentialProvider.dll` + `Newtonsoft.Json.dll`.
+
+#### 6.13.3 Статус и следующий тест
+
+- Плитка на lock screen: **требует проверки** (регистрация от админа + перезагрузка). Ожидаемо это первый раз, когда DLL вообще способна загрузиться.
+- Известное ограничение сериализации: `LogonId` в `KERB_INTERACTIVE_UNLOCK_LOGON` нулевой. Если unlock будет отклоняться после успешного подтверждения часов — резолвить LogonId сессии (SetUserArray / LsaEnumerateLogonSessions). Это зафиксировано комментарием в коде.
+- Корневые `WristKeyCredentialProvider.cs/.csproj` считать legacy; единая версия — в `desktop/crates/credential-provider/`.

@@ -8,7 +8,11 @@
 #>
 
 param(
-    [string]$DllPath = "C:\Program Files\WristKey\WristKeyCredentialProvider.dll"
+    [string]$DllPath = "C:\Program Files\WristKey\WristKeyCredentialProvider.dll",
+    # Build output directory containing WristKeyCredentialProvider.dll and
+    # its dependency DLLs (e.g. Newtonsoft.Json.dll). All *.dll from this
+    # directory are copied next to the target so LogonUI can load them.
+    [string]$SourceDir = (Join-Path $PSScriptRoot "bin\Release\net48")
 )
 
 $clsid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}"
@@ -21,12 +25,18 @@ if (-not (Test-Path $dir)) {
 }
 
 if (-not (Test-Path $DllPath)) {
+    if (Test-Path (Join-Path $SourceDir "WristKeyCredentialProvider.dll")) {
+        Copy-Item -Path (Join-Path $SourceDir "*.dll") -Destination $dir -Force
+        Write-Host "Copied DLLs from $SourceDir to $dir"
+    }
+}
+
+if (-not (Test-Path $DllPath)) {
     Write-Error "DLL not found at $DllPath. Build the project first."
     Write-Host ""
     Write-Host "Build instructions:"
-    Write-Host "  1. Open WristKeyCredentialProvider.csproj in Visual Studio or use MSBuild"
-    Write-Host "  2. Build in Release mode (x64)"
-    Write-Host "  3. Copy output DLL to $DllPath"
+    Write-Host "  1. dotnet build -c Release (in desktop/crates/credential-provider)"
+    Write-Host "  2. Re-run this script; it copies bin\Release\net48\*.dll to $dir"
     exit 1
 }
 

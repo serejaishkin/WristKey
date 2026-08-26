@@ -50,3 +50,6 @@ captures/
 *.p12
 secrets.toml
 .env
+
+desktop/crates/credential-provider/bin/
+desktop/crates/credential-provider/obj/
