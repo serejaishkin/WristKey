@@ -60,6 +60,8 @@
   .diag-label { color: #777; font-size: 11px; text-transform: uppercase; }
   .diag-value { color: #fff; font-size: 18px; font-family: monospace; margin-top: 5px; }
   .diag-sub { color: #777; font-size: 11px; margin-top: 4px; }
+  .steps { margin: 10px 0 12px 20px; color: #ccc; font-size: 13px; line-height: 1.8; }
+  .steps strong { color: #00d4aa; }
   @media (max-width: 600px) { .diag-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -78,6 +80,18 @@
 <div class="tab-content active" id="tab-devices">
   <div class="section"><h3>Scan for New Device</h3><div class="card"><p style="margin-bottom:12px;color:#aaa;font-size:13px;">Open the WristKey app on your watch and keep it nearby.</p><button class="btn" id="scanBtn">🔍 Scan for New Device</button><div id="scanList" style="margin-top:12px;"></div></div></div>
   <div class="section"><h3>Paired Devices</h3><div id="pairedList"><div class="empty-state">No paired devices. Scan to pair.</div></div></div>
+  <div class="section"><h3>👆 Touch Point Unlock (Watch)</h3><div class="card">
+    <p style="color:#aaa;font-size:13px;">Confirm unlock requests by tapping your personal spot on the watch face instead of pressing a button. The spot lives only on the watch and is never sent to the PC.</p>
+    <ol class="steps">
+      <li>Open the WristKey app on your watch → <strong>⚙ Настройки</strong> → <strong>Touch point</strong>.</li>
+      <li>Tap <strong>Обучить точку</strong>.</li>
+      <li>Tap once anywhere on the screen — that becomes your unlock spot. You will feel a short tick.</li>
+      <li>Repeat the same spot twice more to confirm. Missing the ring resets training with a long buzz.</li>
+      <li>On the next unlock request tap inside your spot's ring to approve, or use «✗ Отмена» to reject.</li>
+    </ol>
+    <p class="hint">Hit tolerance is ~18% of the screen width around the trained point — no need for pixel precision.</p>
+    <p class="hint">Without training, unlock falls back to regular Unlock/Cancel buttons. Retrain or reset anytime: watch → Settings → Touch point.</p>
+  </div></div>
   <div class="section"><h3>Live Proximity Diagnostics</h3><div class="card">
     <p style="color:#aaa;font-size:13px;margin-bottom:12px;">Manual RSSI snapshot for the paired Watch. This is scan RSSI, not authentication.</p>
     <div class="diag-grid">
