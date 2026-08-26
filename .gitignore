@@ -53,3 +53,8 @@ secrets.toml
 
 desktop/crates/credential-provider/bin/
 desktop/crates/credential-provider/obj/
+
+tauri_build_*.txt
+tauri_build_err.txt
+tauri_cwd.txt
+tauri_env.txt

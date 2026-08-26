@@ -691,3 +691,25 @@ CLSID провайдера остаётся `{A1B2C3D4-E5F6-7890-ABCD-EF12345678
 - register.ps1: теперь всегда обновляет DLL+зависимости из `bin\Release\net48`, а не только при первой установке.
 - cargo check: wristkey-platform-win, wristkey-daemon, wristkey-tauri — OK.
 - Реальная регистрация под админом и появление плитки после перезагрузки — по-прежнему НЕ подтверждены на машине пользователя.
+
+### 6.15 2026-08-26 — CP DLL в инсталляторе + почти бесконтактное обучение
+
+#### 6.15.1 Desktop сборка/установка
+
+- `cargo tauri build` собирается через `build-cp.cmd` (beforeBuildCommand): Tauri запускает команды из `desktop\tauri` (не src-tauri!) через cmd; скрипт использует `%~dp0`, чтобы путь к csproj не зависел от cwd. Осторожно: правка tauri.conf.json через PS 5.1 добавляет BOM — парсер JSON падает («expected value at line 1 column 1»); сохранять без BOM.
+- CP DLL + Newtonsoft.Json.dll бандлятся как resources. ВАЖНО: Tauri v2 кладёт относительные `../` пути в `_up_\` папки: ресурс доступен как `<install>\_up_\_up_\crates\credential-provider\bin\Release\net48\*.dll`.
+- `register_credential_provider` ищет DLL: рядом с exe → resource_dir (`_up_\_up_\...`) → `C:\Program Files\WristKey`. NSIS ставится в `%LOCALAPPDATA%\WristKey` (не Program Files!).
+- Приложение установлено и запускалось: silent reconnect на реальном Galaxy Watch4 ПРОШЁЛ discovery/GATT-connect (адрес часов сменился, резолв по имени сработал), но затем `auth response timeout` — см. 6.15.2.
+
+#### 6.15.2 НОВЫЙ КРИТИЧНЫЙ БЛОКЕР — часы не отвечают на challenge спаренного ПК
+
+Ветка CHALLENGE_CHAR в `WristKeyBleService` для isPaired() только логирует «pairing UI suppressed» и НЕ отвечает. Desktop `authenticate_device` пишет challenge и ждёт подпись → timeout → соединение рвётся. Это последний разрыв цепочки silent unlock. Нужен watch-side обработчик: подписать challenge для paired-адреса и notify RESPONSE с user_present из MotionDetector (verify_unlock требует user_present=true).
+
+#### 6.15.3 Обучение точки — почти без касания
+
+TrainingActivity переделана: PREP 10с (один тап ставит точку) → RECORD 10с (окно записи идёт само; доп. касания в допуске усредняются) → автосохранение. Инструкция в GUI обновлена.
+
+#### 6.15.4 Прочее
+
+- Логи: `%LOCALAPPDATA%\WristKey\logs\wristkey.log.2026-08-19` раздулся до ~67 GiB, 2026-08-24 ≈ 151 MB — проверить причины спама BLE device update и ротацию/лимиты.
+- Устаревшие tauri_build_* логи убраны из репо и gitignore.

@@ -44,7 +44,16 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecu
 #[tauri::command] async fn set_windows_password(_state: State<'_, Arc<AppState>>,_password:String)->Result<(),String>{Err("Windows password storage is only available on Windows".into())}
 #[tauri::command] async fn get_config(state: State<'_, Arc<AppState>>)->Result<Config,String>{Ok(state.config.lock().await.clone())}
 #[cfg(target_os="windows")]
-#[tauri::command] async fn register_credential_provider()->Result<(),String>{let dll=std::env::current_exe().ok().and_then(|p|p.parent().map(|d|d.join("WristKeyCredentialProvider.dll"))).filter(|p|p.exists()).unwrap_or_else(||std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll"));WindowsSecurity::register_credential_provider(dll.to_string_lossy().as_ref())}
+#[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<(),String>{
+    // Search order: next to exe (portable), bundled resources (cp/ inside the
+    // installer), then the standalone register.ps1 install location.
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(exe)=std::env::current_exe(){if let Some(d)=exe.parent(){candidates.push(d.join("WristKeyCredentialProvider.dll"));}}
+    if let Ok(rd)=app.path().resource_dir(){candidates.push(rd.join("_up_").join("_up_").join("crates").join("credential-provider").join("bin").join("Release").join("net48").join("WristKeyCredentialProvider.dll"));}
+    candidates.push(std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll"));
+    let dll=candidates.iter().find(|p|p.exists()).ok_or_else(||"Credential Provider DLL not found. Build it: dotnet build -c Release in desktop/crates/credential-provider".to_string())?;
+    WindowsSecurity::register_credential_provider(dll.to_string_lossy().as_ref())
+}
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn register_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
 #[cfg(target_os="windows")]
