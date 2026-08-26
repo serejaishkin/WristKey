@@ -19,6 +19,11 @@ const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
 pub struct ConnectionManager {
     connections: Arc<RwLock<HashMap<String, Connection>>>,
+    // BT connection is the product priority. Remember the last successfully
+    // connected peripheral id (current Windows address) for each saved device
+    // so reconnect first tries a DIRECT GATT connect with no scanning at all.
+    // Discovery is only the fallback when the direct link cannot be made.
+    resolved: Arc<RwLock<HashMap<String, String>>>,
     reconnect_lock: Arc<Mutex<()>>,
     last_attempt: Arc<Mutex<Option<Instant>>>,
 }
@@ -27,6 +32,7 @@ impl ConnectionManager {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
+            resolved: Arc::new(RwLock::new(HashMap::new())),
             reconnect_lock: Arc::new(Mutex::new(())),
             last_attempt: Arc::new(Mutex::new(None)),
         }
@@ -142,7 +148,36 @@ impl ConnectionManager {
         let mut last_error = None;
         for attempt in 1..=3 {
             let _ = adapter.stop_scan().await;
-            info!("BLE reconnect attempt {}/3 for {}", attempt, info.id);
+            info!("BLE reconnect attempt {}/{}", attempt, 3);
+
+            // BT connection first: a paired watch that was connected before is
+            // most likely still reachable at the same Windows peripheral id.
+            // Try the direct GATT connect with zero scanning; only fall back
+            // to discovery if the direct link fails (address rotated, reboot).
+            let remembered = self.resolved.read().await.get(&info.id).cloned();
+            if let Some(current_id) = remembered {
+                let candidate = PeripheralInfo {
+                    id: current_id.clone(),
+                    name: info.name.clone(),
+                    pin: None,
+                    device_id: info.device_id.clone(),
+                    rssi: None,
+                    service_uuids: vec![Uuid::parse_str(SERVICE_UUID).unwrap()],
+                    raw_manufacturer_data: None,
+                };
+                match adapter.connect(&candidate).await {
+                    Ok(conn) => {
+                        info!("BLE reconnect direct (BT-first) for {} -> {}", info.id, current_id);
+                        self.resolved.write().await.insert(info.id.clone(), current_id);
+                        self.connections.write().await.insert(info.id.clone(), conn.clone());
+                        return Ok(conn);
+                    }
+                    Err(e) => {
+                        warn!("BT-first direct connect to {} failed: {}; falling back to discovery", current_id, e);
+                        self.resolved.write().await.remove(&info.id);
+                    }
+                }
+            }
 
             // Resolve the current Windows peripheral before connecting. This
             // handles address changes across application restarts.
@@ -161,6 +196,7 @@ impl ConnectionManager {
             match adapter.connect(&current).await {
                 Ok(conn) => {
                     info!("BLE reconnect successful for {} (current id {})", info.id, current.id);
+                    self.resolved.write().await.insert(info.id.clone(), current.id.clone());
                     self.connections.write().await.insert(info.id.clone(), conn.clone());
                     return Ok(conn);
                 }
