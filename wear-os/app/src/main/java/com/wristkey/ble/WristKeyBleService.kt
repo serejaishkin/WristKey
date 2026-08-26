@@ -223,6 +223,15 @@ class WristKeyBleService : Service() {
                     if (device.address == pairedDeviceAddress) { knownDeviceConnected = false; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device disconnected; proximity reset, pairing retained") }
                     if (pairingDeviceAddress == device.address) pairingDeviceAddress = null
                     _pairingRequested.set(false)
+                    // Legacy AdvertiseCallback advertising stops when a central
+                    // connects and usually does NOT resume after it disconnects
+                    // (Samsung/Wear OS included). Without this restart the PC can
+                    // never rediscover the watch, so reconnect silently dies here.
+                    if (gattServer != null && connectedDevice == null && advertiseCallback != null) {
+                        stopAdvertising()
+                        startAdvertising()
+                        debug("Advertising restarted after peer disconnect")
+                    }
                 }
             }
         }

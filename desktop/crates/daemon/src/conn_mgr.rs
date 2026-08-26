@@ -63,29 +63,27 @@ impl ConnectionManager {
                     };
 
                     // A Galaxy Watch can expose several BLE endpoints. Matching
-                    // the saved name alone is not sufficient: only a peripheral
-                    // that advertises WristKey's custom service/manufacturer data
-                    // is eligible for silent reconnect. The final GATT check in
-                    // BleAdapter::connect remains the authoritative validation.
-                    let wristkey_advertised =
-                        candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
-                            || candidate.raw_manufacturer_data.is_some()
-                            || candidate.device_id.is_some();
-
-                    if (address_match || device_id_match || name_match) && wristkey_advertised {
+                    // the saved name alone is not sufficient in theory, but in
+                    // RECONNECT mode (paired watch) Android does not advertise
+                    // manufacturer data, and WinRT frequently fails to surface
+                    // custom 128-bit service UUIDs from advertisements. Rejecting
+                    // candidates without WristKey advertisement markers made
+                    // reconnect impossible after address rotation or a restart.
+                    // BleAdapter::connect therefore remains the authoritative
+                    // validation: it disconnects any peer that does not expose
+                    // the WristKey custom GATT service.
+                    let matched = address_match || device_id_match || name_match;
+                    if matched {
+                        let wristkey_advertised =
+                            candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
+                                || candidate.raw_manufacturer_data.is_some()
+                                || candidate.device_id.is_some();
                         info!(
-                            "BLE reconnect resolved: saved_id={} -> current_id={} name={:?} address={} wristkey_advertised=true",
-                            info.id, candidate.id, candidate.name, candidate.id
+                            "BLE reconnect resolved: saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
+                            info.id, candidate.id, candidate.name, wristkey_advertised
                         );
                         let _ = adapter.stop_scan().await;
                         return Ok(candidate);
-                    }
-
-                    if (address_match || device_id_match || name_match) && !wristkey_advertised {
-                        debug!(
-                            "BLE reconnect candidate rejected: id={} name={:?} matched saved device but has no WristKey advertisement",
-                            candidate.id, candidate.name
-                        );
                     }
                 }
                 Ok(None) => break,

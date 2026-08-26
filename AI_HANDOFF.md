@@ -609,3 +609,35 @@ connect
 - Ранее в этой ветке добавлялись CCCD/targeted notifications, retry connect/stop scan и `PairingActivity`.
 
 **Не мержить `fix/wristkey-20260818` в `main`, пока реальный Galaxy Watch4 pairing не пройдёт end-to-end.**
+
+### 6.12 2026-08-26 — Touch point unlock + фиксы реконнекта
+
+#### 6.12.1 Новая фича: обучение точки касания (unlock по касанию)
+
+Ключевая фича-отличитель WristKey (аналога нет ни у pcbu, ни у ProximityLock). Это watch-side фактор присутствия (как double-click на Apple Watch), а не криптосекрет: ПК не верифицирует координаты тапа, протокол GATT не менялся.
+
+- `wear-os/.../security/TouchPointStore.kt` — хранение точки в нормализованных координатах (prefs `WristKeyTouch`); `HIT_TOLERANCE=0.18`, `TRAIN_TOLERANCE=0.15` от ширины экрана.
+- `wear-os/.../ui/TrainingActivity.kt` — обучение: первый тап задаёт точку, затем 2 успешных повтора в допуске; промах сбрасывает обучение. Хаптик-фидбек.
+- `wear-os/.../ui/UnlockActivity.kt` — переработан: при обученной точке unlock подтверждается тапом в зону точки (кольцо-маркер рисуется Canvas), иначе fallback на старые кнопки + кнопка «Обучить точку». Broadcast `com.wristkey.UNLOCK_ACTION` сохранён; добавлена явная отправка CANCEL в `onDestroy`, если решение не принято (ПК больше не ждёт таймаута после swipe-away).
+- Settings → «Touch point» (Trained / Not set) — переобучение и сброс.
+- `TrainingActivity` зарегистрирован в AndroidManifest.
+
+#### 6.12.2 Фикс реконнекта #1 — часы: рестарт advertising после disconnect
+
+Симптом пользователя: pairing и proximity работают, но reconnect после закрытия/отключения одной из сторон не работает.
+
+Причина: connectable advertising останавливается при подключении central и legacy `AdvertiseCallback` обычно НЕ возобновляется после disconnect (Samsung/Wear OS). Сервис никогда не перезапускал advertising → ПК не мог обнаружить часы.
+
+Фикс: в `WristKeyBleService` STATE_DISCONNECTED теперь делает `stopAdvertising(); startAdvertising()` если GATT server жив и нет других подключений.
+
+#### 6.12.3 Фикс реконнекта #2 — desktop: ослаблен префильтр кандидатов
+
+`conn_mgr.resolve_current_peripheral` раньше требовал `wristkey_advertised` (service UUID в рекламе / manufacturer data / device_id) и навсегда отбраковывал кандидата без них. В RECONNECT-режиме часы не шлют manufacturer data, а WinRT часто не отдаёт кастомный 128-bit UUID из `props.services`.
+
+Фикс: кандидат принимается по address/name/device_id match; `wristkey_advertised` только логируется. Авторитетная проверка осталась в `BleAdapter::connect` (disconnect при отсутствии WristKey GATT service).
+
+#### 6.12.4 Статус
+
+- `cargo check -p wristkey-daemon`, `cargo test -p wristkey-daemon` — OK.
+- `./gradlew :app:assembleDebug` (через wrapper jar, нет gradlew.bat; создан gitignored `wear-os/local.properties` → SDK `C:\Users\sergejj\android-sdk`) — BUILD SUCCESSFUL.
+- **На реальных часах НЕ протестировано.** Тест: обучить точку → unlock тапом мимо/в точку → закрыть ПК-приложение → переоткрыть → silent reconnect должен найти часы. Если снова fail — смотреть лог `BLE reconnect resolved ... wristkey_advertised=` и `Advertising restarted after peer disconnect`.

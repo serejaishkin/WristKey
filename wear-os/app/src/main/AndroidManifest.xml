@@ -52,6 +52,12 @@
             android:keepScreenOn="true" />
 
         <activity
+            android:name=".ui.TrainingActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault"
+            android:keepScreenOn="true" />
+
+        <activity
             android:name=".SettingsActivity"
             android:exported="false" />
 

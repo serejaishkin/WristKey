@@ -1,9 +1,12 @@
 package com.wristkey
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +19,8 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.wristkey.ble.WristKeyBleService
+import com.wristkey.security.TouchPointStore
+import com.wristkey.ui.TrainingActivity
 
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,6 +49,7 @@ fun SettingsNavHost() {
         composable("paired_devices") { PairedDevicesScreen(navController, settings) }
         composable("proximity_unlock") { ProximityUnlockScreen(navController, settings) }
         composable("calibration") { CalibrationScreen(navController, settings, null) }
+        composable("touch_point") { TouchPointScreen(navController) }
     }
 }
 
@@ -57,6 +63,9 @@ fun MainSettingsScreen(
         WristKeySettings.CONFIRM_BUTTON -> "Button only"
         else -> "Gesture or button"
     }
+
+    val touchContext = LocalContext.current
+    val touchTrained = remember { mutableStateOf(TouchPointStore(touchContext).isTrained()) }
 
     val listState = rememberScalingLazyListState()
 
@@ -110,6 +119,15 @@ fun MainSettingsScreen(
                     label = { Text("Paired PCs") },
                     secondaryLabel = { Text("${settings.pairedDevices.size} devices") },
                     onClick = { navController.navigate("paired_devices") },
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
+            }
+
+            item {
+                Chip(
+                    label = { Text("Touch point") },
+                    secondaryLabel = { Text(if (touchTrained.value) "Trained" else "Not set") },
+                    onClick = { navController.navigate("touch_point") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -420,6 +438,71 @@ fun PairedDevicesScreen(
                         },
                         modifier = Modifier.fillMaxWidth(0.9f)
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
+    val listState = rememberScalingLazyListState()
+    val context = LocalContext.current
+    val store = remember { TouchPointStore(context) }
+    var trained by remember { mutableStateOf(store.isTrained()) }
+
+    val trainingLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { trained = store.isTrained() }
+
+    Scaffold(
+        timeText = { TimeText() },
+        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                Text(
+                    text = "👆 Touch point",
+                    style = MaterialTheme.typography.title3,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                )
+            }
+
+            item {
+                Text(
+                    text = if (trained)
+                        "Точка обучена: разблокировка подтверждается касанием в неё"
+                    else
+                        "Точка не настроена. Без неё unlock покажет кнопку.",
+                    style = MaterialTheme.typography.caption2,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
+                )
+            }
+
+            item {
+                Button(
+                    onClick = { trainingLauncher.launch(Intent(context, TrainingActivity::class.java)) },
+                    modifier = Modifier.padding(top = 8.dp)
+                ) { Text(if (trained) "Обучить заново" else "Обучить точку") }
+            }
+
+            if (trained) {
+                item {
+                    Button(
+                        onClick = {
+                            store.clear()
+                            trained = false
+                            Toast.makeText(context, "Point cleared", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.secondaryButtonColors(),
+                        modifier = Modifier.padding(top = 6.dp)
+                    ) { Text("Сбросить точку") }
                 }
             }
         }
