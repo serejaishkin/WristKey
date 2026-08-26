@@ -1,5 +1,6 @@
 package com.wristkey
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -396,8 +397,12 @@ fun PairedDevicesScreen(
     settings: WristKeySettings
 ) {
     val listState = rememberScalingLazyListState()
-    val devices = remember { settings.pairedDevices.toList() }
     val context = LocalContext.current
+    // The BLE service owns the real pairing record; read it directly instead
+    // of the legacy WristKeySettings store which was always empty.
+    val prefs = remember { context.getSharedPreferences(WristKeyBleService.PREFS_NAME, Context.MODE_PRIVATE) }
+    var pairedName by remember { mutableStateOf(prefs.getString(WristKeyBleService.PREFS_PAIRED_NAME, null)) }
+    var pairedAddress by remember { mutableStateOf(prefs.getString(WristKeyBleService.PREFS_PAIRED_ADDRESS, null)) }
 
     Scaffold(
         timeText = { TimeText() },
@@ -417,27 +422,37 @@ fun PairedDevicesScreen(
                 )
             }
 
-            if (devices.isEmpty()) {
+            if (pairedAddress == null) {
                 item {
                     Text(
-                        text = "No paired PCs yet.\nPair from the main screen.",
+                        text = "Список ПК пуст.\nПодключите ПК с главной страницы.",
                         style = MaterialTheme.typography.body1,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(16.dp)
                     )
                 }
             } else {
-                items(devices.size) { index ->
-                    val deviceId = devices[index]
+                item {
                     Chip(
-                        label = { Text(deviceId) },
-                        secondaryLabel = { Text("Paired") },
-                        onClick = {
-                            settings.removePairedDevice(deviceId)
-                            Toast.makeText(context, "Forgot device", Toast.LENGTH_SHORT).show()
-                        },
+                        label = { Text(pairedName ?: "ПК") },
+                        secondaryLabel = { Text(pairedAddress ?: "") },
+                        onClick = { },
                         modifier = Modifier.fillMaxWidth(0.9f)
                     )
+                }
+                item {
+                    Button(
+                        onClick = {
+                            // Service clears pairing, regenerates the PIN and
+                            // switches advertising back to new-PC mode.
+                            context.sendBroadcast(Intent(WristKeyBleService.ACTION_FORGET_DEVICE).setPackage(context.packageName))
+                            pairedName = null
+                            pairedAddress = null
+                            Toast.makeText(context, "Текущий ПК сброшен", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.secondaryButtonColors(),
+                        modifier = Modifier.padding(top = 6.dp)
+                    ) { Text("Забыть этот ПК") }
                 }
             }
         }

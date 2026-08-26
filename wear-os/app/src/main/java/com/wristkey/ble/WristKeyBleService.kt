@@ -9,6 +9,7 @@ import android.util.*
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
 import com.wristkey.security.KeyStoreManager
+import com.wristkey.sensors.MotionDetector
 import com.wristkey.ui.PairingActivity
 import com.wristkey.ui.UnlockActivity
 import org.json.JSONObject
@@ -22,11 +23,15 @@ class WristKeyBleService : Service() {
         private const val DEBUG_TAG = "WristKeyBLE"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "wristkey_ble_channel"
-        private const val PREFS_NAME = "WristKeyPrefs"
-        private const val PREFS_PAIRED_ADDRESS = "paired_device_address"
-        private const val PREFS_PAIRED_NAME = "paired_device_name"
+        // Shared with the settings UI so the paired PC list reflects reality.
+        const val PREFS_NAME = "WristKeyPrefs"
+        const val PREFS_PAIRED_ADDRESS = "paired_device_address"
+        const val PREFS_PAIRED_NAME = "paired_device_name"
         private const val PREFS_PAIRING_KEY = "pairing_key"
         private const val PREFS_PAIRING_PIN = "pairing_pin"
+        // Sent by the settings UI to forget the current paired PC and return
+        // the watch to new-PC pairing mode.
+        const val ACTION_FORGET_DEVICE = "com.wristkey.FORGET_DEVICE"
         private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
@@ -57,6 +62,7 @@ class WristKeyBleService : Service() {
     private var currentChallenge: ByteArray? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val keyStoreManager = KeyStoreManager()
+    private val motionDetector by lazy { MotionDetector(this) }
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private var pairedDeviceAddress: String? = null
     private var pairedDeviceName: String? = null
@@ -94,7 +100,8 @@ class WristKeyBleService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         startGattServer()
         if (isPaired()) startAdvertising()
-        registerBluetoothStateReceiver(); registerUnlockReceiver()
+        registerBluetoothStateReceiver(); registerUnlockReceiver(); registerForgetReceiver()
+        motionDetector.start()
         debug("BLE service created; paired=${isPaired()} advertising=${isAdvertising()} pinPersisted=true pairingMode=${pairingMode.get()}")
     }
 
@@ -243,7 +250,7 @@ class WristKeyBleService : Service() {
         }
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
             when (characteristic?.uuid) {
-                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; if (!isPaired() && pairingMode.get()) { _pairingRequested.set(true); showPairingActivity() } else if (isPaired()) debug("Challenge received from known paired device; pairing UI suppressed") else debug("Challenge ignored outside new pairing mode") }
+                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed and notified (recent wrist motion)" else "no recent wrist motion - not signing"}") } else -> debug("Challenge ignored outside new pairing mode") } }
                 CONFIG_CHAR_UUID -> debug("Config write bytes=${value?.size ?: 0}")
                 UNLOCK_REQUEST_UUID -> handleUnlockRequest(value)
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }
@@ -258,6 +265,30 @@ class WristKeyBleService : Service() {
                 CONFIG_CHAR_UUID -> { val data = byteArrayOf(1, (currentPin shr 8).toByte(), currentPin.toByte(), if (isPaired()) 1 else 0); if (offset >= data.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null) else gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data.copyOfRange(offset, data.size)) }
                 else -> gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
             }
+        }
+    }
+
+    /**
+     * Silent reconnect auth: the paired PC writes a challenge and expects
+     * signature || user_present back over RESPONSE_CHAR. Sign ONLY for the
+     * persisted peer and ONLY when wrist motion was seen recently -- this is
+     * both the identity check (paired address) and the anti-relay gate.
+     */
+    private fun respondToPairedChallenge(device: BluetoothDevice?, challenge: ByteArray?): Boolean {
+        if (challenge == null || device == null) return false
+        if (!isPaired() || device.address != pairedDeviceAddress) return false
+        if (!motionDetector.hasRecentMotion()) return false
+        return try {
+            val signature = keyStoreManager.signChallenge(challenge)
+            responseCharacteristic?.value = signature + byteArrayOf(1)
+            val target = connectedDevice ?: device
+            gattServer?.notifyCharacteristicChanged(target, responseCharacteristic, false)
+            _userPresent.set(true)
+            debug("Paired challenge signed (${signature.size} bytes) for ${device.address}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to sign paired challenge", e)
+            false
         }
     }
 
@@ -304,5 +335,10 @@ class WristKeyBleService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(bluetoothStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(bluetoothStateReceiver, filter)
     }
     private val bluetoothStateReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) { BluetoothAdapter.STATE_OFF -> { stopAdvertising(); stopGattServer() }; BluetoothAdapter.STATE_ON -> { startGattServer(); if (isPaired() || pairingMode.get()) startAdvertising() } } } }
-    override fun onDestroy() { stopAdvertising(); stopGattServer(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
+    private fun registerForgetReceiver() {
+        val filter = IntentFilter(ACTION_FORGET_DEVICE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(forgetReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(forgetReceiver, filter)
+    }
+    private val forgetReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { if (intent?.action == ACTION_FORGET_DEVICE) { debug("Forget requested from settings UI"); forgetDevice() } } }
+    override fun onDestroy() { stopAdvertising(); stopGattServer(); motionDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
 }

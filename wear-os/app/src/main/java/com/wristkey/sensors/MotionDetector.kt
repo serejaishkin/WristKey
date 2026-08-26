@@ -25,6 +25,15 @@ class MotionDetector(context: Context) : SensorEventListener {
     var isMoving = false
         private set
 
+    /**
+     * True when the watch registered wrist motion recently (or is moving
+     * right now). Used as the user-presence gate before signing challenges:
+     * a stationary watch on a table must never answer the PC.
+     */
+    fun hasRecentMotion(withinMs: Long = 10_000L): Boolean {
+        return isMoving || (System.currentTimeMillis() - lastMotionTime < withinMs)
+    }
+
     fun hasAccelerometer(): Boolean = accelerometer != null
 
     fun start() {
