@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 use std::sync::Arc;
