@@ -123,6 +123,9 @@ impl Daemon {
         let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
         let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
+        // Subscribe BEFORE writing the challenge so a fast watch response
+        // cannot be missed between the write and the subscription.
+        let mut rx = self.ble.notify(&conn, response_char).await?;
         let challenge = self.session.begin_unlock(device.id).await?;
         let mut write_ok = false;
         for attempt in 1..=3 {
@@ -130,7 +133,6 @@ impl Daemon {
             warn!("Auth write attempt {} failed", attempt); sleep(Duration::from_millis(300)).await;
         }
         if !write_ok { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("auth write failed".into())); }
-        let mut rx = self.ble.notify(&conn, response_char).await?;
         let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some(d)) => d,
             _ => { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("auth response timeout".into())); }
@@ -206,6 +208,9 @@ impl Daemon {
         let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
         let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
+        // Subscribe BEFORE writing the challenge so a fast watch response
+        // cannot be missed between the write and the subscription.
+        let mut rx = self.ble.notify(&conn, response_char).await?;
         let challenge = self.session.begin_unlock(device.id).await?;
         let mut write_ok = false;
         for attempt in 1..=3 {
@@ -213,7 +218,6 @@ impl Daemon {
             warn!("Unlock write attempt {} failed", attempt); sleep(Duration::from_millis(300)).await;
         }
         if !write_ok { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("unlock write failed".into())); }
-        let mut rx = self.ble.notify(&conn, response_char).await?;
         let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some(d)) => d,
             _ => { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("unlock response timeout".into())); }
@@ -269,9 +273,11 @@ mod pipe_server {
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
             service_uuids: vec![service_uuid], raw_manufacturer_data: None };
         let conn = conn_mgr.get_or_connect(&ble, &info).await?;
+        let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
+        // Subscribe before the challenge write: see unlock_with_crypto.
+        let mut rx = ble.notify(&conn, response_char).await?;
         let challenge = session.begin_unlock(device.id).await?;
         ble.write(&conn, Uuid::parse_str(CHALLENGE_CHAR).unwrap(), &challenge.to_bytes()).await?;
-        let mut rx = ble.notify(&conn, Uuid::parse_str(RESPONSE_CHAR).unwrap()).await?;
         let data = timeout(Duration::from_secs(10), rx.recv()).await.ok().flatten().ok_or_else(|| WristKeyError::Ble("unlock response timeout".into()))?;
         if data.len() < 65 { return Err(WristKeyError::Protocol("unlock response too short".into())); }
         let response = Response { signature: data[..64].to_vec(), user_present: data[64] != 0, timestamp: chrono::Utc::now() };
