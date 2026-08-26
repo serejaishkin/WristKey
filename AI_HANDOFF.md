@@ -675,3 +675,19 @@ CLSID провайдера остаётся `{A1B2C3D4-E5F6-7890-ABCD-EF12345678
 - Плитка на lock screen: **требует проверки** (регистрация от админа + перезагрузка). Ожидаемо это первый раз, когда DLL вообще способна загрузиться.
 - Известное ограничение сериализации: `LogonId` в `KERB_INTERACTIVE_UNLOCK_LOGON` нулевой. Если unlock будет отклоняться после успешного подтверждения часов — резолвить LogonId сессии (SetUserArray / LsaEnumerateLogonSessions). Это зафиксировано комментарием в коде.
 - Корневые `WristKeyCredentialProvider.cs/.csproj` считать legacy; единая версия — в `desktop/crates/credential-provider/`.
+
+### 6.14 2026-08-26 — BT-first реконнект + рабочая регистрация CP из GUI
+
+#### 6.14.1 BT connection как приоритет транспорта
+
+Решение продукта: WristKey использует ТОЛЬКО BLE. Wi-Fi/UDP/TCP транспорты (как у pcbu) не добавляются.
+
+`conn_mgr.get_or_connect` теперь BT-first: перед discovery пробуется прямое GATT-подключение к последнему успешному peripheral id (`resolved` map). Discovery остался fallback на случай ротации адреса/перезагрузки.
+
+#### 6.14.2 Регистрация CP доведена до рабочего состояния
+
+- `platform-win`: `is_credential_provider_registered` / `register_credential_provider` / `unregister_credential_provider` были no-op заглушками; реализованы через `winreg` (HKCR CLSID + InprocServer32 + HKLM Credential Providers), с рекурсивным удалением (в winreg 0.52 нет delete_subkey_tree) и понятной ошибкой без прав администратора.
+- Tauri: команды `register_credential_provider` / `unregister_credential_provider` созданы (GUI вызывал их, а их не существовало — кнопки падали "Command not found") и добавлены в generate_handler. DLL ищется рядом с exe, затем `C:\Program Files\WristKey\`.
+- register.ps1: теперь всегда обновляет DLL+зависимости из `bin\Release\net48`, а не только при первой установке.
+- cargo check: wristkey-platform-win, wristkey-daemon, wristkey-tauri — OK.
+- Реальная регистрация под админом и появление плитки после перезагрузки — по-прежнему НЕ подтверждены на машине пользователя.

@@ -119,8 +119,23 @@ impl WindowsSecurity {
 
     pub fn start_pipe_server() {}
 
+    // The CLSID must match the Guid attribute in the C# Credential Provider
+    // (desktop/crates/credential-provider/WristKeyCredentialProvider.cs) and
+    // register.ps1. All three sides reference the same provider class.
+    const CP_CLSID: &'static str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
+    const CP_NAME: &'static str = "WristKey Credential Provider";
+
     pub fn is_credential_provider_registered() -> bool {
-        false
+        use winreg::enums::HKEY_CLASSES_ROOT;
+        let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
+        let inproc = hkcr.open_subkey(format!(r"CLSID\{}\InprocServer32", Self::CP_CLSID));
+        match inproc {
+            Ok(key) => key
+                .get_value::<String, _>("")
+                .map(|path| std::path::Path::new(&path).exists())
+                .unwrap_or(false),
+            Err(_) => false,
+        }
     }
 
     pub fn storage_type_description() -> &'static str {
@@ -131,11 +146,67 @@ impl WindowsSecurity {
         Err("DLL extraction not yet implemented".to_string())
     }
 
-    pub fn register_credential_provider(_dll_path: &str) -> std::result::Result<(), String> {
+    pub fn register_credential_provider(dll_path: &str) -> std::result::Result<(), String> {
+        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
+        if !std::path::Path::new(dll_path).exists() {
+            return Err(format!("Credential Provider DLL not found: {}", dll_path));
+        }
+        // Writing HKCR/HKLM requires Administrator. Surface a clear error
+        // instead of silently succeeding when elevation is missing.
+        let write_err = |e: std::io::Error| {
+            format!(
+                "registry write failed ({}) -- run the app once as Administrator",
+                e
+            )
+        };
+        let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
+        let (clsid_key, _) =
+            hkcr.create_subkey(format!(r"CLSID\{}", Self::CP_CLSID)).map_err(write_err)?;
+        clsid_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
+        let (inproc, _) = clsid_key.create_subkey("InprocServer32").map_err(write_err)?;
+        inproc.set_value("", &dll_path).map_err(write_err)?;
+        inproc.set_value("ThreadingModel", &"Apartment").map_err(write_err)?;
+
+        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
+        let (cp_key, _) = hklm
+            .create_subkey(format!(
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+                Self::CP_CLSID
+            ))
+            .map_err(write_err)?;
+        cp_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
+        tracing::info!("Credential Provider registered: CLSID={} dll={}", Self::CP_CLSID, dll_path);
         Ok(())
     }
 
     pub fn unregister_credential_provider() -> std::result::Result<(), String> {
+        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
+        // winreg 0.52 has no delete_subkey_tree; recurse manually. Collect
+        // subkeys before deleting because enumeration invalidates on change.
+        fn delete_tree(hive: &winreg::RegKey, path: &str) -> std::io::Result<()> {
+            if let Ok(key) = hive.open_subkey_with_flags(path, KEY_READ | KEY_WRITE) {
+                let subkeys: Vec<String> = key.enum_keys().flatten().collect();
+                for sub in subkeys {
+                    let child = format!(r"{}\{}", path, sub);
+                    delete_tree(hive, &child)?;
+                }
+            }
+            hive.delete_subkey(path)
+        }
+        let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
+        delete_tree(&hkcr, format!(r"CLSID\{}", Self::CP_CLSID).as_str())
+            .map_err(|e| format!("failed to delete COM registration: {}", e))?;
+        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
+        delete_tree(
+            &hklm,
+            format!(
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+                Self::CP_CLSID
+            )
+            .as_str(),
+        )
+        .map_err(|e| format!("failed to delete provider registration: {}", e))?;
+        tracing::info!("Credential Provider unregistered");
         Ok(())
     }
 }
