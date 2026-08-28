@@ -84,7 +84,7 @@ impl ConnectionManager {
                             candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
                                 || candidate.raw_manufacturer_data.is_some()
                                 || candidate.device_id.is_some();
-                        info!(
+                        debug!(
                             "BLE reconnect resolved: saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
                             info.id, candidate.id, candidate.name, wristkey_advertised
                         );
