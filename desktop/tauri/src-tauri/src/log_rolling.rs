@@ -35,7 +35,6 @@ impl RollingWriter {
     }
 
     fn rotate(inner: &mut Inner) -> io::Result<()> {
-        // Drop the oldest generation, shift the rest, move current to .1.
         let oldest = inner.path.with_extension(format!("{}", inner.keep));
         let _ = fs::remove_file(&oldest);
         for i in (1..inner.keep).rev() {
@@ -74,12 +73,5 @@ impl Write for RollingWriter {
     fn flush(&mut self) -> io::Result<()> {
         let mut inner = self.inner.lock().map_err(|_| io::Error::new(io::ErrorKind::Other, "log lock poisoned"))?;
         inner.file.flush()
-    }
-}
-
-impl tracing_appender::non_blocking::MakeWriter for RollingWriter {
-    type Writer = Self;
-    fn make_writer(&self) -> Self {
-        self.clone()
     }
 }
