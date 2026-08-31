@@ -1,0 +1,99 @@
+        Info Looking up installed tauri packages to check mismatched versions...
+        Warn The bundle identifier "com.wristkey.app" set in `"tauri.conf.json" identifier` ends with `.app`. This is not recommended because it conflicts with the application bundle extension on macOS.
+     Running beforeBuildCommand `cmd /C src-tauri\build-cp.cmd`
+  Определение проектов для восстановления...
+  Все проекты обновлены для восстановления.
+  WristKeyCredentialProvider -> D:\GitHub\WristKey\desktop\crates\credential-provider\bin\Release\net48\WristKeyCredentialProvider.dll
+
+Сборка успешно завершена.
+    Предупреждений: 0
+    Ошибок: 0
+
+Прошло времени 00:00:05.51
+warning: use of deprecated associated function `aes_gcm::aead::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+  --> crates\crypto\src\lib.rs:28:24
+   |
+28 |     let nonce = Nonce::from_slice(&ciphertext[..12]);
+   |                        ^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: `wristkey-crypto` (lib) generated 1 warning
+   Compiling wristkey-core v0.1.0 (D:\GitHub\WristKey\desktop\crates\core)
+   Compiling wristkey-tauri v0.1.0 (D:\GitHub\WristKey\desktop\tauri\src-tauri)
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> crates\core\src\lib.rs:434:43
+    |
+434 |             let pairing_key_enc = base64::encode(self.protector.protect(pairing_key));
+    |                                           ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:445:45
+    |
+445 |             let pairing_key_bytes = base64::decode(&device.pairing_key_enc)?;
+    |                                             ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:460:47
+    |
+460 |                 let pairing_key_enc = base64::decode(&existing.pairing_key_enc)?;
+    |                                               ^^^^^^
+
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> crates\core\src\lib.rs:467:43
+    |
+467 |             let pairing_key_enc = base64::encode(self.protector.protect(&pairing_key));
+    |                                           ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:477:43
+    |
+477 |             let pairing_key_enc = base64::decode(&device.pairing_key_enc)?;
+    |                                           ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:487:43
+    |
+487 |             let pairing_key_enc = base64::decode(&device.pairing_key_enc)?;
+    |                                           ^^^^^^
+
+   Compiling wristkey-platform-linux v0.1.0 (D:\GitHub\WristKey\desktop\crates\platform-linux)
+   Compiling wristkey-platform-macos v0.1.0 (D:\GitHub\WristKey\desktop\crates\platform-macos)
+   Compiling wristkey-platform-win v0.1.0 (D:\GitHub\WristKey\desktop\crates\platform-win)
+   Compiling wristkey-ble v0.1.0 (D:\GitHub\WristKey\desktop\crates\ble)
+warning: `wristkey-core` (lib) generated 6 warnings
+   Compiling wristkey-daemon v0.1.0 (D:\GitHub\WristKey\desktop\crates\daemon)
+error[E0726]: implicit elided lifetime not allowed here
+  --> tauri\src-tauri\src\log_rolling.rs:80:6
+   |
+80 | impl tracing_appender::non_blocking::MakeWriter for RollingWriter {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected lifetime parameter
+   |
+help: indicate the anonymous lifetime
+   |
+80 | impl tracing_appender::non_blocking::MakeWriter<'_> for RollingWriter {
+   |                                                ++++
+
+error[E0603]: trait `MakeWriter` is private
+  --> tauri\src-tauri\src\log_rolling.rs:80:38
+   |
+80 | impl tracing_appender::non_blocking::MakeWriter for RollingWriter {
+   |                                      ^^^^^^^^^^ private trait
+   |
+note: the trait `MakeWriter` is defined here
+  --> C:\Users\sergejj\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tracing-appender-0.2.5\src\non_blocking.rs:57:5
+   |
+57 | use tracing_subscriber::fmt::MakeWriter;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: import `MakeWriter` directly
+   |
+80 - impl tracing_appender::non_blocking::MakeWriter for RollingWriter {
+80 + impl tracing_subscriber::fmt::writer::MakeWriter for RollingWriter {
+   |
+
+Some errors have detailed explanations: E0603, E0726.
+For more information about an error, try `rustc --explain E0603`.
+error: could not compile `wristkey-tauri` (bin "wristkey-tauri") due to 2 previous errors
+       Error failed to build app: failed to build app

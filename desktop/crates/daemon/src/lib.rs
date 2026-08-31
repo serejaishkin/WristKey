@@ -4,7 +4,7 @@ pub mod conn_mgr;
 pub use conn_mgr::ConnectionManager;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tokio::time::{interval, timeout, sleep};
 use tracing::{info, warn, debug};
 use uuid::Uuid;
@@ -66,7 +66,9 @@ impl Daemon {
         }
     }
 
-    pub async fn run(&self) -> Result<()> {
+    /// Run the daemon loop. The loop exits cleanly when `shutdown_rx`
+    /// receives a closed signal (i.e. the sender was dropped / aborted).
+    pub async fn run(&self, mut shutdown_rx: watch::Receiver<()>) -> Result<()> {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
         let mut ticker = interval(Duration::from_secs(2));
 
@@ -75,7 +77,8 @@ impl Daemon {
             let session = self.session.clone();
             let ble = self.ble.clone();
             let conn_mgr = self.conn_mgr.clone();
-            tokio::spawn(pipe_server::run(session, ble, conn_mgr))
+            let shutdown = shutdown_rx.clone();
+            tokio::spawn(pipe_server::run(session, ble, conn_mgr, shutdown))
         };
 
         let devices = self.session.list_paired_devices().await?;
@@ -92,7 +95,13 @@ impl Daemon {
         }
 
         loop {
-            ticker.tick().await;
+            tokio::select! {
+                _ = ticker.tick() => {},
+                _ = shutdown_rx.changed() => {
+                    info!("Daemon shutting down via signal");
+                    return Ok(());
+                }
+            }
             let devices = self.session.list_paired_devices().await?;
             if devices.is_empty() { sleep(Duration::from_secs(5)).await; continue; }
 
@@ -237,11 +246,18 @@ mod pipe_server {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>) {
+    pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
         loop {
-            match ServerOptions::new().create(r"\\.\pipe\wristkey") {
-                Ok(server) => handle_client(server, session.clone(), ble.clone(), conn_mgr.clone()).await,
-                Err(e) => { warn!("pipe server create failed: {}", e); sleep(Duration::from_secs(1)).await; }
+            tokio::select! {
+                _ = shutdown.changed() => { info!("Pipe server shutting down"); return; }
+                _ = async {
+                    match ServerOptions::new().create(r"\\.\pipe\wristkey") {
+                        Ok(server) => handle_client(server, session.clone(), ble.clone(), conn_mgr.clone()).await,
+                        Err(e) => { warn!("pipe server create failed: {}", e); sleep(Duration::from_secs(1)).await; }
+                    }
+                    #[allow(clippy::never_loop)]
+                    loop { std::future::pending::<()>().await; }
+                } => {}
             }
         }
     }
