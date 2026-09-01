@@ -49,6 +49,20 @@ pub trait BleAdapter: Send + Sync {
     fn btleplug_adapter(&self) -> Option<Adapter> { None }
 }
 
+pub struct NullBleAdapter;
+
+#[async_trait]
+impl BleAdapter for NullBleAdapter {
+    async fn scan(&self, _service_uuid: Uuid) -> Result<mpsc::Receiver<PeripheralInfo>> { Err(WristKeyError::Ble("BLE adapter not available".into())) }
+    async fn connect(&self, _info: &PeripheralInfo) -> Result<Connection> { Err(WristKeyError::Ble("BLE adapter not available".into())) }
+    async fn disconnect(&self, _conn: &Connection) -> Result<()> { Ok(()) }
+    async fn write(&self, _conn: &Connection, _characteristic: Uuid, _data: &[u8]) -> Result<()> { Err(WristKeyError::Ble("BLE adapter not available".into())) }
+    async fn notify(&self, _conn: &Connection, _characteristic: Uuid) -> Result<mpsc::Receiver<Vec<u8>>> { Err(WristKeyError::Ble("BLE adapter not available".into())) }
+    async fn read_rssi(&self, _conn: &Connection) -> Result<i16> { Err(WristKeyError::Ble("BLE adapter not available".into())) }
+    async fn read(&self, _conn: &Connection, _characteristic: Uuid) -> Result<Vec<u8>> { Err(WristKeyError::Ble("BLE adapter not available".into())) }
+    async fn stop_scan(&self) -> Result<()> { Ok(()) }
+}
+
 pub struct BtleplugAdapter {
     _manager: Manager,
     adapter: Adapter,
