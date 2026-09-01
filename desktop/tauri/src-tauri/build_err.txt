@@ -1,0 +1,59 @@
+warning: use of deprecated associated function `aes_gcm::aead::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+  --> crates\crypto\src\lib.rs:28:24
+   |
+28 |     let nonce = Nonce::from_slice(&ciphertext[..12]);
+   |                        ^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: `wristkey-crypto` (lib) generated 1 warning
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> crates\core\src\lib.rs:434:43
+    |
+434 |             let pairing_key_enc = base64::encode(self.protector.protect(pairing_key));
+    |                                           ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:445:45
+    |
+445 |             let pairing_key_bytes = base64::decode(&device.pairing_key_enc)?;
+    |                                             ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:460:47
+    |
+460 |                 let pairing_key_enc = base64::decode(&existing.pairing_key_enc)?;
+    |                                               ^^^^^^
+
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> crates\core\src\lib.rs:467:43
+    |
+467 |             let pairing_key_enc = base64::encode(self.protector.protect(&pairing_key));
+    |                                           ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:477:43
+    |
+477 |             let pairing_key_enc = base64::decode(&device.pairing_key_enc)?;
+    |                                           ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:487:43
+    |
+487 |             let pairing_key_enc = base64::decode(&device.pairing_key_enc)?;
+    |                                           ^^^^^^
+
+warning: `wristkey-core` (lib) generated 6 warnings
+   Compiling wristkey-tauri v0.1.0 (D:\GitHub\WristKey\desktop\tauri\src-tauri)
+warning: unused variable: `shutdown_tx`
+  --> tauri\src-tauri\src\main.rs:67:2266
+   |
+67 | ...pawn(async move{let (shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err...
+   |                         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_shutdown_tx`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wristkey-tauri` (bin "wristkey-tauri") generated 1 warning (run `cargo fix --bin "wristkey-tauri" -p wristkey-tauri` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 3m 30s
