@@ -7,7 +7,7 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tracing::{info, error, warn};
 use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, PlatformSecurity, Response};
 use wristkey_daemon::{Daemon, ConnectionManager};
-use wristkey_ble::{BleAdapter, BtleplugAdapter, NullBleAdapter};
+use wristkey_ble::{BleAdapter, BtleplugAdapter, NullBleAdapter, PeripheralInfo};
 #[cfg(target_os = "windows")]
 use wristkey_platform_win::WindowsSecurity;
 #[cfg(target_os = "linux")]
