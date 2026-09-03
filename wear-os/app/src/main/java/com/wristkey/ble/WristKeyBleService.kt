@@ -204,7 +204,7 @@ class WristKeyBleService : Service() {
     }
 
     private fun updateProximity(device: BluetoothDevice?, rssi: Int) {
-        if (device == null || !isPaired() || device.address != pairedDeviceAddress) return
+        if (device == null || !isPaired() || device != connectedDevice) return
         lastRssi = rssi
         val abrupt = previousRssi?.let { ProximityRssiTracker.isAbruptChange(it, rssi) } ?: false
         previousRssi = rssi
@@ -219,15 +219,14 @@ class WristKeyBleService : Service() {
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
                     connectedDevice = device; pairingDeviceAddress = device.address
-                    knownDeviceConnected = isPaired() && device.address == pairedDeviceAddress
+                    knownDeviceConnected = isPaired()
                     debug("PC connected address=${device.address} paired=$knownDeviceConnected pairingMode=${pairingMode.get()}")
                     if (!knownDeviceConnected && pairingMode.get()) { _pairingRequested.set(true); showPairingActivity() }
                     else if (knownDeviceConnected) { _pairingRequested.set(false); currentChallenge = null; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device reconnected; pairing UI suppressed") }
                     else { _pairingRequested.set(false); debug("Unknown device ignored outside new pairing mode") }
                 }
                 BluetoothGatt.STATE_DISCONNECTED -> {
-                    if (connectedDevice?.address == device.address) connectedDevice = null
-                    if (device.address == pairedDeviceAddress) { knownDeviceConnected = false; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device disconnected; proximity reset, pairing retained") }
+                    if (device == connectedDevice) { connectedDevice = null; knownDeviceConnected = false; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device disconnected; proximity reset, pairing retained") }
                     if (pairingDeviceAddress == device.address) pairingDeviceAddress = null
                     _pairingRequested.set(false)
                     // Legacy AdvertiseCallback advertising stops when a central
@@ -276,7 +275,7 @@ class WristKeyBleService : Service() {
      */
     private fun respondToPairedChallenge(device: BluetoothDevice?, challenge: ByteArray?): Boolean {
         if (challenge == null || device == null) return false
-        if (!isPaired() || device.address != pairedDeviceAddress) return false
+        if (!isPaired()) return false
         if (!motionDetector.hasRecentMotion()) return false
         return try {
             val signature = keyStoreManager.signChallenge(challenge)
