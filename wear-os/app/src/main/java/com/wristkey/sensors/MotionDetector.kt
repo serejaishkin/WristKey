@@ -30,7 +30,7 @@ class MotionDetector(context: Context) : SensorEventListener {
      * right now). Used as the user-presence gate before signing challenges:
      * a stationary watch on a table must never answer the PC.
      */
-    fun hasRecentMotion(withinMs: Long = 10_000L): Boolean {
+    fun hasRecentMotion(withinMs: Long = 30_000L): Boolean {
         return isMoving || (System.currentTimeMillis() - lastMotionTime < withinMs)
     }
 

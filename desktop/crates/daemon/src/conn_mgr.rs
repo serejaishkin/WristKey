@@ -78,7 +78,8 @@ impl ConnectionManager {
                     // BleAdapter::connect therefore remains the authoritative
                     // validation: it disconnects any peer that does not expose
                     // the WristKey custom GATT service.
-                    let matched = address_match || device_id_match || name_match;
+                    let wristkey_match = candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid));
+                    let matched = address_match || device_id_match || name_match || wristkey_match;
                     if matched {
                         let wristkey_advertised =
                             candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
