@@ -11,6 +11,7 @@ import com.wristkey.R
 import com.wristkey.security.KeyStoreManager
 import com.wristkey.sensors.MotionDetector
 import com.wristkey.ui.PairingActivity
+import com.wristkey.ui.TrainingActivity
 import com.wristkey.ui.UnlockActivity
 import org.json.JSONObject
 import java.util.UUID
@@ -42,6 +43,7 @@ class WristKeyBleService : Service() {
         val UNLOCK_RESPONSE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567896")
         val PAIRING_KEY_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567897")
         val PC_NAME_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567898")
+        val TRAINING_CONTROL_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567899")
     }
 
     private val binder = LocalBinder()
@@ -56,6 +58,7 @@ class WristKeyBleService : Service() {
     private var unlockResponseCharacteristic: BluetoothGattCharacteristic? = null
     private var pairingKeyCharacteristic: BluetoothGattCharacteristic? = null
     private var pcNameCharacteristic: BluetoothGattCharacteristic? = null
+    private var trainingControlCharacteristic: BluetoothGattCharacteristic? = null
     private var connectedDevice: BluetoothDevice? = null
     private var pairingDeviceAddress: String? = null
     private var requestingPcName: String? = null
@@ -79,6 +82,9 @@ class WristKeyBleService : Service() {
     val userPresent get() = _userPresent
     private val _userPresentCountdown = AtomicInteger(0)
     val userPresentCountdown get() = _userPresentCountdown
+    // Training state broadcast to connected PC
+    var trainingState: String = "idle"
+        private set
 
     inner class LocalBinder : Binder() { fun getService() = this@WristKeyBleService }
     private fun debug(message: String) = Log.i(DEBUG_TAG, message)
@@ -157,6 +163,21 @@ class WristKeyBleService : Service() {
     }
     fun rejectPairing() { _pairingRequested.set(false); currentChallenge = null; pairingDeviceAddress = null; requestingPcName = null }
 
+    fun sendTrainingState(state: String, extras: Map<String, Any> = emptyMap()) {
+        trainingState = state
+        val json = org.json.JSONObject().apply {
+            put("state", state)
+            extras.forEach { (k, v) -> put(k, v) }
+        }
+        val data = json.toString().toByteArray()
+        trainingControlCharacteristic?.value = data
+        connectedDevice?.let { device ->
+            try { gattServer?.notifyCharacteristicChanged(device, trainingControlCharacteristic, false) }
+            catch (e: Exception) { Log.e(TAG, "Training state notify failed", e) }
+        }
+        debug("Training state -> $state ${extras}")
+    }
+
     private fun showPairingActivity() {
         if (!pairingMode.get() || isPaired()) return
         try { startActivity(Intent(this, PairingActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP; putExtra("pcName", requestingPcName ?: "Windows PC"); putExtra("pcAddress", pairingDeviceAddress ?: "") }) }
@@ -193,13 +214,14 @@ class WristKeyBleService : Service() {
         unlockResponseCharacteristic = BluetoothGattCharacteristic(UNLOCK_RESPONSE_UUID, BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ).also { it.addDescriptor(cccd()) }
         pairingKeyCharacteristic = BluetoothGattCharacteristic(PAIRING_KEY_CHAR_UUID, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE)
         pcNameCharacteristic = BluetoothGattCharacteristic(PC_NAME_CHAR_UUID, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE)
-        listOf(challengeCharacteristic, responseCharacteristic, publicKeyCharacteristic, configCharacteristic, unlockRequestCharacteristic, unlockResponseCharacteristic, pairingKeyCharacteristic, pcNameCharacteristic).forEach { service.addCharacteristic(it) }
+        trainingControlCharacteristic = BluetoothGattCharacteristic(TRAINING_CONTROL_UUID, BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ).also { it.addDescriptor(cccd()) }
+        listOf(challengeCharacteristic, responseCharacteristic, publicKeyCharacteristic, configCharacteristic, unlockRequestCharacteristic, unlockResponseCharacteristic, pairingKeyCharacteristic, pcNameCharacteristic, trainingControlCharacteristic).forEach { service.addCharacteristic(it) }
         if (gattServer?.addService(service) != true) Log.e(TAG, "GATT addService failed")
     }
 
     private fun stopGattServer() {
         gattServer?.close(); gattServer = null; connectedDevice = null
-        challengeCharacteristic = null; responseCharacteristic = null; publicKeyCharacteristic = null; configCharacteristic = null; unlockRequestCharacteristic = null; unlockResponseCharacteristic = null; pairingKeyCharacteristic = null; pcNameCharacteristic = null
+        challengeCharacteristic = null; responseCharacteristic = null; publicKeyCharacteristic = null; configCharacteristic = null; unlockRequestCharacteristic = null; unlockResponseCharacteristic = null; pairingKeyCharacteristic = null; pcNameCharacteristic = null; trainingControlCharacteristic = null
         proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null
     }
 
@@ -254,6 +276,7 @@ class WristKeyBleService : Service() {
                 UNLOCK_REQUEST_UUID -> handleUnlockRequest(value)
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }
                 PC_NAME_CHAR_UUID -> value?.let { requestingPcName = String(it, Charsets.UTF_8).trim('\u0000') }
+                TRAINING_CONTROL_UUID -> handleTrainingCommand(value)
                 else -> { if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); return }
             }
             if (responseNeeded) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
@@ -309,6 +332,31 @@ class WristKeyBleService : Service() {
 
     fun requestUserPresence(): Boolean { if (_userPresent.get()) return true; _userPresentCountdown.set(10); return false }
     fun setUserPresent(present: Boolean) { _userPresent.set(present) }
+
+    private fun handleTrainingCommand(data: ByteArray?) {
+        if (data == null) return
+        try {
+            val json = JSONObject(String(data))
+            val action = json.optString("action", "")
+            when (action) {
+                "start_training" -> {
+                    debug("PC requested training start")
+                    sendTrainingState("starting")
+                    startActivity(Intent(this, TrainingActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        putExtra("from_pc", true)
+                    })
+                }
+                "cancel_training" -> {
+                    debug("PC requested training cancel")
+                    sendTrainingState("cancelled")
+                }
+                "get_status" -> {
+                    sendTrainingState(trainingState)
+                }
+            }
+        } catch (e: Exception) { Log.e(TAG, "Training command parse failed", e) }
+    }
 
     private fun handleUnlockRequest(data: ByteArray?) {
         if (data == null) return

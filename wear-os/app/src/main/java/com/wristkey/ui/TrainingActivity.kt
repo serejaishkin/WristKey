@@ -1,8 +1,14 @@
 package com.wristkey.ui
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import android.view.HapticFeedbackConstants
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -21,34 +27,53 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
+import com.wristkey.ble.WristKeyBleService
 import com.wristkey.security.TouchPoint
 import com.wristkey.security.TouchPointStore
 import kotlinx.coroutines.delay
 
 class TrainingActivity : ComponentActivity() {
+    private var bleService: WristKeyBleService? = null
+    private var bound = false
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            bleService = (service as WristKeyBleService.LocalBinder).getService()
+            bound = true
+        }
+        override fun onServiceDisconnected(name: ComponentName?) { bleService = null; bound = false }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Intent(this, WristKeyBleService::class.java).also {
+            bindService(it, connection, Context.BIND_AUTO_CREATE)
+        }
         setContent {
             MaterialTheme {
                 TrainingScreen(
+                    bleService = { bleService },
                     onDone = { setResult(Activity.RESULT_OK); finish() },
                     onCancelled = { setResult(Activity.RESULT_CANCELED); finish() }
                 )
             }
         }
     }
+
+    override fun onDestroy() {
+        if (bound) { unbindService(connection); bound = false }
+        super.onDestroy()
+    }
 }
 
 private enum class TrainPhase { PREP, RECORD, DONE }
 
-// The training must be almost touch-free: one tap during the initial 10 s
-// window places the point, then a 10 s recording window runs on its own.
-// Extra touches during recording only refine the stored position.
 private const val PREP_SECONDS = 10
 private const val RECORD_SECONDS = 10
 
 @Composable
-fun TrainingScreen(onDone: () -> Unit, onCancelled: () -> Unit) {
+fun TrainingScreen(bleService: () -> WristKeyBleService?, onDone: () -> Unit, onCancelled: () -> Unit) {
     val context = LocalContext.current
     val store = remember { TouchPointStore(context) }
     val view = LocalView.current
@@ -59,29 +84,49 @@ fun TrainingScreen(onDone: () -> Unit, onCancelled: () -> Unit) {
     var anchor by remember { mutableStateOf<TouchPoint?>(null) }
     val samples = remember { mutableStateListOf<TouchPoint>() }
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    var sampleCount by remember { mutableIntStateOf(0) }
+
+    // Notify BLE service on phase changes
+    LaunchedEffect(phase) {
+        val svc = bleService() ?: return@LaunchedEffect
+        when (phase) {
+            TrainPhase.PREP -> svc.sendTrainingState("prep", mapOf("countdown" to PREP_SECONDS))
+            TrainPhase.RECORD -> svc.sendTrainingState("record", mapOf("countdown" to RECORD_SECONDS, "samples" to sampleCount))
+            TrainPhase.DONE -> {
+                val p = anchor
+                if (p != null) {
+                    svc.sendTrainingState("done", mapOf("x" to p.x, "y" to p.y, "samples" to sampleCount))
+                } else {
+                    svc.sendTrainingState("cancelled")
+                }
+            }
+        }
+    }
 
     LaunchedEffect(phase) {
         when (phase) {
             TrainPhase.PREP -> {
-                // Re-arm the 10 s touch window until the first tap arrives.
                 while (phase == TrainPhase.PREP) {
                     secondsLeft = PREP_SECONDS
+                    // Send countdown ticks via BLE
+                    val svc = bleService()
                     while (secondsLeft > 0) {
                         delay(1000)
                         if (phase != TrainPhase.PREP) return@LaunchedEffect
                         secondsLeft--
+                        svc?.sendTrainingState("prep", mapOf("countdown" to secondsLeft))
                     }
                     view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 }
             }
             TrainPhase.RECORD -> {
                 secondsLeft = RECORD_SECONDS
+                val svc = bleService()
                 while (secondsLeft > 0) {
                     delay(1000)
                     secondsLeft--
+                    svc?.sendTrainingState("record", mapOf("countdown" to secondsLeft, "samples" to sampleCount))
                 }
-                // Recording finished: average every accepted touch so the
-                // stored point reflects where the finger naturally lands.
                 val base = anchor
                 if (base != null) {
                     val xs = samples.map { it.x }
@@ -123,7 +168,7 @@ fun TrainingScreen(onDone: () -> Unit, onCancelled: () -> Unit) {
                     textAlign = TextAlign.Center
                 )
                 TrainPhase.RECORD -> Text(
-                    "Запись точки…\n${secondsLeft} с\n\nМожно коснуться ещё раз,\nчтобы уточнить положение",
+                    "Запись точки…\n${secondsLeft} с\n\nОбразцов: ${sampleCount}\nМожно коснуться ещё раз",
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center
                 )
@@ -152,12 +197,11 @@ fun TrainingScreen(onDone: () -> Unit, onCancelled: () -> Unit) {
                                 anchor = TouchPoint(nx, ny)
                                 samples.clear()
                                 samples.add(anchor!!)
+                                sampleCount = 1
                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                 phase = TrainPhase.RECORD
                             }
                             TrainPhase.RECORD -> {
-                                // Accept touches anywhere within a generous
-                                // band around the anchor; they only refine it.
                                 val a = anchor
                                 val w = size.width.toFloat()
                                 if (a != null && w > 0f) {
@@ -165,6 +209,7 @@ fun TrainingScreen(onDone: () -> Unit, onCancelled: () -> Unit) {
                                     val dy = (ny - a.y) * w
                                     if (kotlin.math.sqrt(dx * dx + dy * dy) <= TouchPointStore.TRAIN_TOLERANCE * 2f * w) {
                                         samples.add(TouchPoint(nx, ny))
+                                        sampleCount = samples.size
                                         view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                     }
                                 }

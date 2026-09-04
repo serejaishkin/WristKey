@@ -28,8 +28,15 @@
   "bundle": {
     "active": true,
     "category": "Utility",
-    "copyright": "",
-    "targets": "all",
+    "copyright": "WristKey",
+    "targets": ["msi", "nsis"],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": false
+      },
+      "wix": null
+    },
     "resources": [
       "../../crates/credential-provider/bin/Release/net48/WristKeyCredentialProvider.dll",
       "../../crates/credential-provider/bin/Release/net48/Newtonsoft.Json.dll"

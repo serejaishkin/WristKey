@@ -87,11 +87,15 @@ pub trait Storage: Send + Sync {
     async fn delete_device(&self, id: Uuid) -> Result<()>;
     async fn load_config(&self) -> Result<Config>;
     async fn save_config(&self, config: &Config) -> Result<()>;
+    async fn save_touch_point(&self, device_id: &str, point: &TouchPoint) -> Result<()>;
+    async fn load_touch_point(&self, device_id: &str) -> Result<Option<TouchPoint>>;
+    async fn delete_touch_point(&self, device_id: &str) -> Result<()>;
 }
 
 pub struct MemoryStorage {
     devices: Arc<RwLock<HashMap<Uuid, PairedDevice>>>,
     config: Arc<RwLock<Config>>,
+    touch_points: Arc<RwLock<HashMap<String, TouchPoint>>>,
 }
 
 impl Default for MemoryStorage {
@@ -99,7 +103,11 @@ impl Default for MemoryStorage {
 }
 impl MemoryStorage {
     pub fn new() -> Self {
-        Self { devices: Arc::new(RwLock::new(HashMap::new())), config: Arc::new(RwLock::new(Config::default())) }
+        Self {
+            devices: Arc::new(RwLock::new(HashMap::new())),
+            config: Arc::new(RwLock::new(Config::default())),
+            touch_points: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 
@@ -125,6 +133,17 @@ impl Storage for MemoryStorage {
     async fn save_config(&self, config: &Config) -> Result<()> {
         *self.config.write().await = config.clone(); Ok(())
     }
+    async fn save_touch_point(&self, device_id: &str, point: &TouchPoint) -> Result<()> {
+        self.touch_points.write().await.insert(device_id.to_string(), point.clone());
+        info!("saved PC touch point for {}", device_id); Ok(())
+    }
+    async fn load_touch_point(&self, device_id: &str) -> Result<Option<TouchPoint>> {
+        Ok(self.touch_points.read().await.get(device_id).cloned())
+    }
+    async fn delete_touch_point(&self, device_id: &str) -> Result<()> {
+        self.touch_points.write().await.remove(device_id);
+        info!("deleted PC touch point for {}", device_id); Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +156,14 @@ pub struct PairedDevice {
     pub baseline_rssi: i16,
     pub address: String,
     pub windows_password: Option<Vec<u8>>,
+}
+
+pub const PC_TOUCH_TOLERANCE: f64 = 0.18;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TouchPoint {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -340,6 +367,20 @@ impl SessionManager {
     pub async fn disconnect(&self) {
         *self.state.write().await = SessionState::Disconnected;
         info!("session disconnected");
+    }
+    pub async fn save_touch_point(&self, device_id: &str, point: &TouchPoint) -> Result<()> {
+        self.storage.save_touch_point(device_id, point).await
+    }
+    pub async fn load_touch_point(&self, device_id: &str) -> Result<Option<TouchPoint>> {
+        self.storage.load_touch_point(device_id).await
+    }
+    pub async fn delete_touch_point(&self, device_id: &str) -> Result<()> {
+        self.storage.delete_touch_point(device_id).await
+    }
+    pub fn verify_touch_point(trained: &TouchPoint, input: &TouchPoint, tolerance: f64) -> bool {
+        let dx = trained.x - input.x;
+        let dy = trained.y - input.y;
+        (dx * dx + dy * dy).sqrt() <= tolerance
     }
 }
 

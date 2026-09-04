@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 use uuid::Uuid;
-use crate::{Storage, PairedDevice, Config, WristKeyError, Result};
+use crate::{Storage, PairedDevice, Config, TouchPoint, WristKeyError, Result};
 
 pub struct SqliteStorage {
     conn: Arc<Mutex<Connection>>,
@@ -24,7 +24,10 @@ impl SqliteStorage {
                 device_id BLOB, paired_at TEXT NOT NULL, baseline_rssi INTEGER NOT NULL,
                 address TEXT NOT NULL, windows_password BLOB
             );
-            CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value BLOB NOT NULL);"
+            CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS touch_points (
+                device_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+            );"
         ).map_err(|e| WristKeyError::Storage(format!("sqlite init ddl: {}", e)))?;
         conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('main', ?1)",
             params![&serde_json::to_vec(&Config::default()).unwrap()],
@@ -123,6 +126,44 @@ impl Storage for SqliteStorage {
                 .map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
             stmt.execute(params![value]).map_err(|e| WristKeyError::Storage(format!("sqlite insert config: {}", e)))?;
             Ok(())
+        }).await.map_err(|e| WristKeyError::Storage(format!("spawn_blocking: {}", e)))?
+    }
+    async fn save_touch_point(&self, device_id: &str, point: &TouchPoint) -> Result<()> {
+        let conn = self.conn.clone();
+        let device_id = device_id.to_string();
+        let point = point.clone();
+        tokio::task::spawn_blocking(move || {
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached("INSERT OR REPLACE INTO touch_points (device_id, x, y) VALUES (?1, ?2, ?3)")
+                .map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
+            stmt.execute(params![device_id, point.x, point.y])
+                .map_err(|e| WristKeyError::Storage(format!("sqlite insert touch: {}", e)))?;
+            info!("persisted PC touch point for {} to sqlite", device_id); Ok(())
+        }).await.map_err(|e| WristKeyError::Storage(format!("spawn_blocking: {}", e)))?
+    }
+    async fn load_touch_point(&self, device_id: &str) -> Result<Option<TouchPoint>> {
+        let conn = self.conn.clone();
+        let device_id = device_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached("SELECT x, y FROM touch_points WHERE device_id = ?1")
+                .map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
+            let point = stmt.query_row(params![device_id], |row| {
+                Ok(TouchPoint { x: row.get(0)?, y: row.get(1)? })
+            }).optional().map_err(|e| WristKeyError::Storage(format!("sqlite query: {}", e)))?;
+            Ok(point)
+        }).await.map_err(|e| WristKeyError::Storage(format!("spawn_blocking: {}", e)))?
+    }
+    async fn delete_touch_point(&self, device_id: &str) -> Result<()> {
+        let conn = self.conn.clone();
+        let device_id = device_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let binding = conn.blocking_lock();
+            let mut stmt = binding.prepare_cached("DELETE FROM touch_points WHERE device_id = ?1")
+                .map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
+            stmt.execute(params![device_id])
+                .map_err(|e| WristKeyError::Storage(format!("sqlite delete touch: {}", e)))?;
+            info!("deleted PC touch point for {} from sqlite", device_id); Ok(())
         }).await.map_err(|e| WristKeyError::Storage(format!("spawn_blocking: {}", e)))?
     }
 }

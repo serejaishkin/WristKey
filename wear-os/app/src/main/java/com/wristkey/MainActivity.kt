@@ -202,6 +202,13 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxWidth(0.92f)
                             )
                         }
+                        item {
+                            Chip(
+                                label = { Text("🎯 Обучение точки") },
+                                onClick = { startActivity(Intent(this@MainActivity, com.wristkey.ui.TrainingActivity::class.java)) },
+                                modifier = Modifier.fillMaxWidth(0.82f)
+                            )
+                        }
                     }
                     item {
                         Chip(

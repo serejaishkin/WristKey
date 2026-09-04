@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::watch;
@@ -5,7 +7,7 @@ use tauri::{Manager, State, RunEvent};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tracing::{info, error, warn};
-use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, PlatformSecurity, Response};
+use wristkey_core::{Config, SessionManager, EcdsaP256Crypto, SqliteStorage, PlatformSecurity, Response, TouchPoint, PC_TOUCH_TOLERANCE};
 use wristkey_daemon::{Daemon, ConnectionManager};
 use wristkey_ble::{BleAdapter, BtleplugAdapter, NullBleAdapter, PeripheralInfo};
 #[cfg(target_os = "windows")]
@@ -19,6 +21,7 @@ const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
 const PUBLIC_KEY_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567893";
+const TRAINING_CONTROL_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567899";
 fn get_pc_name() -> String { #[cfg(target_os = "windows")] { std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown PC".to_string()) } #[cfg(not(target_os = "windows"))] { std::env::var("HOSTNAME").unwrap_or_else(|_| "Unknown PC".to_string()) } }
 #[derive(serde::Serialize)] struct StatusDto { state: String, detail: String, device_count: usize, daemon_enabled: bool, #[cfg(target_os = "windows")] cp_registered: bool, storage_type: String }
 #[derive(serde::Serialize)] struct DeviceDto { id: String, name: String, address: String, baseline_rssi: i32 }
@@ -63,4 +66,75 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecu
 #[tauri::command] async fn update_config(state: State<'_, Arc<AppState>>,new_config:Config)->Result<(),String>{*state.config.lock().unwrap()=new_config;Ok(())}
 #[tauri::command] async fn set_config(state: State<'_, Arc<AppState>>,config:Config)->Result<(),String>{update_config(state,config).await}
 #[tauri::command] async fn get_logs()->Result<Vec<String>,String>{use std::fs;let log_dir=LOG_DIR.get().ok_or("log dir not initialized")?;let mut lines=Vec::new();for i in (0..=5).rev(){let path=if i==0{log_dir.join("wristkey.log")}else{log_dir.join(format!("wristkey.log.{}",i))};if path.exists(){if let Ok(content)=fs::read_to_string(&path){for line in content.lines().rev(){lines.push(line.to_string());}}}}Ok(lines)}
-mod log_rolling;#[tokio::main] async fn main(){let log_dir=std::env::var("WRISTKEY_LOG_DIR").map(|s|std::path::PathBuf::from(s)).unwrap_or_else(|_|{let mut p=dirs::data_local_dir().unwrap_or_else(||std::path::PathBuf::from("."));p.push("WristKey/logs");p});std::fs::create_dir_all(&log_dir).ok();LOG_DIR.set(log_dir.clone()).ok();let writer=log_rolling::RollingWriter::new(&log_dir.join("wristkey.log"),20*1024*1024,5).expect("failed to open log file");let(non_blocking,_guard)=tracing_appender::non_blocking(writer);tracing_subscriber::fmt().with_writer(non_blocking).with_ansi(false).with_level(true).with_target(true).init();info!("WristKey starting up...");let config=Config::from_file(&dirs::config_dir().unwrap_or_else(||std::path::PathBuf::from(".")).join("WristKey/config.toml")).unwrap_or_default();let storage:Arc<dyn wristkey_core::Storage>=match SqliteStorage::open_default(){Ok(storage)=>{info!("Persistent SQLite storage opened; paired watches will survive desktop restarts");Arc::new(storage)},Err(e)=>{error!("Failed to open persistent SQLite storage: {}",e);return;}};let crypto=Arc::new(EcdsaP256Crypto);let session=Arc::new(SessionManager::new(crypto,storage));let platform=create_platform_adapter(session.clone());let ble:Arc<dyn BleAdapter>=match BtleplugAdapter::new().await{Ok(a)=>Arc::new(a),Err(e)=>{warn!("BLE adapter unavailable, running without BLE: {}",e);Arc::new(NullBleAdapter)}};let conn_mgr=Arc::new(ConnectionManager::new());let app_state=Arc::new(AppState{session:session.clone(),config:Arc::new(Mutex::new(config)),daemon:Arc::new(Mutex::new(None)),platform,ble,conn_mgr:conn_mgr.clone(),proximity:Arc::new(Mutex::new(ProximityDiagnostics::default()))});tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,get_config,update_config,set_config,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}
+#[derive(serde::Deserialize)] struct TrainTouchRequest { x: f64, y: f64 }
+#[derive(serde::Serialize)] struct TouchStatusDto { trained: bool, x: Option<f64>, y: Option<f64> }
+#[derive(serde::Serialize, Clone)] struct TrainingStatusDto { state: String, countdown: Option<i32>, samples: Option<i32>, x: Option<f64>, y: Option<f64> }
+#[tauri::command] async fn train_pc_touch(state: State<'_, Arc<AppState>>, req: TrainTouchRequest)->Result<(),String>{let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;let device_id=devices.first().map(|d|d.id.to_string()).unwrap_or_else(||"default".to_string());state.session.save_touch_point(&device_id,&TouchPoint{x:req.x,y:req.y}).await.map_err(|e|e.to_string())?;info!("PC touch point trained: ({},{}) for device {}",req.x,req.y,device_id);Ok(())}
+#[tauri::command] async fn get_pc_touch_status(state: State<'_, Arc<AppState>>)->Result<TouchStatusDto,String>{let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;let device_id=devices.first().map(|d|d.id.to_string()).unwrap_or_else(||"default".to_string());match state.session.load_touch_point(&device_id).await.map_err(|e|e.to_string())?{Some(p)=>Ok(TouchStatusDto{trained:true,x:Some(p.x),y:Some(p.y)}),None=>Ok(TouchStatusDto{trained:false,x:None,y:None})}}
+#[tauri::command] async fn clear_pc_touch(state: State<'_, Arc<AppState>>)->Result<(),String>{let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;let device_id=devices.first().map(|d|d.id.to_string()).unwrap_or_else(||"default".to_string());state.session.delete_touch_point(&device_id).await.map_err(|e|e.to_string())?;info!("PC touch point cleared for device {}",device_id);Ok(())}
+#[tauri::command] async fn verify_pc_touch(state: State<'_, Arc<AppState>>, x:f64, y:f64)->Result<bool,String>{let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;let device_id=devices.first().map(|d|d.id.to_string()).unwrap_or_else(||"default".to_string());match state.session.load_touch_point(&device_id).await.map_err(|e|e.to_string())?{Some(trained)=>Ok(SessionManager::verify_touch_point(&trained,&TouchPoint{x,y},PC_TOUCH_TOLERANCE)),None=>Ok(true)}}
+
+static TRAINING_STATE: std::sync::OnceLock<std::sync::Mutex<TrainingStatusDto>> = std::sync::OnceLock::new();
+
+#[tauri::command] async fn start_watch_training(state: State<'_, Arc<AppState>>)->Result<(),String>{let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;let device=devices.first().ok_or("No paired device")?;let service_uuid=uuid::Uuid::parse_str(SERVICE_UUID).map_err(|e|e.to_string())?;let training_uuid=uuid::Uuid::parse_str(TRAINING_CONTROL_CHAR).map_err(|e|e.to_string())?;let info=PeripheralInfo{id:device.address.clone(),name:Some(device.name.clone()),pin:None,device_id:device.device_id.as_ref().and_then(|v|String::from_utf8(v.clone()).ok()),rssi:None,service_uuids:vec![service_uuid],raw_manufacturer_data:None};let conn=state.conn_mgr.get_or_connect(&state.ble,&info).await.map_err(|e|format!("BLE connect failed: {}",e))?;state.ble.write(&conn,training_uuid,b"{\"action\":\"start_training\"}").await.map_err(|e|format!("BLE write failed: {}",e))?;info!("Sent start_training to watch");Ok(())}
+
+#[tauri::command] async fn subscribe_watch_training(state: State<'_, Arc<AppState>>)->Result<(),String>{let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;let device=devices.first().ok_or("No paired device")?;let service_uuid=uuid::Uuid::parse_str(SERVICE_UUID).map_err(|e|e.to_string())?;let training_uuid=uuid::Uuid::parse_str(TRAINING_CONTROL_CHAR).map_err(|e|e.to_string())?;let info=PeripheralInfo{id:device.address.clone(),name:Some(device.name.clone()),pin:None,device_id:device.device_id.as_ref().and_then(|v|String::from_utf8(v.clone()).ok()),rssi:None,service_uuids:vec![service_uuid],raw_manufacturer_data:None};let conn=state.conn_mgr.get_or_connect(&state.ble,&info).await.map_err(|e|format!("BLE connect failed: {}",e))?;let mut rx=state.ble.notify(&conn,training_uuid).await.map_err(|e|format!("BLE subscribe failed: {}",e))?;let state_store=TRAINING_STATE.get_or_init(||std::sync::Mutex::new(TrainingStatusDto{state:"idle".into(),countdown:None,samples:None,x:None,y:None}));tokio::spawn(async move{while let Some(data)=rx.recv().await{if let Ok(json)=serde_json::from_slice::<serde_json::Value>(&data){let mut s=state_store.lock().unwrap();s.state=json.get("state").and_then(|v|v.as_str()).unwrap_or("unknown").to_string();s.countdown=json.get("countdown").and_then(|v|v.as_i64()).map(|v|v as i32);s.samples=json.get("samples").and_then(|v|v.as_i64()).map(|v|v as i32);s.x=json.get("x").and_then(|v|v.as_f64());s.y=json.get("y").and_then(|v|v.as_f64());info!("Watch training state: {} countdown={:?} samples={:?} x={:?} y={:?}",s.state,s.countdown,s.samples,s.x,s.y)}}});Ok(())}
+
+#[tauri::command] async fn get_watch_training_status()->Result<TrainingStatusDto,String>{let store=TRAINING_STATE.get_or_init(||std::sync::Mutex::new(TrainingStatusDto{state:"idle".into(),countdown:None,samples:None,x:None,y:None}));Ok(store.lock().unwrap().clone())} 
+mod log_rolling;
+#[cfg(windows)] mod service;
+
+#[cfg(windows)]
+#[tauri::command]
+async fn install_windows_service() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    service::win_service::install_service(exe.to_string_lossy().as_ref())?;
+    Ok("Service installed successfully".into())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn install_windows_service() -> Result<String, String> { Err("Windows service is only available on Windows".into()) }
+
+#[cfg(windows)]
+#[tauri::command]
+async fn uninstall_windows_service() -> Result<String, String> {
+    service::win_service::uninstall_service()?;
+    Ok("Service uninstalled successfully".into())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn uninstall_windows_service() -> Result<String, String> { Err("Windows service is only available on Windows".into()) }
+
+#[cfg(windows)]
+#[tauri::command]
+async fn get_windows_service_status() -> Result<String, String> {
+    service::win_service::get_service_status()
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn get_windows_service_status() -> Result<String, String> { Ok("N/A (not Windows)".into()) }
+
+#[tokio::main]
+async fn main() {
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.iter().any(|a| a == "--service") {
+            tracing_subscriber::fmt().with_ansi(false).with_level(true).init();
+            info!("WristKey running as Windows service");
+            service::win_service::start_service_dispatcher();
+            return;
+        }
+    }
+
+    let log_dir = std::env::var("WRISTKEY_LOG_DIR")
+        .map(|s| std::path::PathBuf::from(s))
+        .unwrap_or_else(|_| {
+            let mut p = dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            p.push("WristKey/logs");
+            p
+        });std::fs::create_dir_all(&log_dir).ok();LOG_DIR.set(log_dir.clone()).ok();let writer=log_rolling::RollingWriter::new(&log_dir.join("wristkey.log"),20*1024*1024,5).expect("failed to open log file");let(non_blocking,_guard)=tracing_appender::non_blocking(writer);tracing_subscriber::fmt().with_writer(non_blocking).with_ansi(false).with_level(true).with_target(true).init();info!("WristKey starting up...");let config=Config::from_file(&dirs::config_dir().unwrap_or_else(||std::path::PathBuf::from(".")).join("WristKey/config.toml")).unwrap_or_default();let storage:Arc<dyn wristkey_core::Storage>=match SqliteStorage::open_default(){Ok(storage)=>{info!("Persistent SQLite storage opened; paired watches will survive desktop restarts");Arc::new(storage)},Err(e)=>{error!("Failed to open persistent SQLite storage: {}",e);return;}};let crypto=Arc::new(EcdsaP256Crypto);let session=Arc::new(SessionManager::new(crypto,storage));let platform=create_platform_adapter(session.clone());let ble:Arc<dyn BleAdapter>=match BtleplugAdapter::new().await{Ok(a)=>Arc::new(a),Err(e)=>{warn!("BLE adapter unavailable, running without BLE: {}",e);Arc::new(NullBleAdapter)}};let conn_mgr=Arc::new(ConnectionManager::new());let app_state=Arc::new(AppState{session:session.clone(),config:Arc::new(Mutex::new(config)),daemon:Arc::new(Mutex::new(None)),platform,ble,conn_mgr:conn_mgr.clone(),proximity:Arc::new(Mutex::new(ProximityDiagnostics::default()))});tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,get_config,update_config,set_config,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}

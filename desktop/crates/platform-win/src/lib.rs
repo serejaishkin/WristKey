@@ -126,9 +126,12 @@ impl WindowsSecurity {
     const CP_NAME: &'static str = "WristKey Credential Provider";
 
     pub fn is_credential_provider_registered() -> bool {
-        use winreg::enums::HKEY_CLASSES_ROOT;
-        let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
-        let inproc = hkcr.open_subkey(format!(r"CLSID\{}\InprocServer32", Self::CP_CLSID));
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
+        let inproc = hklm.open_subkey(format!(
+            r"SOFTWARE\Classes\CLSID\{}\InprocServer32",
+            Self::CP_CLSID
+        ));
         match inproc {
             Ok(key) => key
                 .get_value::<String, _>("")
@@ -147,42 +150,79 @@ impl WindowsSecurity {
     }
 
     pub fn register_credential_provider(dll_path: &str) -> std::result::Result<(), String> {
-        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE};
-        if !std::path::Path::new(dll_path).exists() {
-            return Err(format!("Credential Provider DLL not found: {}", dll_path));
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        // Strip \\?\ extended-length path prefix that Windows APIs may return.
+        let clean_path = dll_path.trim_start_matches(r"\\?\");
+        if !std::path::Path::new(clean_path).exists() {
+            return Err(format!("Credential Provider DLL not found: {}", clean_path));
         }
-        // Writing HKCR/HKLM requires Administrator. Surface a clear error
-        // instead of silently succeeding when elevation is missing.
+
+        // Copy DLL to System32 so COM can find it by filename only.
+        // This matches how pcbu-desktop and other CP implementations deploy.
+        let system32 = std::env::var("SystemRoot")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
+            .join("System32");
+        let dest_dll = system32.join("WristKeyCredentialProvider.dll");
+        std::fs::copy(clean_path, &dest_dll)
+            .map_err(|e| format!("Failed to copy DLL to System32: {} -- run as Administrator", e))?;
+        let dll_filename = dest_dll.file_name().unwrap().to_string_lossy().to_string();
+
         let write_err = |e: std::io::Error| {
-            format!(
-                "registry write failed ({}) -- run the app once as Administrator",
-                e
-            )
+            format!("registry write failed ({}) -- run as Administrator", e)
         };
-        let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
-        let (clsid_key, _) =
-            hkcr.create_subkey(format!(r"CLSID\{}", Self::CP_CLSID)).map_err(write_err)?;
+        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
+
+        // COM class registration — use HKCR (merged view of HKLM\SOFTWARE\Classes + HKCU)
+        // Write InprocServer32 with filename only (no path) — COM searches System32.
+        let hkcr = winreg::RegKey::predef(winreg::enums::HKEY_CLASSES_ROOT);
+        let clsid_path = format!(r"CLSID\{}", Self::CP_CLSID);
+        let (clsid_key, _) = hkcr.create_subkey(&clsid_path).map_err(write_err)?;
         clsid_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
+
         let (inproc, _) = clsid_key.create_subkey("InprocServer32").map_err(write_err)?;
-        inproc.set_value("", &dll_path).map_err(write_err)?;
+        inproc.set_value("", &dll_filename).map_err(write_err)?;
         inproc.set_value("ThreadingModel", &"Apartment").map_err(write_err)?;
 
-        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
-        let (cp_key, _) = hklm
-            .create_subkey(format!(
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-                Self::CP_CLSID
-            ))
-            .map_err(write_err)?;
+        // Credential Provider registration
+        let cp_path = format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::CP_CLSID
+        );
+        let (cp_key, _) = hklm.create_subkey(&cp_path).map_err(write_err)?;
         cp_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
-        tracing::info!("Credential Provider registered: CLSID={} dll={}", Self::CP_CLSID, dll_path);
+
+        // Set as default credential provider for current user (UserTile).
+        // This makes the tile appear on the lock screen alongside PIN/Password.
+        if let Ok(username) = std::env::var("USERNAME") {
+            if let Ok(domain) = std::env::var("USERDOMAIN") {
+                // Look up the user's SID
+                use std::process::Command;
+                let output = Command::new("wmic")
+                    .args(["useraccount", "where", &format!("name='{}'and domain='{}'", username, domain), "get", "sid"])
+                    .output();
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    for line in stdout.lines() {
+                        let sid = line.trim();
+                        if sid.starts_with("S-1-") {
+                            let tile_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\UserTile";
+                            if let Ok((key, _)) = hklm.create_subkey(tile_path) {
+                                let _ = key.set_value(sid, &Self::CP_CLSID);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!("Credential Provider registered: CLSID={} dll={}", Self::CP_CLSID, dest_dll.display());
         Ok(())
     }
 
     pub fn unregister_credential_provider() -> std::result::Result<(), String> {
-        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
-        // winreg 0.52 has no delete_subkey_tree; recurse manually. Collect
-        // subkeys before deleting because enumeration invalidates on change.
+        use winreg::enums::{HKEY_LOCAL_MACHINE, HKEY_CLASSES_ROOT, KEY_READ, KEY_WRITE};
         fn delete_tree(hive: &winreg::RegKey, path: &str) -> std::io::Result<()> {
             if let Ok(key) = hive.open_subkey_with_flags(path, KEY_READ | KEY_WRITE) {
                 let subkeys: Vec<String> = key.enum_keys().flatten().collect();
@@ -193,19 +233,51 @@ impl WindowsSecurity {
             }
             hive.delete_subkey(path)
         }
+        // Delete COM registration from HKCR
         let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
-        delete_tree(&hkcr, format!(r"CLSID\{}", Self::CP_CLSID).as_str())
+        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::CP_CLSID))
             .map_err(|e| format!("failed to delete COM registration: {}", e))?;
+        // Delete Credential Provider registration
         let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
         delete_tree(
             &hklm,
-            format!(
+            &format!(
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
                 Self::CP_CLSID
-            )
-            .as_str(),
+            ),
         )
         .map_err(|e| format!("failed to delete provider registration: {}", e))?;
+        // Delete UserTile entry for current user
+        if let Ok(tile_key) = hklm.open_subkey_with_flags(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\UserTile",
+            KEY_READ | KEY_WRITE,
+        ) {
+            if let Ok(username) = std::env::var("USERNAME") {
+                if let Ok(domain) = std::env::var("USERDOMAIN") {
+                    use std::process::Command;
+                    let output = Command::new("wmic")
+                        .args(["useraccount", "where", &format!("name='{}'and domain='{}'", username, domain), "get", "sid"])
+                        .output();
+                    if let Ok(out) = output {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        for line in stdout.lines() {
+                            let sid = line.trim();
+                            if sid.starts_with("S-1-") {
+                                let _ = tile_key.delete_value(sid);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Remove DLL from System32
+        let system32 = std::env::var("SystemRoot")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
+            .join("System32")
+            .join("WristKeyCredentialProvider.dll");
+        let _ = std::fs::remove_file(system32);
         tracing::info!("Credential Provider unregistered");
         Ok(())
     }

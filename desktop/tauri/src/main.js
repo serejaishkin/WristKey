@@ -156,6 +156,100 @@ async function loadLogDir() { try { const path = await invoke('get_log_dir'); co
 function copyLogDir() { const el = document.getElementById('logDirPath'); if (!el || el.textContent === 'Loading…') return; navigator.clipboard.writeText(el.textContent).then(() => { const btn = document.getElementById('copyLogDirBtn'); const old = btn.textContent; btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = old, 1500); }); }
 function showTab(tab) { document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active')); document.getElementById('tab-' + tab).classList.add('active'); document.querySelector(`[data-tab="${tab}"]`).classList.add('active'); }
 
+let pcTouchTrainingActive = false;
+let pcTouchTrained = false;
+let watchTrainingSubscribed = false;
+
+async function refreshPcTouchStatus() { /* kept for backward compat */ }
+
+async function startWatchTraining() {
+    const btn = document.getElementById('watchTrainStartBtn');
+    btn.disabled = true; btn.textContent = '⏳ Starting...';
+    try {
+        await invoke('start_watch_training');
+        document.getElementById('watchTrainLabel').textContent = 'Starting...';
+        document.getElementById('watchTrainLabel').className = 'status-warn';
+        // Auto-subscribe if not already
+        if (!watchTrainingSubscribed) await subscribeWatchTraining();
+    } catch (e) { alert('Failed: ' + e); }
+    finally { btn.disabled = false; btn.textContent = '🎯 Start Training on Watch'; }
+}
+
+async function subscribeWatchTraining() {
+    const btn = document.getElementById('watchTrainSubBtn');
+    btn.disabled = true; btn.textContent = '⏳ Subscribing...';
+    try {
+        await invoke('subscribe_watch_training');
+        watchTrainingSubscribed = true;
+        btn.textContent = '📡 Subscribed';
+        // Start polling
+        if (!window._trainingPollInterval) {
+            window._trainingPollInterval = setInterval(pollWatchTraining, 500);
+        }
+    } catch (e) { alert('Subscribe failed: ' + e); }
+    finally { btn.disabled = false; }
+}
+
+async function pollWatchTraining() {
+    try {
+        const s = await invoke('get_watch_training_status');
+        const label = document.getElementById('watchTrainLabel');
+        const detail = document.getElementById('watchTrainDetail');
+        if (!label) return;
+        label.textContent = s.state;
+        if (s.state === 'idle') { label.className = 'status-warn'; detail.style.display = 'none'; }
+        else if (s.state === 'prep') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = `Countdown: ${s.countdown}s — Tap the spot on your watch`; }
+        else if (s.state === 'record') { label.className = 'status-ok'; detail.style.display = 'block'; detail.textContent = `Recording: ${s.countdown}s, samples: ${s.samples || 0}`; }
+        else if (s.state === 'done') { label.className = 'status-ok'; detail.style.display = 'block'; detail.textContent = `Done! Point: (${(s.x*100).toFixed(1)}%, ${(s.y*100).toFixed(1)}%)`; }
+        else if (s.state === 'starting') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = 'Watch is starting training...'; }
+        else if (s.state === 'cancelled') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = 'Training cancelled'; }
+    } catch (e) { console.error('pollWatchTraining failed:', e); }
+}
+
+function startPcTouchTraining() { /* removed */ }
+async function clearPcTouchPoint() { /* removed */ }
+async function testPcTouchPoint() { /* removed */ }
+
+async function refreshServiceStatus() {
+    try {
+        const status = await invoke('get_windows_service_status');
+        const el = document.getElementById('svcStatus');
+        if (el) {
+            el.textContent = status;
+            if (status.includes('Running')) { el.className = 'status-ok'; }
+            else if (status.includes('Stopped')) { el.className = 'status-warn'; }
+            else if (status.includes('not installed') || status.includes('not available')) { el.className = 'status-warn'; }
+            else { el.className = 'status-warn'; }
+        }
+    } catch (e) {
+        const el = document.getElementById('svcStatus');
+        if (el) { el.textContent = 'Error: ' + e; el.className = 'status-warn'; }
+    }
+}
+
+async function installService() {
+    const btn = document.getElementById('svcInstallBtn');
+    btn.disabled = true; btn.textContent = '⏳ Installing...';
+    try {
+        await invoke('install_windows_service');
+        alert('✅ Service installed! Start it with: net start WristKey');
+        await refreshServiceStatus();
+    } catch (e) { alert('❌ Install failed: ' + e); }
+    finally { btn.disabled = false; btn.textContent = '📦 Install Service'; }
+}
+
+async function uninstallService() {
+    if (!confirm('Uninstall WristKey service?')) return;
+    const btn = document.getElementById('svcUninstallBtn');
+    btn.disabled = true; btn.textContent = '⏳ Uninstalling...';
+    try {
+        await invoke('uninstall_windows_service');
+        alert('✅ Service uninstalled.');
+        await refreshServiceStatus();
+    } catch (e) { alert('❌ Uninstall failed: ' + e); }
+    finally { btn.disabled = false; btn.textContent = '🗑 Uninstall Service'; }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
     document.getElementById('daemonToggle').addEventListener('change', toggleDaemon);
@@ -167,5 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const cpUnregBtn = document.getElementById('cpUnregisterBtn'); if (cpUnregBtn) cpUnregBtn.addEventListener('click', unregisterCP);
     const winPwdBtn = document.getElementById('winPasswordBtn'); if (winPwdBtn) winPwdBtn.addEventListener('click', setWindowsPassword);
     const copyLogBtn = document.getElementById('copyLogDirBtn'); if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogDir);
-    refreshStatus(); refreshDevices(); loadConfig(); loadLogDir(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000);
+    const svcInstallBtn = document.getElementById('svcInstallBtn'); if (svcInstallBtn) svcInstallBtn.addEventListener('click', installService);
+    const svcUninstallBtn = document.getElementById('svcUninstallBtn'); if (svcUninstallBtn) svcUninstallBtn.addEventListener('click', uninstallService);
+    refreshStatus(); refreshDevices(); loadConfig(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
 });

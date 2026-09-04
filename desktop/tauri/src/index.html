@@ -92,6 +92,18 @@
     <p class="hint">Almost touch-free: one tap to place the point, then the watch records and saves on its own. Hit tolerance is ~18% of the screen width.</p>
     <p class="hint">Without training, unlock falls back to regular Unlock/Cancel buttons. Retrain or reset anytime: watch → Settings → Touch point.</p>
   </div></div>
+  <div class="section"><h3>🎯 Watch Training Control</h3><div class="card">
+    <p style="color:#aaa;font-size:13px;margin-bottom:12px;">Start touch training on your watch from the PC. The watch handles the actual touch recording — the PC monitors the progress.</p>
+    <div id="watchTrainingStatus" style="margin-bottom:12px;">
+      <p style="color:#888;font-size:13px;">Status: <strong id="watchTrainLabel" class="status-warn">idle</strong></p>
+      <p id="watchTrainDetail" style="color:#666;font-size:12px;display:none;"></p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn" id="watchTrainStartBtn" onclick="startWatchTraining()">🎯 Start Training on Watch</button>
+      <button class="btn btn-secondary" id="watchTrainSubBtn" onclick="subscribeWatchTraining()">📡 Subscribe</button>
+    </div>
+    <p class="hint" style="margin-top:8px;">Training runs on the watch: 10s prep + 10s record. The PC shows live countdown and sample count.</p>
+  </div></div>
   <div class="section"><h3>Live Proximity Diagnostics</h3><div class="card">
     <p style="color:#aaa;font-size:13px;margin-bottom:12px;">Manual RSSI snapshot for the paired Watch. This is scan RSSI, not authentication.</p>
     <div class="diag-grid">
@@ -115,6 +127,7 @@
 </div>
 <div class="tab-content" id="tab-cp">
   <div class="section"><h3>🪟 Windows Credential Provider</h3><div class="card"><p style="margin-bottom:10px;">Status: <strong id="cpStatus" class="status-warn">❌ Not registered</strong></p><p style="color:#aaa;font-size:13px;margin-bottom:14px;">Register to show "WristKey Unlock" tile on the lock screen. Requires Administrator privileges.</p><button class="btn" id="cpRegisterBtn">📝 Register Credential Provider</button><button class="btn btn-danger" id="cpUnregisterBtn" style="margin-left:8px;">🗑 Unregister</button></div></div>
+  <div class="section"><h3>🔧 Windows Service</h3><div class="card"><p style="color:#aaa;font-size:13px;margin-bottom:10px;">Install WristKey as a Windows service to run the daemon in the background without a logged-in user session.</p><p style="margin-bottom:10px;">Status: <strong id="svcStatus" class="status-warn">Checking…</strong></p><div style="display:flex;gap:8px;"><button class="btn" id="svcInstallBtn">📦 Install Service</button><button class="btn btn-danger" id="svcUninstallBtn">🗑 Uninstall Service</button></div><p class="hint" style="margin-top:8px;">After installing, start the service with <code>net start WristKey</code> or via Services.msc.</p></div></div>
   <div class="section"><h3>💾 Windows Password</h3><div class="card"><p style="color:#aaa;font-size:13px;margin-bottom:10px;">Your Windows password is encrypted with <strong>TPM 2.0</strong> (or software fallback) and stored locally.</p><p style="color:#ffa502;font-size:12px;margin-bottom:10px;"><strong>⚠️ Enter your Windows account password, NOT the PIN!</strong></p><div class="input-group"><label>Windows account password</label><input type="password" id="winPasswordInput" placeholder="Enter password…"></div><button class="btn" id="winPasswordBtn" style="margin-top:6px;">💾 Save Password</button></div></div>
 </div>
 <script src="main.js"></script>

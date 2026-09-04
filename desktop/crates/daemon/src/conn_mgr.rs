@@ -51,9 +51,49 @@ impl ConnectionManager {
         info: &PeripheralInfo,
     ) -> Result<PeripheralInfo> {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
+        info!("resolve_peripheral: scanning for saved_id={} name={:?} device_id={:?}",
+            info.id, info.name, info.device_id);
         let mut rx = adapter.scan(service_uuid).await?;
         let deadline = Instant::now() + Duration::from_secs(8);
 
+        // First drain all already-enumerated peripherals that the scan task
+        // pushed into the channel before we started receiving.  This closes
+        // the race where `adapter.scan()` enumerates the watch before this
+        // loop begins iterating.
+        while let Ok(Some(candidate)) = timeout(Duration::from_millis(200), rx.recv()).await {
+            let address_match = candidate.id.eq_ignore_ascii_case(&info.id);
+            let name_match = match (&info.name, &candidate.name) {
+                (Some(saved), Some(found)) => saved.eq_ignore_ascii_case(found),
+                _ => false,
+            };
+            let device_id_match = match (&info.device_id, &candidate.device_id) {
+                (Some(saved), Some(found)) => saved.eq_ignore_ascii_case(found),
+                _ => false,
+            };
+            let wristkey_match = candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid));
+            let matched = address_match || device_id_match || name_match || wristkey_match;
+
+            if matched {
+                let wristkey_advertised =
+                    candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
+                        || candidate.raw_manufacturer_data.is_some()
+                        || candidate.device_id.is_some();
+                info!(
+                    "BLE reconnect resolved (initial drain): saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
+                    info.id, candidate.id, candidate.name, wristkey_advertised
+                );
+                let _ = adapter.stop_scan().await;
+                return Ok(candidate);
+            } else {
+                debug!(
+                    "BLE scan candidate rejected (drain): id={} name={:?} services={:?} addr={} name_match={} dev_id_match={} wristkey={}",
+                    candidate.id, candidate.name, candidate.service_uuids,
+                    address_match, name_match, device_id_match, wristkey_match
+                );
+            }
+        }
+
+        // Then wait for live DeviceDiscovered/DeviceUpdated events.
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             match timeout(remaining.min(Duration::from_millis(500)), rx.recv()).await {
@@ -67,30 +107,26 @@ impl ConnectionManager {
                         (Some(saved), Some(found)) => saved.eq_ignore_ascii_case(found),
                         _ => false,
                     };
-
-                    // A Galaxy Watch can expose several BLE endpoints. Matching
-                    // the saved name alone is not sufficient in theory, but in
-                    // RECONNECT mode (paired watch) Android does not advertise
-                    // manufacturer data, and WinRT frequently fails to surface
-                    // custom 128-bit service UUIDs from advertisements. Rejecting
-                    // candidates without WristKey advertisement markers made
-                    // reconnect impossible after address rotation or a restart.
-                    // BleAdapter::connect therefore remains the authoritative
-                    // validation: it disconnects any peer that does not expose
-                    // the WristKey custom GATT service.
                     let wristkey_match = candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid));
                     let matched = address_match || device_id_match || name_match || wristkey_match;
+
                     if matched {
                         let wristkey_advertised =
                             candidate.service_uuids.iter().any(|uuid| uuid.eq(&service_uuid))
                                 || candidate.raw_manufacturer_data.is_some()
                                 || candidate.device_id.is_some();
-                        debug!(
-                            "BLE reconnect resolved: saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
+                        info!(
+                            "BLE reconnect resolved (live event): saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
                             info.id, candidate.id, candidate.name, wristkey_advertised
                         );
                         let _ = adapter.stop_scan().await;
                         return Ok(candidate);
+                    } else {
+                        debug!(
+                            "BLE scan candidate rejected: id={} name={:?} services={:?} addr={} name_match={} dev_id_match={} wristkey={}",
+                            candidate.id, candidate.name, candidate.service_uuids,
+                            address_match, name_match, device_id_match, wristkey_match
+                        );
                     }
                 }
                 Ok(None) => break,
@@ -148,7 +184,6 @@ impl ConnectionManager {
 
         let mut last_error = None;
         for attempt in 1..=3 {
-            let _ = adapter.stop_scan().await;
             info!("BLE reconnect attempt {}/{}", attempt, 3);
 
             // BT connection first: a paired watch that was connected before is

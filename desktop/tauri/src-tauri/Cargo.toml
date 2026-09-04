@@ -26,6 +26,7 @@ wristkey-daemon = { path = "../../crates/daemon" }
 
 [target.'cfg(windows)'.dependencies]
 wristkey-platform-win = { path = "../../crates/platform-win" }
+windows-service = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wristkey-platform-linux = { path = "../../crates/platform-linux" }

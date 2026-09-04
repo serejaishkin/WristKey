@@ -6,6 +6,7 @@ import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +52,7 @@ class PairingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val pcName = intent.getStringExtra("pcName") ?: "Windows PC"
         val pcAddress = intent.getStringExtra("pcAddress") ?: ""
         Log.i(TAG, "PairingActivity opened: pcName=$pcName pcAddress=$pcAddress")
