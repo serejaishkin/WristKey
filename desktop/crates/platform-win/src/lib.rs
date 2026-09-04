@@ -151,14 +151,12 @@ impl WindowsSecurity {
 
     pub fn register_credential_provider(dll_path: &str) -> std::result::Result<(), String> {
         use winreg::enums::HKEY_LOCAL_MACHINE;
-        // Strip \\?\ extended-length path prefix that Windows APIs may return.
         let clean_path = dll_path.trim_start_matches(r"\\?\");
         if !std::path::Path::new(clean_path).exists() {
             return Err(format!("Credential Provider DLL not found: {}", clean_path));
         }
 
-        // Copy DLL to System32 so COM can find it by filename only.
-        // This matches how pcbu-desktop and other CP implementations deploy.
+        // Copy DLL to System32 for reliable COM loading
         let system32 = std::env::var("SystemRoot")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
@@ -166,25 +164,36 @@ impl WindowsSecurity {
         let dest_dll = system32.join("WristKeyCredentialProvider.dll");
         std::fs::copy(clean_path, &dest_dll)
             .map_err(|e| format!("Failed to copy DLL to System32: {} -- run as Administrator", e))?;
+
         let dll_filename = dest_dll.file_name().unwrap().to_string_lossy().to_string();
 
         let write_err = |e: std::io::Error| {
             format!("registry write failed ({}) -- run as Administrator", e)
         };
-        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
 
-        // COM class registration — use HKCR (merged view of HKLM\SOFTWARE\Classes + HKCU)
-        // Write InprocServer32 with filename only (no path) — COM searches System32.
         let hkcr = winreg::RegKey::predef(winreg::enums::HKEY_CLASSES_ROOT);
+
+        // CLSID registration — for .NET COM servers, InprocServer32 must point
+        // to mscoree.dll (the CLR shim), NOT the assembly itself.
         let clsid_path = format!(r"CLSID\{}", Self::CP_CLSID);
         let (clsid_key, _) = hkcr.create_subkey(&clsid_path).map_err(write_err)?;
         clsid_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
 
+        // .NET COM interop keys — mscoree.dll reads these to load the assembly
+        let assembly_name = "WristKeyCredentialProvider, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+        let class_name = "WristKeyCredentialProvider.WristKeyCredentialProvider";
+        clsid_key.set_value("Assembly", &assembly_name).map_err(write_err)?;
+        clsid_key.set_value("Class", &class_name).map_err(write_err)?;
+        clsid_key.set_value("RuntimeVersion", &"v4.0.30319").map_err(write_err)?;
+        clsid_key.set_value("CodeBase", &format!("file:///{}", dest_dll.display())).map_err(write_err)?;
+
+        // InprocServer32 → mscoree.dll (CLR hosting shim)
         let (inproc, _) = clsid_key.create_subkey("InprocServer32").map_err(write_err)?;
-        inproc.set_value("", &dll_filename).map_err(write_err)?;
+        inproc.set_value("", &"mscoree.dll").map_err(write_err)?;
         inproc.set_value("ThreadingModel", &"Apartment").map_err(write_err)?;
 
         // Credential Provider registration
+        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
         let cp_path = format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
             Self::CP_CLSID
@@ -192,11 +201,9 @@ impl WindowsSecurity {
         let (cp_key, _) = hklm.create_subkey(&cp_path).map_err(write_err)?;
         cp_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
 
-        // Set as default credential provider for current user (UserTile).
-        // This makes the tile appear on the lock screen alongside PIN/Password.
+        // Set UserTile for default CP
         if let Ok(username) = std::env::var("USERNAME") {
             if let Ok(domain) = std::env::var("USERDOMAIN") {
-                // Look up the user's SID
                 use std::process::Command;
                 let output = Command::new("wmic")
                     .args(["useraccount", "where", &format!("name='{}'and domain='{}'", username, domain), "get", "sid"])
