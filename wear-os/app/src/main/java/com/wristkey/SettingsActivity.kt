@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.wear.compose.material.*
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
@@ -62,9 +63,9 @@ fun MainSettingsScreen(
     settings: WristKeySettings
 ) {
     val confirmModeLabel = when (settings.confirmMode) {
-        WristKeySettings.CONFIRM_GESTURE -> "Gesture only"
-        WristKeySettings.CONFIRM_BUTTON -> "Button only"
-        else -> "Gesture or button"
+        WristKeySettings.CONFIRM_GESTURE -> stringResource(R.string.confirm_gesture_only)
+        WristKeySettings.CONFIRM_BUTTON -> stringResource(R.string.confirm_button_only)
+        else -> stringResource(R.string.confirm_gesture_or_button)
     }
 
     val touchContext = LocalContext.current
@@ -84,7 +85,7 @@ fun MainSettingsScreen(
         ) {
             item {
                 Text(
-                    text = "⚙ WristKey",
+                    text = stringResource(R.string.title_settings),
                     style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
@@ -92,7 +93,7 @@ fun MainSettingsScreen(
 
             item {
                 Chip(
-                    label = { Text("Confirmation") },
+                    label = { Text(stringResource(R.string.settings_confirmation)) },
                     secondaryLabel = { Text(confirmModeLabel) },
                     onClick = { navController.navigate("confirm_mode") },
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -101,7 +102,7 @@ fun MainSettingsScreen(
 
             item {
                 Chip(
-                    label = { Text("Unlock distance") },
+                    label = { Text(stringResource(R.string.settings_unlock_distance)) },
                     secondaryLabel = { Text("${settings.rssiThreshold} dBm") },
                     onClick = { navController.navigate("rssi_threshold") },
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -110,8 +111,8 @@ fun MainSettingsScreen(
 
             item {
                 Chip(
-                    label = { Text("Proximity unlock") },
-                    secondaryLabel = { Text(if (settings.proximityUnlockEnabled) "ON" else "OFF") },
+                    label = { Text(stringResource(R.string.settings_proximity_unlock)) },
+                    secondaryLabel = { Text(if (settings.proximityUnlockEnabled) stringResource(R.string.settings_state_on) else stringResource(R.string.settings_state_off)) },
                     onClick = { navController.navigate("proximity_unlock") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -119,8 +120,8 @@ fun MainSettingsScreen(
 
             item {
                 Chip(
-                    label = { Text("Paired PCs") },
-                    secondaryLabel = { Text("${settings.pairedDevices.size} devices") },
+                    label = { Text(stringResource(R.string.settings_paired_pcs)) },
+                    secondaryLabel = { Text("${settings.pairedDevices.size}${stringResource(R.string.settings_devices_suffix)}") },
                     onClick = { navController.navigate("paired_devices") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -128,8 +129,8 @@ fun MainSettingsScreen(
 
             item {
                 Chip(
-                    label = { Text("Touch point") },
-                    secondaryLabel = { Text(if (touchTrained.value) "Trained" else "Not set") },
+                    label = { Text(stringResource(R.string.settings_touch_point)) },
+                    secondaryLabel = { Text(if (touchTrained.value) stringResource(R.string.settings_touch_trained) else stringResource(R.string.settings_touch_not_set)) },
                     onClick = { navController.navigate("touch_point") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -139,7 +140,7 @@ fun MainSettingsScreen(
                 ToggleChip(
                     checked = settings.vibrateEnabled,
                     onCheckedChange = { settings.vibrateEnabled = it },
-                    label = { Text("Vibration") },
+                    label = { Text(stringResource(R.string.settings_vibration)) },
                     toggleControl = { Switch(checked = settings.vibrateEnabled) },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -148,10 +149,10 @@ fun MainSettingsScreen(
             item {
                 val context = LocalContext.current
                 Chip(
-                    label = { Text("Reset all settings") },
+                    label = { Text(stringResource(R.string.settings_reset_all)) },
                     onClick = {
                         settings.reset()
-                        Toast.makeText(context, "Settings reset", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.toast_settings_reset), Toast.LENGTH_SHORT).show()
                     },
                     colors = ChipDefaults.primaryChipColors(),
                     modifier = Modifier.fillMaxWidth(0.9f)
@@ -168,6 +169,7 @@ fun ConfirmModeScreen(
 ) {
     val listState = rememberScalingLazyListState()
     var selected by remember { mutableStateOf(settings.confirmMode) }
+    val context = LocalContext.current
 
     Scaffold(
         timeText = { TimeText() },
@@ -181,7 +183,7 @@ fun ConfirmModeScreen(
         ) {
             item {
                 Text(
-                    text = "How to confirm",
+                    text = stringResource(R.string.title_how_to_confirm),
                     style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
@@ -189,7 +191,7 @@ fun ConfirmModeScreen(
 
             item {
                 Text(
-                    text = "Choose how you confirm unlock requests",
+                    text = stringResource(R.string.desc_choose_confirm),
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
@@ -197,9 +199,9 @@ fun ConfirmModeScreen(
             }
 
             val modes = listOf(
-                Triple(WristKeySettings.CONFIRM_GESTURE, "🤚 Gesture", "Shake or move wrist"),
-                Triple(WristKeySettings.CONFIRM_BUTTON, "🔘 Button", "Press the watch button"),
-                Triple(WristKeySettings.CONFIRM_EITHER, "🤚🔘 Either", "Gesture or button")
+                Triple(WristKeySettings.CONFIRM_GESTURE, context.getString(R.string.mode_gesture_title), context.getString(R.string.mode_gesture_desc)),
+                Triple(WristKeySettings.CONFIRM_BUTTON, context.getString(R.string.mode_button_title), context.getString(R.string.mode_button_desc)),
+                Triple(WristKeySettings.CONFIRM_EITHER, context.getString(R.string.mode_either_title), context.getString(R.string.mode_either_desc))
             )
 
             items(modes.size) { index ->
@@ -240,7 +242,7 @@ fun RssiThresholdScreen(
         ) {
             item {
                 Text(
-                    text = "📡 Distance",
+                    text = stringResource(R.string.title_distance),
                     style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
@@ -248,11 +250,11 @@ fun RssiThresholdScreen(
 
             item {
                 val label = when {
-                    sliderValue >= -30f -> "Touching (≤5 cm)"
-                    sliderValue >= -45f -> "Very close (≤20 cm)"
-                    sliderValue >= -60f -> "Near monitor (≤1 m)"
-                    sliderValue >= -75f -> "Same room (≤3 m)"
-                    else -> "Far away"
+                    sliderValue >= -30f -> stringResource(R.string.distance_touching)
+                    sliderValue >= -45f -> stringResource(R.string.distance_very_close)
+                    sliderValue >= -60f -> stringResource(R.string.distance_near_monitor)
+                    sliderValue >= -75f -> stringResource(R.string.distance_same_room)
+                    else -> stringResource(R.string.distance_far)
                 }
                 Text(
                     text = label,
@@ -275,8 +277,8 @@ fun RssiThresholdScreen(
                     onValueChange = { sliderValue = it },
                     valueRange = -90f..-20f,
                     steps = 14,
-                    decreaseIcon = { Text("-") },
-                    increaseIcon = { Text("+") },
+                    decreaseIcon = { Text(stringResource(R.string.btn_minus)) },
+                    increaseIcon = { Text(stringResource(R.string.btn_plus)) },
                     modifier = Modifier.fillMaxWidth(0.8f)
                 )
             }
@@ -289,7 +291,7 @@ fun RssiThresholdScreen(
                     },
                     modifier = Modifier.padding(top = 16.dp)
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.btn_save))
                 }
             }
         }
@@ -317,7 +319,7 @@ fun ProximityUnlockScreen(
         ) {
             item {
                 Text(
-                    text = "⚡ Proximity",
+                    text = stringResource(R.string.title_proximity),
                     style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
@@ -327,8 +329,8 @@ fun ProximityUnlockScreen(
                 ToggleChip(
                     checked = enabled,
                     onCheckedChange = { enabled = it },
-                    label = { Text("Auto-unlock") },
-                    secondaryLabel = { Text("No button/gesture needed") },
+                    label = { Text(stringResource(R.string.proximity_auto_unlock)) },
+                    secondaryLabel = { Text(stringResource(R.string.proximity_no_button)) },
                     toggleControl = { Switch(checked = enabled) },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
@@ -337,9 +339,9 @@ fun ProximityUnlockScreen(
             if (enabled) {
                 item {
                     val label = when {
-                        sliderValue >= -30f -> "Touching monitor"
-                        sliderValue >= -40f -> "Very close"
-                        else -> "Close"
+                        sliderValue >= -30f -> stringResource(R.string.proximity_touching_monitor)
+                        sliderValue >= -40f -> stringResource(R.string.proximity_very_close)
+                        else -> stringResource(R.string.proximity_close)
                     }
                     Text(
                         text = label,
@@ -361,15 +363,15 @@ fun ProximityUnlockScreen(
                         onValueChange = { sliderValue = it },
                         valueRange = -60f..-20f,
                         steps = 8,
-                        decreaseIcon = { Text("-") },
-                        increaseIcon = { Text("+") },
+                    decreaseIcon = { Text(stringResource(R.string.btn_minus)) },
+                    increaseIcon = { Text(stringResource(R.string.btn_plus)) },
                         modifier = Modifier.fillMaxWidth(0.8f)
                     )
                 }
 
                 item {
                     Text(
-                        text = "Bring watch this close to auto-unlock without confirmation",
+                        text = stringResource(R.string.proximity_help),
                         style = MaterialTheme.typography.caption2,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 16.dp)
@@ -386,7 +388,7 @@ fun ProximityUnlockScreen(
                     },
                     modifier = Modifier.padding(top = 16.dp)
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.btn_save))
                 }
             }
         }
@@ -418,7 +420,7 @@ fun PairedDevicesScreen(
         ) {
             item {
                 Text(
-                    text = "💻 Paired PCs",
+                    text = stringResource(R.string.title_paired_pcs),
                     style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
@@ -427,7 +429,7 @@ fun PairedDevicesScreen(
             if (pairedAddress == null) {
                 item {
                     Text(
-                        text = "Список ПК пуст.\nПодключите ПК с главной страницы.",
+                        text = stringResource(R.string.empty_paired_pcs),
                         style = MaterialTheme.typography.body1,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(16.dp)
@@ -436,7 +438,7 @@ fun PairedDevicesScreen(
             } else {
                 item {
                     Chip(
-                        label = { Text(pairedName ?: "ПК") },
+                        label = { Text(pairedName ?: stringResource(R.string.label_pc)) },
                         secondaryLabel = { Text(pairedAddress ?: "") },
                         onClick = { },
                         modifier = Modifier.fillMaxWidth(0.9f)
@@ -450,11 +452,11 @@ fun PairedDevicesScreen(
                             context.sendBroadcast(Intent(WristKeyBleService.ACTION_FORGET_DEVICE).setPackage(context.packageName))
                             pairedName = null
                             pairedAddress = null
-                            Toast.makeText(context, "Текущий ПК сброшен", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.toast_pc_removed), Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.secondaryButtonColors(),
                         modifier = Modifier.padding(top = 6.dp)
-                    ) { Text("Забыть этот ПК") }
+                    ) { Text(stringResource(R.string.btn_forget_pc)) }
                 }
             }
         }
@@ -484,7 +486,7 @@ fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
         ) {
             item {
                 Text(
-                    text = "👆 Touch point",
+                    text = stringResource(R.string.title_touch_point),
                     style = MaterialTheme.typography.title3,
                     modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                 )
@@ -493,9 +495,9 @@ fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
             item {
                 Text(
                     text = if (trained)
-                        "Точка обучена: разблокировка подтверждается касанием в неё"
+                        stringResource(R.string.touch_point_trained)
                     else
-                        "Точка не настроена. Без неё unlock покажет кнопку.",
+                        stringResource(R.string.touch_point_not_set),
                     style = MaterialTheme.typography.caption2,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
@@ -506,7 +508,7 @@ fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
                 Button(
                     onClick = { trainingLauncher.launch(Intent(context, TrainingActivity::class.java)) },
                     modifier = Modifier.padding(top = 8.dp)
-                ) { Text(if (trained) "Обучить заново" else "Обучить точку") }
+                ) { Text(if (trained) stringResource(R.string.btn_retrain_point) else stringResource(R.string.btn_train_point)) }
             }
 
             if (trained) {
@@ -515,11 +517,11 @@ fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
                         onClick = {
                             store.clear()
                             trained = false
-                            Toast.makeText(context, "Point cleared", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.toast_point_cleared), Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.secondaryButtonColors(),
                         modifier = Modifier.padding(top = 6.dp)
-                    ) { Text("Сбросить точку") }
+                    ) { Text(stringResource(R.string.btn_reset_point)) }
                 }
             }
         }

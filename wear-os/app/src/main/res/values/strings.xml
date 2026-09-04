@@ -1,10 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WristKey</string>
-    <string name="status_disconnected">Disconnected</string>
-    <string name="status_pairing">Pairing…</string>
-    <string name="status_connected">Connected</string>
-    <string name="action_pair">Подтвердить ПК</string>
-    <string name="action_unlock">Unlock PC</string>
-    <string name="action_reset">Reset Pairing</string>
-    <string name="reset_done">Pairing reset</string>
-    <string name="reset_pairing">Reset Pairing</string>\n</resources>
+
+    <!-- MainActivity -->
+    <string name="status_launching">Starting…</string>
+    <string name="status_loading_service">Loading service…</string>
+    <string name="status_pc_requesting_pairing">PC \"%1$s\"\nis requesting pairing</string>
+    <string name="status_pc_requesting_pairing_no_name">PC is requesting\npairing</string>
+    <string name="status_last_pc">Last PC:\n%1$s</string>
+    <string name="status_no_pc">PC not set up</string>
+    <string name="title_main">⌚ WristKey</string>
+    <string name="label_setup_code">Setup code</string>
+    <string name="toast_paired">PC saved</string>
+    <string name="toast_pairing_failed">Pairing failed</string>
+    <string name="btn_confirm">Confirm</string>
+    <string name="chip_reconnect">↻ Connect last PC</string>
+    <string name="chip_connect">▶ Connect last PC</string>
+    <string name="toast_waiting_connect">Waiting for last PC connection</string>
+    <string name="chip_training">🎯 Touch point training</string>
+    <string name="chip_settings">⚙ Settings</string>
+    <string name="chip_new_pc">＋ Set up new PC</string>
+    <string name="dialog_new_pc_title">Set up new PC?</string>
+    <string name="dialog_new_pc_body">A new setup code will be created.\nThe current PC will be replaced.</string>
+    <string name="toast_new_code_created">New code created</string>
+    <string name="btn_start">Start</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_delete">Delete</string>
+    <string name="btn_save">Save</string>
+
+    <!-- SettingsActivity -->
+    <string name="title_settings">⚙ WristKey</string>
+    <string name="settings_confirmation">Confirmation</string>
+    <string name="settings_unlock_distance">Unlock distance</string>
+    <string name="settings_proximity_unlock">Proximity unlock</string>
+    <string name="settings_state_on">ON</string>
+    <string name="settings_state_off">OFF</string>
+    <string name="settings_paired_pcs">Paired PCs</string>
+    <string name="settings_devices_suffix"> devices</string>
+    <string name="settings_touch_point">Touch point</string>
+    <string name="settings_touch_trained">Trained</string>
+    <string name="settings_touch_not_set">Not set</string>
+    <string name="settings_vibration">Vibration</string>
+    <string name="settings_reset_all">Reset all settings</string>
+    <string name="toast_settings_reset">Settings reset</string>
+
+    <!-- Settings: Confirmation mode -->
+    <string name="title_how_to_confirm">How to confirm</string>
+    <string name="desc_choose_confirm">Choose how you confirm unlock requests</string>
+    <string name="mode_gesture_title">🤚 Gesture</string>
+    <string name="mode_gesture_desc">Shake or move wrist</string>
+    <string name="mode_button_title">🔘 Button</string>
+    <string name="mode_button_desc">Press the watch button</string>
+    <string name="mode_either_title">🤚🔘 Either</string>
+    <string name="mode_either_desc">Gesture or button</string>
+    <string name="confirm_gesture_only">Gesture only</string>
+    <string name="confirm_button_only">Button only</string>
+    <string name="confirm_gesture_or_button">Gesture or button</string>
+
+    <!-- Settings: Distance -->
+    <string name="title_distance">📡 Distance</string>
+    <string name="distance_touching">Touching (≤5 cm)</string>
+    <string name="distance_very_close">Very close (≤20 cm)</string>
+    <string name="distance_near_monitor">Near monitor (≤1 m)</string>
+    <string name="distance_same_room">Same room (≤3 m)</string>
+    <string name="distance_far">Far away</string>
+    <string name="btn_minus">-</string>
+    <string name="btn_plus">+</string>
+
+    <!-- Settings: Proximity -->
+    <string name="title_proximity">⚡ Proximity</string>
+    <string name="proximity_auto_unlock">Auto-unlock</string>
+    <string name="proximity_no_button">No button/gesture needed</string>
+    <string name="proximity_touching_monitor">Touching monitor</string>
+    <string name="proximity_very_close">Very close</string>
+    <string name="proximity_close">Close</string>
+    <string name="proximity_help">Bring watch this close to auto-unlock without confirmation</string>
+
+    <!-- Settings: Paired PCs -->
+    <string name="title_paired_pcs">💻 Paired PCs</string>
+    <string name="empty_paired_pcs">No PCs paired.\nConnect a PC from the main page.</string>
+    <string name="label_pc">PC</string>
+    <string name="toast_pc_removed">Current PC removed</string>
+    <string name="btn_forget_pc">Forget this PC</string>
+
+    <!-- Settings: Touch point -->
+    <string name="title_touch_point">👆 Touch point</string>
+    <string name="touch_point_trained">Point trained: unlock is confirmed by tapping it</string>
+    <string name="touch_point_not_set">Point not set. Without it, unlock will show a button.</string>
+    <string name="btn_train_point">Train point</string>
+    <string name="btn_retrain_point">Retrain point</string>
+    <string name="toast_point_cleared">Point cleared</string>
+    <string name="btn_reset_point">Reset point</string>
+
+    <!-- PairingActivity -->
+    <string name="title_pair">Pair WristKey</string>
+    <string name="pair_allow_pc">Allow this PC?</string>
+    <string name="pair_waiting">Waiting for PC…</string>
+    <string name="pair_no_challenge">No challenge</string>
+    <string name="btn_allow">ALLOW</string>
+    <string name="btn_cancel_pair">CANCEL</string>
+    <string name="default_pc_name">Windows PC</string>
+
+    <!-- TrainingActivity -->
+    <string name="training_prep">Training\n\nTap the unlock point\nTime left: %1$d s</string>
+    <string name="training_record">Recording point…\n%1$d s\n\nSamples: %2$d\nTap again to refine</string>
+    <string name="training_done">Point saved ✓</string>
+    <string name="btn_done">Done</string>
+
+    <!-- UnlockActivity -->
+    <string name="title_unlock">🔓 Unlock PC?</string>
+    <string name="unlock_point_not_set">Touch point not set</string>
+    <string name="btn_train_point_unlock">Train point</string>
+    <string name="btn_cancel_unlock">✗ Cancel</string>
+    <string name="unlock_touch_instruction">Tap the unlock\npoint</string>
+    <string name="unlock_miss">Miss (%1$d)</string>
+    <string name="default_user">Unknown PC</string>
+
+    <!-- BLE Service -->
+    <string name="notification_channel_ble">WristKey BLE</string>
+    <string name="notification_title">WristKey</string>
+    <string name="notification_paired">Paired: %1$s</string>
+    <string name="notification_setup">New PC setup — PIN: %1$s</string>
+    <string name="default_unknown">Unknown</string>
+
+    <!-- Permissions -->
+    <string name="bluetooth_permissions_required">Bluetooth permissions required</string>
+</resources>

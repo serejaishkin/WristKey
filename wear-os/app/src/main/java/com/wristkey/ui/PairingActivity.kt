@@ -30,6 +30,8 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import androidx.compose.ui.res.stringResource
+import com.wristkey.R
 import com.wristkey.ble.WristKeyBleService
 import kotlinx.coroutines.delay
 
@@ -53,7 +55,7 @@ class PairingActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val pcName = intent.getStringExtra("pcName") ?: "Windows PC"
+        val pcName = intent.getStringExtra("pcName") ?: getString(R.string.default_pc_name)
         val pcAddress = intent.getStringExtra("pcAddress") ?: ""
         Log.i(TAG, "PairingActivity opened: pcName=$pcName pcAddress=$pcAddress")
 
@@ -84,11 +86,11 @@ class PairingActivity : ComponentActivity() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("Pair WristKey", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
+                    Text(stringResource(R.string.title_pair), style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(4.dp))
                     Text(pcName, textAlign = TextAlign.Center, maxLines = 1)
                     Spacer(Modifier.height(4.dp))
-                    Text(if (ready) "Allow this PC?" else "Waiting for PC...", textAlign = TextAlign.Center)
+                    Text(if (ready) stringResource(R.string.pair_allow_pc) else stringResource(R.string.pair_waiting), textAlign = TextAlign.Center)
                     error?.let {
                         Spacer(Modifier.height(3.dp))
                         Text(it, textAlign = TextAlign.Center)
@@ -99,11 +101,11 @@ class PairingActivity : ComponentActivity() {
                             Log.i(TAG, "ALLOW pressed: challengeSize=${service?.getCurrentChallengeSize() ?: 0}")
                             val ok = service?.confirmPairing() == true
                             Log.i(TAG, "confirmPairing result=$ok")
-                            if (ok) finish() else error = "No challenge"
+                            if (ok) finish() else error = getString(R.string.pair_no_challenge)
                         },
                         enabled = ready,
                         modifier = Modifier.fillMaxWidth(0.9f).height(42.dp)
-                    ) { Text("ALLOW") }
+                    ) { Text(stringResource(R.string.btn_allow)) }
                     Spacer(Modifier.height(5.dp))
                     Button(
                         onClick = {
@@ -113,7 +115,7 @@ class PairingActivity : ComponentActivity() {
                         },
                         colors = ButtonDefaults.secondaryButtonColors(),
                         modifier = Modifier.fillMaxWidth(0.9f).height(38.dp)
-                    ) { Text("CANCEL") }
+                    ) { Text(stringResource(R.string.btn_cancel_pair)) }
                 }
             }
         }

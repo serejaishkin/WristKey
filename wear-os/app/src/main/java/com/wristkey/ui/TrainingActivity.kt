@@ -26,7 +26,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.wear.compose.material.*
+import com.wristkey.R
 import com.wristkey.ble.WristKeyBleService
 import com.wristkey.security.TouchPoint
 import com.wristkey.security.TouchPointStore
@@ -163,24 +165,24 @@ fun TrainingScreen(bleService: () -> WristKeyBleService?, onDone: () -> Unit, on
         ) {
             when (phase) {
                 TrainPhase.PREP -> Text(
-                    "Обучение\n\nКоснитесь точки разблокировки\nОсталось: ${secondsLeft} с",
+                    stringResource(R.string.training_prep, secondsLeft),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center
                 )
                 TrainPhase.RECORD -> Text(
-                    "Запись точки…\n${secondsLeft} с\n\nОбразцов: ${sampleCount}\nМожно коснуться ещё раз",
+                    stringResource(R.string.training_record, secondsLeft, sampleCount),
                     style = MaterialTheme.typography.body1,
                     textAlign = TextAlign.Center
                 )
                 TrainPhase.DONE -> {
-                    Text("Точка сохранена ✓", style = MaterialTheme.typography.title3, textAlign = TextAlign.Center, color = Color(0xFF4CAF50))
+                    Text(stringResource(R.string.training_done), style = MaterialTheme.typography.title3, textAlign = TextAlign.Center, color = Color(0xFF4CAF50))
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = onDone, modifier = Modifier.fillMaxWidth(0.6f)) { Text("Готово") }
+                    Button(onClick = onDone, modifier = Modifier.fillMaxWidth(0.6f)) { Text(stringResource(R.string.btn_done)) }
                 }
             }
             if (phase != TrainPhase.DONE) {
                 Spacer(Modifier.height(10.dp))
-                Button(onClick = onCancelled, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.5f)) { Text("Отмена") }
+                Button(onClick = onCancelled, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.5f)) { Text(stringResource(R.string.btn_cancel)) }
             }
         }
 

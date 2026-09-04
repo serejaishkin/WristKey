@@ -5,10 +5,13 @@ let currentDeviceCount = 0;
 let daemonEnabled = false;
 let cpRegistered = false;
 
-async function invoke(cmd, args = {}) {
+async function invoke(cmd, args) {
+    args = args || {};
     try { return await window.__TAURI__.core.invoke(cmd, args); }
-    catch (e) { console.error(`Invoke ${cmd} failed:`, e); throw e; }
+    catch (e) { console.error('Invoke ' + cmd + ' failed:', e); throw e; }
 }
+
+function t(key, params) { return window.WristKeyI18n ? window.WristKeyI18n.t(key, params) : key; }
 
 async function refreshStatus() {
     try {
@@ -250,8 +253,24 @@ async function uninstallService() {
     finally { btn.disabled = false; btn.textContent = '🗑 Uninstall Service'; }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
+document.addEventListener('DOMContentLoaded', function() {
+    window.WristKeyI18n.init().then(function() {
+        window.WristKeyI18n.applyTranslations();
+    });
+
+    var langSelect = document.getElementById('langSelect');
+    if (langSelect) {
+        langSelect.value = window.WristKeyI18n.getCurrentLang();
+        langSelect.addEventListener('change', function(e) {
+            window.WristKeyI18n.loadLanguage(e.target.value).then(function() {
+                window.WristKeyI18n.applyTranslations();
+            });
+        });
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() { showTab(btn.dataset.tab); });
+    });
     document.getElementById('daemonToggle').addEventListener('change', toggleDaemon);
     document.getElementById('scanBtn').addEventListener('click', scanDevices);
     document.getElementById('diagRefreshBtn').addEventListener('click', measureRssi);

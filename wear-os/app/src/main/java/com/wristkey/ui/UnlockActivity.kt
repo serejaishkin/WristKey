@@ -25,6 +25,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.*
+import androidx.compose.ui.res.stringResource
+import com.wristkey.R
 import com.wristkey.security.TouchPoint
 import com.wristkey.security.TouchPointStore
 
@@ -42,7 +44,7 @@ class UnlockActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val user = intent.getStringExtra("user") ?: "Unknown PC"
+        val user = intent.getStringExtra("user") ?: getString(R.string.default_user)
         setContent {
             MaterialTheme {
                 UnlockGateScreen(
@@ -113,14 +115,14 @@ fun NoPointScreen(user: String, onTrainRequested: () -> Unit, onCancel: () -> Un
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("🔓 Unlock PC?", style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
+        Text(stringResource(R.string.title_unlock), style = MaterialTheme.typography.title2, textAlign = TextAlign.Center)
         Text(user, style = MaterialTheme.typography.caption2, textAlign = TextAlign.Center)
         Spacer(Modifier.height(10.dp))
-        Text("Точка разблокировки не настроена", style = MaterialTheme.typography.caption1, textAlign = TextAlign.Center, color = Color(0xFFFFB74D))
+        Text(stringResource(R.string.unlock_point_not_set), style = MaterialTheme.typography.caption1, textAlign = TextAlign.Center, color = Color(0xFFFFB74D))
         Spacer(Modifier.height(12.dp))
-        Button(onClick = onTrainRequested, modifier = Modifier.fillMaxWidth(0.8f)) { Text("Обучить точку") }
+        Button(onClick = onTrainRequested, modifier = Modifier.fillMaxWidth(0.8f)) { Text(stringResource(R.string.btn_train_point_unlock)) }
         Spacer(Modifier.height(6.dp))
-        Button(onClick = onCancel, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.8f)) { Text("✗ Отмена") }
+        Button(onClick = onCancel, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.8f)) { Text(stringResource(R.string.btn_cancel_unlock)) }
     }
 }
 
@@ -156,12 +158,12 @@ fun TouchPointUnlockScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(18.dp))
-            Text("Коснитесь точки\nразблокировки", style = MaterialTheme.typography.body1, textAlign = TextAlign.Center)
+            Text(stringResource(R.string.unlock_touch_instruction), style = MaterialTheme.typography.body1, textAlign = TextAlign.Center)
             if (missCount > 0) {
-                Text("Мимо ($missCount)", style = MaterialTheme.typography.caption2, color = Color(0xFFEF5350), textAlign = TextAlign.Center)
+                Text(stringResource(R.string.unlock_miss, missCount), style = MaterialTheme.typography.caption2, color = Color(0xFFEF5350), textAlign = TextAlign.Center)
             }
             Spacer(Modifier.weight(1f))
-            Button(onClick = onCancel, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.5f)) { Text("✗ Отмена") }
+            Button(onClick = onCancel, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.5f)) { Text(stringResource(R.string.btn_cancel_unlock)) }
             Spacer(Modifier.height(14.dp))
         }
 

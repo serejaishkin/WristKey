@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WristKey</string>
+
+    <!-- MainActivity -->
+    <string name="status_launching">Запуск…</string>
+    <string name="status_loading_service">Подключение службы…</string>
+    <string name="status_pc_requesting_pairing">ПК «%1$s»\nзапрашивает сопряжение</string>
+    <string name="status_pc_requesting_pairing_no_name">ПК запрашивает\nсопряжение</string>
+    <string name="status_last_pc">Последний ПК:\n%1$s</string>
+    <string name="status_no_pc">ПК не настроен</string>
+    <string name="title_main">⌚ WristKey</string>
+    <string name="label_setup_code">Код настройки</string>
+    <string name="toast_paired">ПК сохранён</string>
+    <string name="toast_pairing_failed">Сопряжение не удалось</string>
+    <string name="btn_confirm">Подтвердить</string>
+    <string name="chip_reconnect">↻ Подключить последний ПК</string>
+    <string name="chip_connect">▶ Подключить последний ПК</string>
+    <string name="toast_waiting_connect">Ожидаю подключение последнего ПК</string>
+    <string name="chip_training">🎯 Обучение точки</string>
+    <string name="chip_settings">⚙ Настройки</string>
+    <string name="chip_new_pc">＋ Настроить новый ПК</string>
+    <string name="dialog_new_pc_title">Настроить новый ПК?</string>
+    <string name="dialog_new_pc_body">Будет создан новый код настройки.\nТекущий ПК будет заменён новым.</string>
+    <string name="toast_new_code_created">Новый код создан</string>
+    <string name="btn_start">Начать</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="btn_delete">Удалить</string>
+    <string name="btn_save">Сохранить</string>
+
+    <!-- SettingsActivity -->
+    <string name="title_settings">⚙ WristKey</string>
+    <string name="settings_confirmation">Подтверждение</string>
+    <string name="settings_unlock_distance">Расстояние разблокировки</string>
+    <string name="settings_proximity_unlock">Автоблокировка по приближению</string>
+    <string name="settings_state_on">ВКЛ</string>
+    <string name="settings_state_off">ВЫКЛ</string>
+    <string name="settings_paired_pcs">Сопряжённые ПК</string>
+    <string name="settings_devices_suffix"> устр.</string>
+    <string name="settings_touch_point">Точка касания</string>
+    <string name="settings_touch_trained">Обучена</string>
+    <string name="settings_touch_not_set">Не настроена</string>
+    <string name="settings_vibration">Вибрация</string>
+    <string name="settings_reset_all">Сбросить все настройки</string>
+    <string name="toast_settings_reset">Настройки сброшены</string>
+
+    <!-- Settings: Confirmation mode -->
+    <string name="title_how_to_confirm">Как подтверждать</string>
+    <string name="desc_choose_confirm">Выберите способ подтверждения разблокировки</string>
+    <string name="mode_gesture_title">🤚 Жест</string>
+    <string name="mode_gesture_desc">Взмах или движение рукой</string>
+    <string name="mode_button_title">🔘 Кнопка</string>
+    <string name="mode_button_desc">Нажать кнопку на часах</string>
+    <string name="mode_either_title">🤚🔘 Любым</string>
+    <string name="mode_either_desc">Жест или кнопка</string>
+    <string name="confirm_gesture_only">Только жест</string>
+    <string name="confirm_button_only">Только кнопка</string>
+    <string name="confirm_gesture_or_button">Жест или кнопка</string>
+
+    <!-- Settings: Distance -->
+    <string name="title_distance">📡 Расстояние</string>
+    <string name="distance_touching">Касание (≤5 см)</string>
+    <string name="distance_very_close">Очень близко (≤20 см)</string>
+    <string name="distance_near_monitor">У монитора (≤1 м)</string>
+    <string name="distance_same_room">В той же комнате (≤3 м)</string>
+    <string name="distance_far">Далеко</string>
+    <string name="btn_minus">-</string>
+    <string name="btn_plus">+</string>
+
+    <!-- Settings: Proximity -->
+    <string name="title_proximity">⚡ Приближение</string>
+    <string name="proximity_auto_unlock">Авторазблокировка</string>
+    <string name="proximity_no_button">Без кнопки/жеста</string>
+    <string name="proximity_touching_monitor">Касание монитора</string>
+    <string name="proximity_very_close">Очень близко</string>
+    <string name="proximity_close">Близко</string>
+    <string name="proximity_help">Поднесите часы так близко для авторазблокировки без подтверждения</string>
+
+    <!-- Settings: Paired PCs -->
+    <string name="title_paired_pcs">💻 Сопряжённые ПК</string>
+    <string name="empty_paired_pcs">Нет сопряжённых ПК.\nПодключите ПК с главной страницы.</string>
+    <string name="label_pc">ПК</string>
+    <string name="toast_pc_removed">Текущий ПК сброшен</string>
+    <string name="btn_forget_pc">Забыть этот ПК</string>
+
+    <!-- Settings: Touch point -->
+    <string name="title_touch_point">👆 Точка касания</string>
+    <string name="touch_point_trained">Точка обучена: разблокировка подтверждается касанием в неё</string>
+    <string name="touch_point_not_set">Точка не настроена. Без неё unlock покажет кнопку.</string>
+    <string name="btn_train_point">Обучить точку</string>
+    <string name="btn_retrain_point">Обучить заново</string>
+    <string name="toast_point_cleared">Точка сброшена</string>
+    <string name="btn_reset_point">Сбросить точку</string>
+
+    <!-- PairingActivity -->
+    <string name="title_pair">Сопряжение WristKey</string>
+    <string name="pair_allow_pc">Разрешить этот ПК?</string>
+    <string name="pair_waiting">Ожидаю ПК…</string>
+    <string name="pair_no_challenge">Нет запроса</string>
+    <string name="btn_allow">РАЗРЕШИТЬ</string>
+    <string name="btn_cancel_pair">ОТМЕНА</string>
+    <string name="default_pc_name">Windows PC</string>
+
+    <!-- TrainingActivity -->
+    <string name="training_prep">Обучение\n\nКоснитесь точки разблокировки\nОсталось: %1$d с</string>
+    <string name="training_record">Запись точки…\n%1$d с\n\nОбразцов: %2$d\nМожно коснуться ещё раз</string>
+    <string name="training_done">Точка сохранена ✓</string>
+    <string name="btn_done">Готово</string>
+
+    <!-- UnlockActivity -->
+    <string name="title_unlock">🔓 Разблокировать ПК?</string>
+    <string name="unlock_point_not_set">Точка разблокировки не настроена</string>
+    <string name="btn_train_point_unlock">Обучить точку</string>
+    <string name="btn_cancel_unlock">✗ Отмена</string>
+    <string name="unlock_touch_instruction">Коснитесь точки\nразблокировки</string>
+    <string name="unlock_miss">Мимо (%1$d)</string>
+    <string name="default_user">Неизвестный ПК</string>
+
+    <!-- BLE Service -->
+    <string name="notification_channel_ble">WristKey BLE</string>
+    <string name="notification_title">WristKey</string>
+    <string name="notification_paired">Сопряжён: %1$s</string>
+    <string name="notification_setup">Настройка нового ПК — PIN: %1$s</string>
+    <string name="default_unknown">Неизвестно</string>
+
+    <!-- Permissions -->
+    <string name="bluetooth_permissions_required">Требуются разрешения Bluetooth</string>
+</resources>

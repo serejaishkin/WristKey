@@ -122,12 +122,12 @@ class WristKeyBleService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID, "WristKey BLE", NotificationManager.IMPORTANCE_LOW))
+            getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_ble), NotificationManager.IMPORTANCE_LOW))
         }
     }
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("WristKey")
-        .setContentText(if (isPaired()) "Paired: ${getPairedDeviceAddress()}" else "New PC setup -- PIN: ${getAdvertisePin()}")
+        .setContentTitle(getString(R.string.notification_title))
+        .setContentText(if (isPaired()) getString(R.string.notification_paired, getPairedDeviceAddress()) else getString(R.string.notification_setup, getAdvertisePin()))
         .setSmallIcon(R.drawable.ic_launcher).setOngoing(true).build()
     fun updateNotification() = getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
     fun getAdvertisePin() = String.format("%04d", currentPin)
@@ -145,7 +145,7 @@ class WristKeyBleService : Service() {
     fun isAdvertising() = advertiseCallback != null
     fun getPairedDeviceCount() = if (isPaired()) 1 else 0
     fun getConnectedDeviceAddress() = connectedDevice?.address ?: "--"
-    fun getDeviceName() = pairedDeviceName ?: pairedDeviceAddress ?: "Unknown"
+    fun getDeviceName() = pairedDeviceName ?: pairedDeviceAddress ?: getString(R.string.default_unknown)
 
     fun setPairedDevice(address: String, name: String) {
         pairedDeviceAddress = address; pairedDeviceName = name; pairingMode.set(false)
@@ -180,7 +180,7 @@ class WristKeyBleService : Service() {
 
     private fun showPairingActivity() {
         if (!pairingMode.get() || isPaired()) return
-        try { startActivity(Intent(this, PairingActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP; putExtra("pcName", requestingPcName ?: "Windows PC"); putExtra("pcAddress", pairingDeviceAddress ?: "") }) }
+        try { startActivity(Intent(this, PairingActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP; putExtra("pcName", requestingPcName ?: getString(R.string.default_pc_name)); putExtra("pcAddress", pairingDeviceAddress ?: "") }) }
         catch (e: Exception) { Log.e(TAG, "Failed to open pairing UI", e) }
     }
 
@@ -320,7 +320,7 @@ class WristKeyBleService : Service() {
             val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: return false
             val signature = keyStoreManager.signChallenge(challenge)
             responseCharacteristic?.value = signature + byteArrayOf(1)
-            setPairedDevice(pc.address, requestingPcName ?: "Windows PC")
+            setPairedDevice(pc.address, requestingPcName ?: getString(R.string.default_pc_name))
             setPairingKey(UnlockProtocol.generatePasswordKey())
             _userPresent.set(true); _pairingRequested.set(false)
             proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null
@@ -361,7 +361,7 @@ class WristKeyBleService : Service() {
     private fun handleUnlockRequest(data: ByteArray?) {
         if (data == null) return
         val pairingKey = getPairingKey() ?: run { sendUnlockResponse(null, "NO_PAIRING_KEY"); return }
-        try { val request = JSONObject(String(UnlockProtocol.decrypt(data, pairingKey))); val user = request.optString("user", "Unknown PC"); startActivity(Intent(this, UnlockActivity::class.java).apply { putExtra("user", user); flags = Intent.FLAG_ACTIVITY_NEW_TASK }) }
+        try { val request = JSONObject(String(UnlockProtocol.decrypt(data, pairingKey))); val user = request.optString("user", getString(R.string.default_user)); startActivity(Intent(this, UnlockActivity::class.java).apply { putExtra("user", user); flags = Intent.FLAG_ACTIVITY_NEW_TASK }) }
         catch (e: Exception) { Log.e(TAG, "Unlock request failed", e); sendUnlockResponse(null, "DECRYPT_ERROR") }
     }
     private fun sendUnlockResponse(passwordKey: ByteArray?, error: String? = null) {
