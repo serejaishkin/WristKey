@@ -2,7 +2,7 @@ name: Build All Artifacts
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/wristkey-20260818]
   workflow_dispatch:
 
 jobs:
