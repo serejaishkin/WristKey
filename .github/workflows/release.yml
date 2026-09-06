@@ -40,6 +40,21 @@ jobs:
           name: wristkeyd-${{ matrix.target }}
           path: desktop/target/${{ matrix.target }}/release/wristkeyd${{ matrix.suffix }}
 
+  # ─── Native Windows Credential Provider ───
+  credential-provider:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native Credential Provider
+        run: cmake -S windows-credential-provider -B windows-credential-provider/build -A x64 -DCMAKE_BUILD_TYPE=Release
+      - name: Build native Credential Provider
+        run: cmake --build windows-credential-provider/build --config Release --parallel
+      - name: Upload Credential Provider
+        uses: actions/upload-artifact@v4
+        with:
+          name: wristkey-windows-credential-provider-x64
+          path: windows-credential-provider/build/Release/WristKeyCredentialProvider.dll
+
   # ─── Wear OS APK ───
   android:
     runs-on: ubuntu-latest
