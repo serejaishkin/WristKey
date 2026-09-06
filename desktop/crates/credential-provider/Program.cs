@@ -1,5 +1,7 @@
 using System;
 using Microsoft.Win32;
+using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace WristKeyCredentialProvider
 {
@@ -33,22 +35,12 @@ namespace WristKeyCredentialProvider
 
         static void Register()
         {
-            string dllPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-
-            // Register COM class
-            using (var clsidKey = Registry.ClassesRoot.CreateSubKey(@"CLSID\\" + Clsid))
-            {
-                clsidKey.SetValue(null, "WristKey Credential Provider");
-                using (var inprocKey = clsidKey.CreateSubKey("InprocServer32"))
-                {
-                    inprocKey.SetValue(null, dllPath);
-                    inprocKey.SetValue("ThreadingModel", "Apartment");
-                }
-            }
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            new RegistrationServices().RegisterAssembly(assembly, AssemblyRegistrationFlags.SetCodeBase);
 
             // Register as Credential Provider
             using (var cpKey = Registry.LocalMachine.CreateSubKey(
-                @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\" + Clsid))
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\" + Clsid))
             {
                 cpKey.SetValue(null, ProviderName);
             }
@@ -56,9 +48,10 @@ namespace WristKeyCredentialProvider
 
         static void Unregister()
         {
-            Registry.ClassesRoot.DeleteSubKeyTree(@"CLSID\\" + Clsid, false);
+            new RegistrationServices().UnregisterAssembly(Assembly.GetExecutingAssembly());
+            Registry.ClassesRoot.DeleteSubKeyTree(@"CLSID\" + Clsid, false);
             Registry.LocalMachine.DeleteSubKeyTree(
-                @"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\" + Clsid, false);
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\" + Clsid, false);
         }
     }
 }

@@ -8,11 +8,7 @@
 #>
 
 param(
-    [string]$DllPath = "C:\Program Files\WristKey\WristKeyCredentialProvider.dll",
-    # Build output directory containing WristKeyCredentialProvider.dll and
-    # its dependency DLLs (e.g. Newtonsoft.Json.dll). All *.dll from this
-    # directory are copied next to the target so LogonUI can load them.
-    [string]$SourceDir = (Join-Path $PSScriptRoot "bin\Release\net48")
+    [string]$DllPath = "C:\Program Files\WristKey\WristKeyCredentialProvider.dll"
 )
 
 $clsid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}"
@@ -24,32 +20,29 @@ if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
 
-# Always refresh the installed DLLs from the build output so a re-run
-# updates an existing installation and its dependencies (Newtonsoft.Json).
-$builtDll = Join-Path $SourceDir "WristKeyCredentialProvider.dll"
-if (Test-Path $builtDll) {
-    Copy-Item -Path (Join-Path $SourceDir "*.dll") -Destination $dir -Force
-    Write-Host "Copied DLLs from $SourceDir to $dir"
-}
-
 if (-not (Test-Path $DllPath)) {
     Write-Error "DLL not found at $DllPath. Build the project first."
     Write-Host ""
     Write-Host "Build instructions:"
-    Write-Host "  1. dotnet build -c Release (in desktop/crates/credential-provider)"
-    Write-Host "  2. Re-run this script; it copies bin\Release\net48\*.dll to $dir"
+    Write-Host "  1. Open WristKeyCredentialProvider.csproj in Visual Studio or use MSBuild"
+    Write-Host "  2. Build in Release mode (x64)"
+    Write-Host "  3. Copy output DLL to $DllPath"
     exit 1
 }
 
-# Register COM
-$regPath = "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid"
-New-Item -Path $regPath -Force | Out-Null
-Set-ItemProperty -Path $regPath -Name "(Default)" -Value $name
-
-$inprocPath = "$regPath\InprocServer32"
-New-Item -Path $inprocPath -Force | Out-Null
-Set-ItemProperty -Path $inprocPath -Name "(Default)" -Value $DllPath
-Set-ItemProperty -Path $inprocPath -Name "ThreadingModel" -Value "Apartment"
+# This is a managed .NET Framework assembly. Credential providers are loaded by
+# COM, so direct InprocServer32=<path-to-dll> registration is invalid; RegAsm
+# must create the mscoree/Assembly/Class registration entries.
+$regAsm = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
+if (-not (Test-Path $regAsm)) {
+    Write-Error "64-bit .NET Framework RegAsm was not found at $regAsm"
+    exit 1
+}
+& $regAsm $DllPath /codebase
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "RegAsm failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
 
 # Register as Credential Provider
 $cpPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$clsid"
