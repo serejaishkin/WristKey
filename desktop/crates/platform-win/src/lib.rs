@@ -165,7 +165,7 @@ impl WindowsSecurity {
         std::fs::copy(clean_path, &dest_dll)
             .map_err(|e| format!("Failed to copy DLL to System32: {} -- run as Administrator", e))?;
 
-        let dll_filename = dest_dll.file_name().unwrap().to_string_lossy().to_string();
+        let _dll_filename = dest_dll.file_name().unwrap().to_string_lossy().to_string();
 
         let write_err = |e: std::io::Error| {
             format!("registry write failed ({}) -- run as Administrator", e)
