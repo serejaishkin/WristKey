@@ -1,6 +1,7 @@
 #include "Provider.h"
 #include <new>
 #include <shlwapi.h>
+#include <sddl.h>
 #include <lm.h>
 #include <string>
 #include <wincred.h>
@@ -21,6 +22,29 @@ static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     memcpy(p, src, n * sizeof(wchar_t));
     *dst = p;
     return S_OK;
+}
+
+static std::wstring LookupUserSid(const std::wstring& username) {
+    DWORD sidSize = 0;
+    DWORD domainSize = 0;
+    SID_NAME_USE sidType{};
+    LookupAccountNameW(nullptr, username.c_str(), nullptr, &sidSize, nullptr, &domainSize, &sidType);
+    if (sidSize == 0) return {};
+
+    std::vector<BYTE> sidBuffer(sidSize);
+    std::vector<wchar_t> domainBuffer(domainSize ? domainSize : 1);
+    if (!LookupAccountNameW(nullptr, username.c_str(), sidBuffer.data(), &sidSize,
+                            domainBuffer.data(), &domainSize, &sidType)) {
+        return {};
+    }
+
+    LPWSTR sidString = nullptr;
+    if (!ConvertSidToStringSidW(reinterpret_cast<PSID>(sidBuffer.data()), &sidString) || !sidString) {
+        return {};
+    }
+    std::wstring result(sidString);
+    LocalFree(sidString);
+    return result;
 }
 
 static std::vector<std::wstring> EnumerateLocalUsers() {
@@ -51,7 +75,8 @@ static std::vector<std::wstring> EnumerateLocalUsers() {
 WristKeyProvider::WristKeyProvider() {
     const auto users = EnumerateLocalUsers();
     for (const auto& user : users) {
-        auto* credential = new (std::nothrow) WristKeyProviderCredential(this, user);
+        const auto sid = LookupUserSid(user);
+        auto* credential = new (std::nothrow) WristKeyProviderCredential(this, user, sid);
         if (credential) _credentials.push_back(credential);
     }
 }
@@ -109,18 +134,23 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorAt(DWORD index, CR
 
     CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR d{};
     d.dwFieldID = index;
-    d.cpft = (index == WristKeyFields::Tile) ? CPFT_LARGE_TEXT :
+    d.cpft = (index == WristKeyFields::TileImage) ? CPFT_TILE_IMAGE :
+             (index == WristKeyFields::Tile) ? CPFT_LARGE_TEXT :
              (index == WristKeyFields::Status) ? CPFT_SMALL_TEXT : CPFT_SUBMIT_BUTTON;
-    d.pszLabel = nullptr;
+    d.guidFieldType = GUID_NULL;
 
-    PCWSTR label = (index == WristKeyFields::Tile) ? L"WristKey" :
-                   (index == WristKeyFields::Status) ? L"Select account and confirm on watch" : L"Unlock";
+    PCWSTR label = (index == WristKeyFields::TileImage) ? L"WristKey logo" :
+                   (index == WristKeyFields::Tile) ? L"WristKey" :
+                   (index == WristKeyFields::Status) ? L"Confirm on your watch" : L"Unlock";
+    if (index == WristKeyFields::TileImage) d.guidFieldType = CPFG_CREDENTIAL_PROVIDER_LOGO;
+
     HRESULT hr = CopyString(label, &d.pszLabel);
     if (FAILED(hr)) return hr;
-
-    CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR* copy =
-        static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
-    if (!copy) { CoTaskMemFree(d.pszLabel); return E_OUTOFMEMORY; }
+    auto* copy = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
+    if (!copy) {
+        CoTaskMemFree(d.pszLabel);
+        return E_OUTOFMEMORY;
+    }
     *copy = d;
     *out = copy;
     return S_OK;
@@ -144,8 +174,8 @@ void WristKeyProvider::SetEvents(ICredentialProviderCredentialEvents*, UINT_PTR)
 bool WristKeyProvider::WatchAvailable() const { return false; }
 void WristKeyProvider::RefreshStatus() {}
 
-WristKeyProviderCredential::WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username)
-    : _provider(provider), _username(std::move(username)) {
+WristKeyProviderCredential::WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username, std::wstring sid)
+    : _provider(provider), _username(std::move(username)), _sid(std::move(sid)) {
     if (_provider) _provider->AddRef();
 }
 
@@ -154,6 +184,11 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::QueryInterface(REFIID riid
     *ppv = nullptr;
     if (riid == IID_IUnknown || riid == IID_ICredentialProviderCredential) {
         *ppv = static_cast<ICredentialProviderCredential*>(this);
+        AddRef();
+        return S_OK;
+    }
+    if (riid == IID_ICredentialProviderCredential2) {
+        *ppv = static_cast<ICredentialProviderCredential2*>(this);
         AddRef();
         return S_OK;
     }
@@ -176,16 +211,44 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetSelected(BOOL* autoLogo
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetDeselected() { return S_OK; }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetFieldState(DWORD id, CREDENTIAL_PROVIDER_FIELD_STATE* state, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE* interactive) {
     if (!state || !interactive || id >= WristKeyFields::Count) return E_INVALIDARG;
-    *state = CPFS_DISPLAY_IN_SELECTED_TILE;
-    *interactive = (id == WristKeyFields::Submit) ? CPFIS_FOCUSED : CPFIS_NONE;
+    if (id == WristKeyFields::TileImage || id == WristKeyFields::Tile) {
+        *state = CPFS_DISPLAY_IN_BOTH;
+        *interactive = CPFIS_NONE;
+    } else if (id == WristKeyFields::Status || id == WristKeyFields::Submit) {
+        *state = CPFS_DISPLAY_IN_SELECTED_TILE;
+        *interactive = (id == WristKeyFields::Submit) ? CPFIS_FOCUSED : CPFIS_NONE;
+    } else {
+        return E_INVALIDARG;
+    }
     return S_OK;
 }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetStringValue(DWORD id, PWSTR* value) {
     if (id == WristKeyFields::Tile) return CopyString(_username.c_str(), value);
-    if (id == WristKeyFields::Status) return CopyString(L"Select account and confirm on watch", value);
+    if (id == WristKeyFields::Status) return CopyString(L"Confirm on your watch", value);
     return E_INVALIDARG;
 }
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetBitmapValue(DWORD, HBITMAP* b) { if (b) *b = nullptr; return E_NOTIMPL; }
+
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetBitmapValue(DWORD id, HBITMAP* b) {
+    if (!b) return E_POINTER;
+    *b = nullptr;
+    if (id != WristKeyFields::TileImage) return E_INVALIDARG;
+
+    HICON icon = LoadIconW(nullptr, IDI_INFORMATION);
+    if (!icon) return HRESULT_FROM_WIN32(GetLastError());
+
+    ICONINFO iconInfo{};
+    if (!GetIconInfo(icon, &iconInfo)) {
+        DestroyIcon(icon);
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    DestroyIcon(icon);
+    if (iconInfo.hbmMask) DeleteObject(iconInfo.hbmMask);
+    if (!iconInfo.hbmColor) return E_FAIL;
+    *b = iconInfo.hbmColor;
+    return S_OK;
+}
+
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetCheckboxValue(DWORD, BOOL* pbChecked, LPWSTR* ppszLabel) {
     if (pbChecked) *pbChecked = FALSE;
     if (ppszLabel) *ppszLabel = nullptr;
@@ -209,6 +272,13 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetStringValue(DWORD, PCWS
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetCheckboxValue(DWORD, BOOL) { return E_NOTIMPL; }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetComboBoxSelectedValue(DWORD, DWORD) { return E_NOTIMPL; }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::CommandLinkClicked(DWORD) { return E_NOTIMPL; }
+
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetUserSid(PWSTR* ppszSid) {
+    if (!ppszSid) return E_POINTER;
+    *ppszSid = nullptr;
+    if (_sid.empty()) return S_FALSE;
+    return CopyString(_sid.c_str(), ppszSid);
+}
 
 /**
  * Connects to the daemon's named pipe (see daemon/src/lib.rs, mod pipe_server)
