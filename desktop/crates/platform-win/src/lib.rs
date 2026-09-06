@@ -75,15 +75,12 @@ impl WindowsVault {
     }
 
     pub fn retrieve_password(&self, device_id: &str) -> std::result::Result<String, String> {
-        self.vault
-            .get_device_password(device_id)
-            .map_err(|e| e.to_string())
+        self.vault.get_device_password(device_id).map_err(|e| e.to_string())
     }
 
     pub async fn encrypt_password(&self, password: &str) -> std::result::Result<Vec<u8>, String> {
         let pairing_key = generate_key();
-        let encrypted = wristkey_crypto::encrypt(password.as_bytes(), &pairing_key);
-        Ok(encrypted)
+        Ok(wristkey_crypto::encrypt(password.as_bytes(), &pairing_key))
     }
 
     pub fn ensure_device(&self, device_id: &str, name: &str, ble_address: &str) -> std::result::Result<[u8; 32], String> {
@@ -119,11 +116,13 @@ impl WindowsSecurity {
 
     pub fn start_pipe_server() {}
 
-    // The CLSID must match the Guid attribute in the C# Credential Provider
-    // (desktop/crates/credential-provider/WristKeyCredentialProvider.cs) and
-    // register.ps1. All three sides reference the same provider class.
-    const CP_CLSID: &'static str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
-    const CP_NAME: &'static str = "WristKey Credential Provider";
+    // The production provider is the native x64 V2 implementation under
+    // windows-credential-provider/. The old managed C# provider used another
+    // CLSID and could be registered successfully while still not producing a
+    // Windows 10/11 Sign-in options tile.
+    const CP_CLSID: &'static str = "{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}";
+    const CP_NAME: &'static str = "WristKey";
+    const LEGACY_CP_CLSID: &'static str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
 
     pub fn is_credential_provider_registered() -> bool {
         use winreg::enums::HKEY_LOCAL_MACHINE;
@@ -132,13 +131,17 @@ impl WindowsSecurity {
             r"SOFTWARE\Classes\CLSID\{}\InprocServer32",
             Self::CP_CLSID
         ));
-        match inproc {
+        let registered = match inproc {
             Ok(key) => key
                 .get_value::<String, _>("")
                 .map(|path| std::path::Path::new(&path).exists())
                 .unwrap_or(false),
             Err(_) => false,
-        }
+        };
+        registered && hklm.open_subkey(format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::CP_CLSID
+        )).is_ok()
     }
 
     pub fn storage_type_description() -> &'static str {
@@ -146,139 +149,83 @@ impl WindowsSecurity {
     }
 
     pub async fn ensure_dll_extracted() -> std::result::Result<String, String> {
-        Err("DLL extraction not yet implemented".to_string())
+        Err("Native Credential Provider DLL is not bundled in this development build. Build/download windows-credential-provider x64 first.".to_string())
     }
 
     pub fn register_credential_provider(dll_path: &str) -> std::result::Result<(), String> {
-        use winreg::enums::HKEY_LOCAL_MACHINE;
         let clean_path = dll_path.trim_start_matches(r"\\?\");
-        if !std::path::Path::new(clean_path).exists() {
+        let source = std::path::Path::new(clean_path);
+        if !source.exists() {
             return Err(format!("Credential Provider DLL not found: {}", clean_path));
         }
 
-        // Copy DLL to System32 for reliable COM loading
         let system32 = std::env::var("SystemRoot")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
             .join("System32");
         let dest_dll = system32.join("WristKeyCredentialProvider.dll");
-        std::fs::copy(clean_path, &dest_dll)
-            .map_err(|e| format!("Failed to copy DLL to System32: {} -- run as Administrator", e))?;
+        std::fs::copy(source, &dest_dll)
+            .map_err(|e| format!("Failed to copy native Credential Provider DLL to System32: {} -- run as Administrator", e))?;
 
-        let _dll_filename = dest_dll.file_name().unwrap().to_string_lossy().to_string();
-
-        let write_err = |e: std::io::Error| {
-            format!("registry write failed ({}) -- run as Administrator", e)
-        };
-
-        let hkcr = winreg::RegKey::predef(winreg::enums::HKEY_CLASSES_ROOT);
-
-        // CLSID registration — for .NET COM servers, InprocServer32 must point
-        // to mscoree.dll (the CLR shim), NOT the assembly itself.
-        let clsid_path = format!(r"CLSID\{}", Self::CP_CLSID);
-        let (clsid_key, _) = hkcr.create_subkey(&clsid_path).map_err(write_err)?;
-        clsid_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
-
-        // .NET COM interop keys — mscoree.dll reads these to load the assembly
-        let assembly_name = "WristKeyCredentialProvider, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
-        let class_name = "WristKeyCredentialProvider.WristKeyCredentialProvider";
-        clsid_key.set_value("Assembly", &assembly_name).map_err(write_err)?;
-        clsid_key.set_value("Class", &class_name).map_err(write_err)?;
-        clsid_key.set_value("RuntimeVersion", &"v4.0.30319").map_err(write_err)?;
-        clsid_key.set_value("CodeBase", &format!("file:///{}", dest_dll.display())).map_err(write_err)?;
-
-        // InprocServer32 → mscoree.dll (CLR hosting shim)
-        let (inproc, _) = clsid_key.create_subkey("InprocServer32").map_err(write_err)?;
-        inproc.set_value("", &"mscoree.dll").map_err(write_err)?;
-        inproc.set_value("ThreadingModel", &"Apartment").map_err(write_err)?;
-
-        // Credential Provider registration
+        // Remove the legacy managed registration so Windows cannot resolve the
+        // old provider while the native V2 provider is being installed.
+        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
+        let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
         let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
-        let cp_path = format!(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::CP_CLSID
-        );
-        let (cp_key, _) = hklm.create_subkey(&cp_path).map_err(write_err)?;
-        cp_key.set_value("", &Self::CP_NAME).map_err(write_err)?;
-
-        // Set UserTile for default CP
-        if let Ok(username) = std::env::var("USERNAME") {
-            if let Ok(domain) = std::env::var("USERDOMAIN") {
-                use std::process::Command;
-                let output = Command::new("wmic")
-                    .args(["useraccount", "where", &format!("name='{}'and domain='{}'", username, domain), "get", "sid"])
-                    .output();
-                if let Ok(out) = output {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    for line in stdout.lines() {
-                        let sid = line.trim();
-                        if sid.starts_with("S-1-") {
-                            let tile_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\UserTile";
-                            if let Ok((key, _)) = hklm.create_subkey(tile_path) {
-                                let _ = key.set_value(sid, &Self::CP_CLSID);
-                            }
-                            break;
-                        }
-                    }
+        fn delete_tree(hive: &winreg::RegKey, path: &str) {
+            if let Ok(key) = hive.open_subkey_with_flags(path, KEY_READ | KEY_WRITE) {
+                let subkeys: Vec<String> = key.enum_keys().flatten().collect();
+                for sub in subkeys {
+                    delete_tree(hive, &format!(r"{}\{}", path, sub));
                 }
             }
+            let _ = hive.delete_subkey(path);
+        }
+        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::LEGACY_CP_CLSID));
+        delete_tree(&hklm, &format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::LEGACY_CP_CLSID
+        ));
+
+        let regsvr32 = system32.join("regsvr32.exe");
+        let output = std::process::Command::new(&regsvr32)
+            .args(["/s", dest_dll.to_string_lossy().as_ref()])
+            .output()
+            .map_err(|e| format!("Failed to start regsvr32: {}", e))?;
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(format!("Native Credential Provider registration failed (regsvr32 exit {}). Run WristKey as Administrator and verify the DLL is x64.", code));
         }
 
-        tracing::info!("Credential Provider registered: CLSID={} dll={}", Self::CP_CLSID, dest_dll.display());
+        tracing::info!("Native V2 Credential Provider registered: CLSID={} dll={}", Self::CP_CLSID, dest_dll.display());
         Ok(())
     }
 
     pub fn unregister_credential_provider() -> std::result::Result<(), String> {
-        use winreg::enums::{HKEY_LOCAL_MACHINE, HKEY_CLASSES_ROOT, KEY_READ, KEY_WRITE};
-        fn delete_tree(hive: &winreg::RegKey, path: &str) -> std::io::Result<()> {
+        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
+        fn delete_tree(hive: &winreg::RegKey, path: &str) {
             if let Ok(key) = hive.open_subkey_with_flags(path, KEY_READ | KEY_WRITE) {
                 let subkeys: Vec<String> = key.enum_keys().flatten().collect();
                 for sub in subkeys {
-                    let child = format!(r"{}\{}", path, sub);
-                    delete_tree(hive, &child)?;
+                    delete_tree(hive, &format!(r"{}\{}", path, sub));
                 }
             }
-            hive.delete_subkey(path)
+            let _ = hive.delete_subkey(path);
         }
-        // Delete COM registration from HKCR
+
         let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
-        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::CP_CLSID))
-            .map_err(|e| format!("failed to delete COM registration: {}", e))?;
-        // Delete Credential Provider registration
         let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
-        delete_tree(
-            &hklm,
-            &format!(
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-                Self::CP_CLSID
-            ),
-        )
-        .map_err(|e| format!("failed to delete provider registration: {}", e))?;
-        // Delete UserTile entry for current user
-        if let Ok(tile_key) = hklm.open_subkey_with_flags(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\UserTile",
-            KEY_READ | KEY_WRITE,
-        ) {
-            if let Ok(username) = std::env::var("USERNAME") {
-                if let Ok(domain) = std::env::var("USERDOMAIN") {
-                    use std::process::Command;
-                    let output = Command::new("wmic")
-                        .args(["useraccount", "where", &format!("name='{}'and domain='{}'", username, domain), "get", "sid"])
-                        .output();
-                    if let Ok(out) = output {
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        for line in stdout.lines() {
-                            let sid = line.trim();
-                            if sid.starts_with("S-1-") {
-                                let _ = tile_key.delete_value(sid);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Remove DLL from System32
+        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::CP_CLSID));
+        delete_tree(&hklm, &format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::CP_CLSID
+        ));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::LEGACY_CP_CLSID));
+        delete_tree(&hklm, &format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::LEGACY_CP_CLSID
+        ));
+
         let system32 = std::env::var("SystemRoot")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
