@@ -2,6 +2,8 @@
 
 #include <windows.h>
 #include <initguid.h>
+#include <guiddef.h>
+#include <shlguid.h>
 #include <credentialprovider.h>
 #include <string>
 #include <vector>
