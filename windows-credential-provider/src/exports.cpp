@@ -1,9 +1,6 @@
 #include "Provider.h"
-#include <windows.h>
 #include <shlwapi.h>
 #include <new>
-
-extern const GUID CLSID_WristKeyCredentialProvider;
 
 static HMODULE g_module = nullptr;
 static LONG g_objects = 0;
@@ -12,7 +9,7 @@ static LONG g_locks = 0;
 class ClassFactory final : public IClassFactory {
 public:
     explicit ClassFactory() : ref_(1) { InterlockedIncrement(&g_objects); }
-    ~ClassFactory() override { InterlockedDecrement(&g_objects); }
+    ~ClassFactory() { InterlockedDecrement(&g_objects); }
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv) return E_POINTER; *ppv = nullptr;
         if (riid == IID_IUnknown || riid == IID_IClassFactory) { *ppv = static_cast<IClassFactory*>(this); AddRef(); return S_OK; }
@@ -40,7 +37,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID) {
     return TRUE;
 }
 
-extern "C" HRESULT __declspec(dllexport) DllGetClassObject(REFCLSID clsid, REFIID iid, void** ppv) {
+HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID clsid, REFIID iid, void** ppv) {
     if (clsid != CLSID_WristKeyCredentialProvider) return CLASS_E_CLASSNOTAVAILABLE;
     auto* f = new (std::nothrow) ClassFactory();
     if (!f) return E_OUTOFMEMORY;
@@ -49,7 +46,7 @@ extern "C" HRESULT __declspec(dllexport) DllGetClassObject(REFCLSID clsid, REFII
     return hr;
 }
 
-extern "C" HRESULT __declspec(dllexport) DllCanUnloadNow() {
+HRESULT STDAPICALLTYPE DllCanUnloadNow() {
     return (g_objects == 0 && g_locks == 0) ? S_OK : S_FALSE;
 }
 
@@ -62,7 +59,7 @@ static HRESULT WriteClsidKey(HKEY root, const wchar_t* subkey, const wchar_t* va
     return HRESULT_FROM_WIN32(rc);
 }
 
-extern "C" HRESULT __declspec(dllexport) DllRegisterServer() {
+HRESULT STDAPICALLTYPE DllRegisterServer() {
     wchar_t path[MAX_PATH]{};
     if (!GetModuleFileNameW(g_module, path, ARRAYSIZE(path))) return HRESULT_FROM_WIN32(GetLastError());
     wchar_t clsid[64]{};
@@ -86,7 +83,7 @@ extern "C" HRESULT __declspec(dllexport) DllRegisterServer() {
     return WriteClsidKey(HKEY_LOCAL_MACHINE, key, L"WristKey Credential Provider");
 }
 
-extern "C" HRESULT __declspec(dllexport) DllUnregisterServer() {
+HRESULT STDAPICALLTYPE DllUnregisterServer() {
     wchar_t clsid[64]{};
     StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
     wchar_t key[MAX_PATH]{};

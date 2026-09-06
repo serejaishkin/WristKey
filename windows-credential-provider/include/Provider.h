@@ -1,15 +1,20 @@
 #pragma once
 #include <windows.h>
+#include <initguid.h>
 #include <credentialprovider.h>
 #include <string>
 #include <vector>
+
+// {7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}
+DEFINE_GUID(CLSID_WristKeyCredentialProvider,
+    0x7e1b7b8a, 0x4c8b, 0x4c2f, 0x9d, 0x8a, 0x8d, 0x3a, 0x7f, 0x2e, 0x51, 0xa1);
 
 class WristKeyProvider;
 
 class WristKeyProviderCredential final : public ICredentialProviderCredential {
 public:
     WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username);
-    ~WristKeyProviderCredential() override = default;
+    ~WristKeyProviderCredential() = default;
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
     ULONG STDMETHODCALLTYPE AddRef() override;
@@ -22,10 +27,10 @@ public:
                                              CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE* pcpfis) override;
     HRESULT STDMETHODCALLTYPE GetStringValue(DWORD dwFieldID, PWSTR* ppwsz) override;
     HRESULT STDMETHODCALLTYPE GetBitmapValue(DWORD dwFieldID, HBITMAP* phbmp) override;
-    HRESULT STDMETHODCALLTYPE GetCheckboxValue(DWORD dwFieldID, BOOL* pbChecked) override;
-    HRESULT STDMETHODCALLTYPE GetComboBoxValueCount(DWORD dwFieldID, DWORD* pdwCount) override;
-    HRESULT STDMETHODCALLTYPE GetComboBoxValueAt(DWORD dwFieldID, DWORD dwItem, PWSTR* ppwszItem) override;
+    HRESULT STDMETHODCALLTYPE GetCheckboxValue(DWORD dwFieldID, BOOL* pbChecked, LPWSTR* ppszLabel) override;
     HRESULT STDMETHODCALLTYPE GetSubmitButtonValue(DWORD dwFieldID, DWORD* pdwAdjacentTo) override;
+    HRESULT STDMETHODCALLTYPE GetComboBoxValueCount(DWORD dwFieldID, DWORD* pcItems, DWORD* pdwSelectedItem) override;
+    HRESULT STDMETHODCALLTYPE GetComboBoxValueAt(DWORD dwFieldID, DWORD dwItem, PWSTR* ppwszItem) override;
     HRESULT STDMETHODCALLTYPE SetStringValue(DWORD dwFieldID, PCWSTR pwz) override;
     HRESULT STDMETHODCALLTYPE SetCheckboxValue(DWORD dwFieldID, BOOL bChecked) override;
     HRESULT STDMETHODCALLTYPE SetComboBoxSelectedValue(DWORD dwFieldID, DWORD dwSelectedItem) override;
@@ -50,7 +55,7 @@ private:
 class WristKeyProvider final : public ICredentialProvider {
 public:
     WristKeyProvider();
-    ~WristKeyProvider() override;
+    ~WristKeyProvider();
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
     ULONG STDMETHODCALLTYPE AddRef() override;
@@ -60,7 +65,7 @@ public:
     HRESULT STDMETHODCALLTYPE Advise(ICredentialProviderEvents* pcpe, UINT_PTR upAdviseContext) override;
     HRESULT STDMETHODCALLTYPE UnAdvise() override;
     HRESULT STDMETHODCALLTYPE GetFieldDescriptorCount(DWORD* pdwCount) override;
-    HRESULT STDMETHODCALLTYPE GetFieldDescriptorAt(DWORD dwIndex, ICredentialProviderFieldDescriptor** ppcpfd) override;
+    HRESULT STDMETHODCALLTYPE GetFieldDescriptorAt(DWORD dwIndex, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR** ppcpfd) override;
     HRESULT STDMETHODCALLTYPE GetCredentialCount(DWORD* pdwCount, DWORD* pdwDefault, BOOL* pbAutoLogonWithDefault) override;
     HRESULT STDMETHODCALLTYPE GetCredentialAt(DWORD dwIndex, ICredentialProviderCredential** ppcpc) override;
 

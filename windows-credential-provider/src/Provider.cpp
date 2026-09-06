@@ -8,8 +8,8 @@
 
 #pragma comment(lib, "credui.lib")
 #pragma comment(lib, "secur32.lib")
-
-extern const GUID CLSID_WristKeyCredentialProvider;
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "netapi32.lib")
 
 static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     if (!dst) return E_POINTER;
@@ -102,17 +102,28 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorCount(DWORD* pdwCo
     *pdwCount = WristKeyFields::Count;
     return S_OK;
 }
-HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorAt(DWORD index, ICredentialProviderFieldDescriptor** out) {
+HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorAt(DWORD index, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR** out) {
     if (!out) return E_POINTER;
     *out = nullptr;
     if (index >= WristKeyFields::Count) return E_INVALIDARG;
+
     CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR d{};
     d.dwFieldID = index;
     d.cpft = (index == WristKeyFields::Tile) ? CPFT_LARGE_TEXT :
              (index == WristKeyFields::Status) ? CPFT_SMALL_TEXT : CPFT_SUBMIT_BUTTON;
-    d.pszLabel = const_cast<PWSTR>(index == WristKeyFields::Tile ? L"WristKey" :
-                                    index == WristKeyFields::Status ? L"Select account and unlock with watch" : L"Unlock");
-    return SHCreateCredentialProviderFieldDescriptor(&d, out);
+    d.pszLabel = nullptr;
+
+    PCWSTR label = (index == WristKeyFields::Tile) ? L"WristKey" :
+                   (index == WristKeyFields::Status) ? L"Select account and confirm on watch" : L"Unlock";
+    HRESULT hr = CopyString(label, &d.pszLabel);
+    if (FAILED(hr)) return hr;
+
+    CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR* copy =
+        static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
+    if (!copy) { CoTaskMemFree(d.pszLabel); return E_OUTOFMEMORY; }
+    *copy = d;
+    *out = copy;
+    return S_OK;
 }
 HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialCount(DWORD* count, DWORD* def, BOOL* autoLogon) {
     if (!count || !def || !autoLogon) return E_POINTER;
@@ -175,53 +186,46 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetStringValue(DWORD id, P
     return E_INVALIDARG;
 }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetBitmapValue(DWORD, HBITMAP* b) { if (b) *b = nullptr; return E_NOTIMPL; }
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetCheckboxValue(DWORD, BOOL*) { return E_NOTIMPL; }
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetComboBoxValueCount(DWORD, DWORD*) { return E_NOTIMPL; }
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetComboBoxValueAt(DWORD, DWORD, PWSTR*) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetCheckboxValue(DWORD, BOOL* pbChecked, LPWSTR* ppszLabel) {
+    if (pbChecked) *pbChecked = FALSE;
+    if (ppszLabel) *ppszLabel = nullptr;
+    return E_NOTIMPL;
+}
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSubmitButtonValue(DWORD id, DWORD* adjacent) {
     if (!adjacent || id != WristKeyFields::Submit) return E_INVALIDARG;
     *adjacent = WristKeyFields::Status;
     return S_OK;
 }
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetComboBoxValueCount(DWORD, DWORD* pcItems, DWORD* pdwSelectedItem) {
+    if (pcItems) *pcItems = 0;
+    if (pdwSelectedItem) *pdwSelectedItem = 0;
+    return E_NOTIMPL;
+}
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetComboBoxValueAt(DWORD, DWORD, PWSTR* ppwszItem) {
+    if (ppwszItem) *ppwszItem = nullptr;
+    return E_NOTIMPL;
+}
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetStringValue(DWORD, PCWSTR) { return E_NOTIMPL; }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetCheckboxValue(DWORD, BOOL) { return E_NOTIMPL; }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetComboBoxSelectedValue(DWORD, DWORD) { return E_NOTIMPL; }
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::CommandLinkClicked(DWORD) { return E_NOTIMPL; }
+
 /**
  * Connects to the daemon's named pipe (see daemon/src/lib.rs, mod pipe_server)
  * and asks it to perform a live BLE challenge-response unlock right now.
- * This blocks for however long that takes — the daemon's own BLE timeout is
- * 10s, so we allow up to 15s here to leave headroom for the round trip.
- *
- * Protocol: write `{"action":"unlock"}\n`, read one line back:
- *   {"status":"success","password":"..."}   -> outPassword set, returns true
- *   {"status":"error","message":"..."}      -> returns false
- *
- * Deliberately does NOT use a JSON library (keeps this DLL's dependency
- * surface minimal) — the response shape is fixed and simple enough that a
- * plain substring search is safe and unambiguous here.
- *
- * UNTESTED — written without a Windows toolchain available to compile or
- * run it. Review the named-pipe error handling and timeout behavior on a
- * real machine before relying on this.
  */
 static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
-    HANDLE pipe = INVALID_HANDLE_VALUE;
     const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
 
-    // The daemon may briefly be busy with another client; wait a couple of
-    // seconds for a free pipe instance before giving up.
     if (!WaitNamedPipeW(pipeName, 2000)) {
         return false;
     }
-    pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                        OPEN_EXISTING, 0, nullptr);
+    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
         return false;
     }
 
-    // Message-mode isn't set up server-side (it's a byte-stream pipe), so
-    // read in a loop until we see the trailing '\n' the daemon always sends.
     DWORD mode = PIPE_READMODE_BYTE;
     SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
 
@@ -237,8 +241,6 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
     const DWORD deadlineMs = GetTickCount() + 15000;
     for (;;) {
         DWORD avail = 0;
-        // PeekNamedPipe lets us poll without blocking forever on ReadFile,
-        // so we can honor the 15s overall deadline even if the daemon hangs.
         if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr) && avail == 0) {
             if (GetTickCount() > deadlineMs) { CloseHandle(pipe); return false; }
             Sleep(100);
@@ -266,7 +268,6 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
     if (end == std::string::npos) return false;
     std::string password = response.substr(start, end - start);
 
-    // Convert UTF-8 -> UTF-16 for CredPackAuthenticationBufferW.
     int wlen = MultiByteToWideChar(CP_UTF8, 0, password.c_str(), static_cast<int>(password.size()), nullptr, 0);
     if (wlen <= 0) return false;
     outPassword.assign(wlen, L'\0');
@@ -275,15 +276,7 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
 }
 
 /**
- * Packs `username`/`password` into a real Windows credential serialization
- * for CPUS_UNLOCK_WORKSTATION, using CredPackAuthenticationBufferW — the
- * same mechanism Microsoft's own sample Credential Providers use. Looks up
- * the "Negotiate" LSA authentication package, which is what the local
- * unlock/logon path expects.
- *
- * UNTESTED — same caveat as above. This is the standard, well-documented
- * pattern (see Microsoft's SampleCredentialProvider), reproduced from memory
- * without a compiler to check it against.
+ * Packs username/password into a real Windows credential serialization.
  */
 static HRESULT PackCredential(const std::wstring& username, const std::wstring& password,
                                CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* out) {
@@ -292,9 +285,9 @@ static HRESULT PackCredential(const std::wstring& username, const std::wstring& 
     if (status != 0) return E_FAIL;
 
     LSA_STRING name;
-    const char* pkg = NEGOSSP_NAME_A; // "Negotiate"
-    name.Buffer = const_cast<PCHAR>(pkg);
-    name.Length = static_cast<USHORT>(strlen(pkg));
+    static const char kNegotiate[] = "Negotiate";
+    name.Buffer = const_cast<PCHAR>(kNegotiate);
+    name.Length = static_cast<USHORT>(strlen(kNegotiate));
     name.MaximumLength = name.Length + 1;
 
     ULONG authPackage = 0;
@@ -303,7 +296,6 @@ static HRESULT PackCredential(const std::wstring& username, const std::wstring& 
     if (status != 0) return E_FAIL;
 
     DWORD cbSerialization = 0;
-    // First call deliberately fails to report the required buffer size.
     CredPackAuthenticationBufferW(CRED_PACK_PROTECTED_CREDENTIALS,
         const_cast<LPWSTR>(username.c_str()), const_cast<LPWSTR>(password.c_str()),
         nullptr, &cbSerialization);
@@ -341,19 +333,12 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
             *icon = CPSI_SUCCESS;
             return S_OK;
         }
-        // Password was retrieved but packing failed (LSA lookup or
-        // CredPackAuthenticationBufferW error) — fall through to the
-        // not-finished path below rather than risk a half-built
-        // serialization reaching Winlogon.
     }
 
-    // Watch didn't confirm in time, daemon isn't running, or packing
-    // failed — tell Windows we have nothing to submit yet. The person
-    // just sees the tile stay put; they can try again or use another
-    // sign-in option. Never silently claim success here.
     *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
     return S_OK;
 }
+
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::ReportResult(NTSTATUS, NTSTATUS, PWSTR* status, CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
     if (status) *status = nullptr;
     if (icon) *icon = CPSI_NONE;
