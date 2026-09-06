@@ -1,4 +1,5 @@
 #pragma once
+
 #include <windows.h>
 #include <initguid.h>
 #include <credentialprovider.h>
@@ -14,7 +15,7 @@ class WristKeyProvider;
 class WristKeyProviderCredential final : public ICredentialProviderCredential2 {
 public:
     WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username, std::wstring sid);
-    ~WristKeyProviderCredential() = default;
+    ~WristKeyProviderCredential();
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
     ULONG STDMETHODCALLTYPE AddRef() override;
@@ -42,7 +43,6 @@ public:
     HRESULT STDMETHODCALLTYPE ReportResult(NTSTATUS ntsStatus, NTSTATUS ntsSubstatus,
                                            PWSTR* ppwszOptionalStatusText,
                                            CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon) override;
-
     HRESULT STDMETHODCALLTYPE GetUserSid(PWSTR* ppszSid) override;
 
     const std::wstring& Username() const { return _username; }
@@ -55,7 +55,7 @@ private:
     std::wstring _sid;
 };
 
-class WristKeyProvider final : public ICredentialProvider {
+class WristKeyProvider final : public ICredentialProvider, public ICredentialProviderSetUserArray {
 public:
     WristKeyProvider();
     ~WristKeyProvider();
@@ -71,15 +71,19 @@ public:
     HRESULT STDMETHODCALLTYPE GetFieldDescriptorAt(DWORD dwIndex, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR** ppcpfd) override;
     HRESULT STDMETHODCALLTYPE GetCredentialCount(DWORD* pdwCount, DWORD* pdwDefault, BOOL* pbAutoLogonWithDefault) override;
     HRESULT STDMETHODCALLTYPE GetCredentialAt(DWORD dwIndex, ICredentialProviderCredential** ppcpc) override;
+    HRESULT STDMETHODCALLTYPE SetUserArray(ICredentialProviderUserArray* users) override;
 
-    void SetEvents(ICredentialProviderCredentialEvents*, UINT_PTR);
-    bool WatchAvailable() const;
     void RefreshStatus();
 
 private:
+    void ReleaseCredentials();
+    HRESULT CreateCredentials();
+
     LONG _ref = 1;
     CREDENTIAL_PROVIDER_USAGE_SCENARIO _scenario = CPUS_INVALID;
+    bool _recreateCredentials = true;
     std::vector<WristKeyProviderCredential*> _credentials;
+    ICredentialProviderUserArray* _userArray = nullptr;
     ICredentialProviderEvents* _events = nullptr;
     UINT_PTR _adviseContext = 0;
 };
