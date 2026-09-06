@@ -11,9 +11,9 @@ DEFINE_GUID(CLSID_WristKeyCredentialProvider,
 
 class WristKeyProvider;
 
-class WristKeyProviderCredential final : public ICredentialProviderCredential {
+class WristKeyProviderCredential final : public ICredentialProviderCredential2 {
 public:
-    WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username);
+    WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username, std::wstring sid);
     ~WristKeyProviderCredential() = default;
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
@@ -43,6 +43,8 @@ public:
                                            PWSTR* ppwszOptionalStatusText,
                                            CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon) override;
 
+    HRESULT STDMETHODCALLTYPE GetUserSid(PWSTR* ppszSid) override;
+
     const std::wstring& Username() const { return _username; }
 
 private:
@@ -50,6 +52,7 @@ private:
     WristKeyProvider* _provider = nullptr;
     ICredentialProviderCredentialEvents* _events = nullptr;
     std::wstring _username;
+    std::wstring _sid;
 };
 
 class WristKeyProvider final : public ICredentialProvider {
@@ -69,7 +72,7 @@ public:
     HRESULT STDMETHODCALLTYPE GetCredentialCount(DWORD* pdwCount, DWORD* pdwDefault, BOOL* pbAutoLogonWithDefault) override;
     HRESULT STDMETHODCALLTYPE GetCredentialAt(DWORD dwIndex, ICredentialProviderCredential** ppcpc) override;
 
-    void SetEvents(ICredentialProviderCredentialEvents* events, UINT_PTR context);
+    void SetEvents(ICredentialProviderCredentialEvents*, UINT_PTR);
     bool WatchAvailable() const;
     void RefreshStatus();
 
@@ -83,9 +86,10 @@ private:
 
 namespace WristKeyFields {
     enum : DWORD {
-        Tile = 0,
-        Status = 1,
-        Submit = 2,
-        Count = 3
+        TileImage = 0,
+        Tile = 1,
+        Status = 2,
+        Submit = 3,
+        Count = 4
     };
 }
