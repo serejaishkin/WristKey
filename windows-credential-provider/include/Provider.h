@@ -6,6 +6,17 @@
 #include <string>
 #include <vector>
 
+// Keep this provider self-contained: including ShlGuid.h pulls in the legacy
+// shell automation declarations and can conflict with the SDK headers used by
+// Credential Provider builds. These two GUIDs are the only ShlGuid values we
+// need here.
+#ifndef GUID_NULL
+#define GUID_NULL GUID{0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0}}
+#endif
+#ifndef CPFG_CREDENTIAL_PROVIDER_LOGO
+#define CPFG_CREDENTIAL_PROVIDER_LOGO GUID{0x2d837775, 0xf6cd, 0x464e, {0xa7, 0x45, 0x48, 0x2f, 0xd0, 0xb4, 0x74, 0x93}}
+#endif
+
 // {7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}
 EXTERN_C const GUID CLSID_WristKeyCredentialProvider;
 
