@@ -4,11 +4,11 @@
     Registers WristKey Credential Provider for Windows logon/unlock screen.
 .DESCRIPTION
     Creates registry entries for COM and Credential Provider.
-    Run this script after building WristKeyCredentialProvider.dll.
+    Run this script after building WristKeyCredentialProviderNative.dll.
 #>
 
 param(
-    [string]$DllPath = "C:\Program Files\WristKey\WristKeyCredentialProvider.dll"
+    [string]$DllPath = "C:\Program Files\WristKey\WristKeyCredentialProviderNative.dll"
 )
 
 $clsid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}"
@@ -30,21 +30,15 @@ if (-not (Test-Path $DllPath)) {
     exit 1
 }
 
-# This is a managed .NET Framework assembly. Credential providers are loaded by
-# COM, so direct InprocServer32=<path-to-dll> registration is invalid; RegAsm
-# must create the mscoree/Assembly/Class registration entries.
-$regAsm = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
-if (-not (Test-Path $regAsm)) {
-    Write-Error "64-bit .NET Framework RegAsm was not found at $regAsm"
-    exit 1
-}
-& $regAsm $DllPath /codebase
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "RegAsm failed with exit code $LASTEXITCODE"
-    exit $LASTEXITCODE
-}
+# Native Credential Providers must be loaded directly by LogonUI. RegAsm and
+# mscoree.dll are intentionally not used here.
+$clsidPath = "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid"
+$inprocPath = "$clsidPath\InprocServer32"
+New-Item -Path $inprocPath -Force | Out-Null
+Set-ItemProperty -Path $clsidPath -Name "(Default)" -Value $name
+Set-ItemProperty -Path $inprocPath -Name "(Default)" -Value $DllPath
+Set-ItemProperty -Path $inprocPath -Name "ThreadingModel" -Value "Apartment"
 
-# Register as Credential Provider
 $cpPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$clsid"
 New-Item -Path $cpPath -Force | Out-Null
 Set-ItemProperty -Path $cpPath -Name "(Default)" -Value $name
