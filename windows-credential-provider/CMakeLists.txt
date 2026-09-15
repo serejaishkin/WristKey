@@ -74,3 +74,16 @@ target_compile_definitions(RegistrationSmokeTest PRIVATE
     _WIN32_WINNT=0x0A00
 )
 target_link_libraries(RegistrationSmokeTest PRIVATE ole32 oleaut32 advapi32)
+
+# Isolated V2 user-array test. It supplies a fake framework user/array to the
+# provider and verifies credential creation, ICredentialProviderCredential2,
+# username, and SID propagation without registering the provider in LogonUI.
+add_executable(UserArraySmokeTest tests/UserArraySmokeTest.cpp)
+target_compile_features(UserArraySmokeTest PRIVATE cxx_std_17)
+target_compile_definitions(UserArraySmokeTest PRIVATE
+    UNICODE _UNICODE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    _WIN32_WINNT=0x0A00
+)
+target_link_libraries(UserArraySmokeTest PRIVATE ole32 oleaut32 user32 propsys)
