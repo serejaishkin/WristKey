@@ -1,16 +1,15 @@
 #include "Provider.h"
+#include "helpers.h"
 
 #include <credentialprovider.h>
 #include <propkey.h>
-#include <sddl.h>
-#include <wincred.h>
-#include <ntsecapi.h>
 #include <string>
 #include <vector>
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "credui.lib")
 #pragma comment(lib, "secur32.lib")
+#pragma comment(lib, "shlwapi.lib")
 
 static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     if (!dst) return E_POINTER;
@@ -72,11 +71,13 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUsageScenario(CREDENTIAL_PROVIDER
     switch (cpus) {
     case CPUS_LOGON:
     case CPUS_UNLOCK_WORKSTATION:
-    case CPUS_CREDUI:
+        // Match Microsoft's V2 sample: these are the two LogonUI scenarios
+        // needed for normal sign-in and workstation unlock.
         _scenario = cpus;
         _recreateCredentials = true;
         return S_OK;
     case CPUS_CHANGE_PASSWORD:
+    case CPUS_CREDUI:
         return E_NOTIMPL;
     default:
         return E_INVALIDARG;
@@ -419,7 +420,7 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetUserSid(PWSTR* sid) {
 }
 
 // -----------------------------------------------------------------------------
-// BLE unlock / Windows credential serialization
+// BLE unlock / Microsoft-style Windows credential serialization
 // -----------------------------------------------------------------------------
 
 static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
@@ -482,60 +483,81 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
     if (wideLength <= 0) return false;
 
     outPassword.assign(wideLength, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, password.c_str(),
-                        static_cast<int>(password.size()), &outPassword[0], wideLength);
+    if (MultiByteToWideChar(CP_UTF8, 0, password.c_str(),
+                            static_cast<int>(password.size()),
+                            &outPassword[0], wideLength) != wideLength) {
+        outPassword.clear();
+        return false;
+    }
     return true;
 }
 
-static HRESULT PackCredential(const std::wstring& username, const std::wstring& password,
-                              CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* out) {
+static HRESULT PackUnlockCredential(
+    const std::wstring& qualifiedUsername,
+    const std::wstring& password,
+    CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* out) {
     if (!out) return E_POINTER;
     ZeroMemory(out, sizeof(*out));
 
-    HANDLE lsaHandle = nullptr;
-    NTSTATUS status = LsaConnectUntrusted(&lsaHandle);
-    if (status != 0) return E_FAIL;
+    if (qualifiedUsername.empty()) return E_INVALIDARG;
 
-    LSA_STRING name{};
-    static const char negotiate[] = "Negotiate";
-    name.Buffer = const_cast<PCHAR>(negotiate);
-    name.Length = static_cast<USHORT>(strlen(negotiate));
-    name.MaximumLength = name.Length + 1;
+    PWSTR domain = nullptr;
+    PWSTR username = nullptr;
+    PWSTR protectedPassword = nullptr;
+    HRESULT hr = SplitDomainAndUsername(qualifiedUsername.c_str(), &domain, &username);
 
-    ULONG authPackage = 0;
-    status = LsaLookupAuthenticationPackage(lsaHandle, &name, &authPackage);
-    LsaDeregisterLogonProcess(lsaHandle);
-    if (status != 0) return E_FAIL;
-
-    DWORD size = 0;
-    CredPackAuthenticationBufferW(CRED_PACK_PROTECTED_CREDENTIALS,
-                                  const_cast<LPWSTR>(username.c_str()),
-                                  const_cast<LPWSTR>(password.c_str()),
-                                  nullptr, &size);
-    if (size == 0) return E_FAIL;
-
-    auto* buffer = static_cast<BYTE*>(CoTaskMemAlloc(size));
-    if (!buffer) return E_OUTOFMEMORY;
-
-    if (!CredPackAuthenticationBufferW(CRED_PACK_PROTECTED_CREDENTIALS,
-                                       const_cast<LPWSTR>(username.c_str()),
-                                       const_cast<LPWSTR>(password.c_str()),
-                                       buffer, &size)) {
-        CoTaskMemFree(buffer);
-        return E_FAIL;
+    if (SUCCEEDED(hr)) {
+        hr = ProtectIfNecessaryAndCopyPassword(password.c_str(), scenario, &protectedPassword);
     }
 
-    out->ulAuthenticationPackage = authPackage;
-    out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
-    out->cbSerialization = size;
-    out->rgbSerialization = buffer;
-    return S_OK;
+    if (SUCCEEDED(hr)) {
+        KERB_INTERACTIVE_UNLOCK_LOGON kiul{};
+        hr = KerbInteractiveUnlockLogonInit(
+            domain,
+            username,
+            protectedPassword,
+            scenario,
+            &kiul);
+
+        if (SUCCEEDED(hr)) {
+            hr = KerbInteractiveUnlockLogonPack(
+                kiul,
+                &out->rgbSerialization,
+                &out->cbSerialization);
+        }
+
+        if (SUCCEEDED(hr)) {
+            ULONG authPackage = 0;
+            hr = RetrieveNegotiateAuthPackage(&authPackage);
+            if (SUCCEEDED(hr)) {
+                out->ulAuthenticationPackage = authPackage;
+                out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
+            }
+        }
+    }
+
+    CoTaskMemFree(domain);
+    CoTaskMemFree(username);
+
+    if (protectedPassword) {
+        SecureZeroMemory(protectedPassword, wcslen(protectedPassword) * sizeof(wchar_t));
+        CoTaskMemFree(protectedPassword);
+    }
+
+    if (FAILED(hr)) {
+        CoTaskMemFree(out->rgbSerialization);
+        ZeroMemory(out, sizeof(*out));
+    }
+
+    return hr;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
     CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* response,
     CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* serialization,
-    PWSTR* status, CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
+    PWSTR* status,
+    CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
     if (!response || !serialization || !status || !icon) return E_POINTER;
 
     ZeroMemory(serialization, sizeof(*serialization));
@@ -544,18 +566,40 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
     *icon = CPSI_NONE;
 
     std::wstring password;
-    if (RequestUnlockFromDaemon(password) &&
-        SUCCEEDED(PackCredential(_username, password, serialization))) {
+    if (!RequestUnlockFromDaemon(password)) {
+        CopyString(L"WristKey: confirm the unlock on your watch.", status);
+        *icon = CPSI_WARNING;
+        return S_OK;
+    }
+
+    HRESULT hr = PackUnlockCredential(_username, password, _scenario, serialization);
+
+    if (!password.empty()) {
+        SecureZeroMemory(password.data(), password.size() * sizeof(wchar_t));
+    }
+
+    if (SUCCEEDED(hr)) {
         *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
         *icon = CPSI_SUCCESS;
+    } else {
+        CopyString(L"WristKey: Windows could not serialize the credential.", status);
+        *icon = CPSI_ERROR;
     }
 
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::ReportResult(
-    NTSTATUS, NTSTATUS, PWSTR* status, CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
+    NTSTATUS ntsStatus,
+    NTSTATUS ntsSubstatus,
+    PWSTR* status,
+    CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
     if (status) *status = nullptr;
     if (icon) *icon = CPSI_NONE;
+
+    if (ntsStatus != 0) {
+        if (status) CopyString(L"WristKey: Windows rejected the credential.", status);
+        if (icon) *icon = CPSI_ERROR;
+    }
     return S_OK;
 }
