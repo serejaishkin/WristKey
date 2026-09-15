@@ -65,3 +65,15 @@ target_compile_definitions(ProviderSmokeTest PRIVATE
     _WIN32_WINNT=0x0A00
 )
 target_link_libraries(ProviderSmokeTest PRIVATE ole32 oleaut32 user32)
+
+# Safe registration smoke test: calls DllRegisterServer/DllUnregisterServer
+# directly and reports the exact HRESULT. It is not installed into LogonUI.
+add_executable(RegistrationSmokeTest tests/RegistrationSmokeTest.cpp)
+target_compile_features(RegistrationSmokeTest PRIVATE cxx_std_17)
+target_compile_definitions(RegistrationSmokeTest PRIVATE
+    UNICODE _UNICODE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    _WIN32_WINNT=0x0A00
+)
+target_link_libraries(RegistrationSmokeTest PRIVATE ole32 oleaut32 advapi32)
