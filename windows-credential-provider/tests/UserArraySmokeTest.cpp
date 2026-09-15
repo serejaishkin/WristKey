@@ -4,6 +4,7 @@
 #include <propvarutil.h>
 #include <iostream>
 #include <string>
+#include <new>
 
 using DllGetClassObjectFn = HRESULT (STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
 
