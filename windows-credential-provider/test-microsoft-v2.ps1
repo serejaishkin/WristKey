@@ -11,9 +11,9 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 }
 
 $sampleRoot = Join-Path $PSScriptRoot '.microsoft-v2-control'
+$sampleDir = Join-Path $sampleRoot 'CredentialProvider\cpp'
 $zipPath = Join-Path $env:TEMP 'Windows-classic-samples-main.zip'
 $extractRoot = Join-Path $env:TEMP 'Windows-classic-samples-main'
-$sampleDir = Join-Path $sampleRoot 'Samples\CredentialProvider\cpp'
 $system32 = Join-Path $env:WINDIR 'System32'
 $dllTarget = Join-Path $system32 'SampleV2CredentialProvider.dll'
 $clsid = '{5FD3D285-0DD9-4362-8855-E0ABAA CD4AF6}'.Replace(' ','')
@@ -49,23 +49,26 @@ function Prepare-Sample {
     Expand-Archive -LiteralPath $zipPath -DestinationPath $env:TEMP -Force
 
     $sourceRoot = Join-Path $env:TEMP 'Windows-classic-samples-main'
-    if (-not (Test-Path (Join-Path $sourceRoot 'Samples\CredentialProvider\cpp\SampleV2CredentialProvider.vcxproj'))) {
+    $sourceDir = Join-Path $sourceRoot 'Samples\CredentialProvider'
+    if (-not (Test-Path (Join-Path $sourceDir 'cpp\SampleV2CredentialProvider.vcxproj'))) {
         throw 'Microsoft Credential Provider sample was not found in the downloaded archive.'
     }
 
-    Copy-Item -LiteralPath (Join-Path $sourceRoot 'Samples\CredentialProvider') -Destination $sampleRoot -Recurse -Force
+    Copy-Item -LiteralPath $sourceDir -Destination $sampleRoot -Recurse -Force
 }
 
 if ($Action -eq 'Uninstall') {
+    Prepare-Sample
+    $unregisterReg = Join-Path $sampleDir 'Unregister.reg'
+    if (Test-Path $unregisterReg) {
+        & reg.exe import $unregisterReg
+        if ($LASTEXITCODE -ne 0) { throw "Microsoft sample unregister failed with exit code $LASTEXITCODE" }
+    }
+
     if (Test-Path $dllTarget) {
-        & (Join-Path $system32 'regsvr32.exe') /u /s $dllTarget
         Remove-Item $dllTarget -Force -ErrorAction SilentlyContinue
     }
 
-    $cpKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$clsid"
-    $clsidKey = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
-    Remove-Item $cpKey -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item $clsidKey -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host '[+] Microsoft V2 Credential Provider control removed.'
     exit 0
 }
@@ -73,7 +76,7 @@ if ($Action -eq 'Uninstall') {
 Prepare-Sample
 
 $msbuild = Get-MSBuild
-$project = Join-Path $sampleDir 'SampleV2CredentialProvider.vcxproj'
+$project = Join-Path $sampleDir 'cpp\SampleV2CredentialProvider.vcxproj'
 
 Write-Host '[*] Building Microsoft V2 Credential Provider control (Release|x64)...'
 & $msbuild $project /m /p:Configuration=Release /p:Platform=x64
@@ -81,7 +84,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Microsoft sample build failed with exit code $LASTEXITCODE"
 }
 
-$dll = Get-ChildItem -Path $sampleDir -Filter 'SampleV2CredentialProvider.dll' -Recurse -File |
+$dll = Get-ChildItem -Path (Split-Path $project) -Filter 'SampleV2CredentialProvider.dll' -Recurse -File |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if (-not $dll) {
