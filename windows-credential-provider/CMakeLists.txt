@@ -53,3 +53,15 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
 else()
     message(FATAL_ERROR "WristKey Credential Provider must be built x64")
 endif()
+
+# Safe local COM smoke test: loads the DLL directly and exercises the COM
+# factory/provider interfaces without registering the provider in LogonUI.
+add_executable(ProviderSmokeTest tests/ProviderSmokeTest.cpp)
+target_compile_features(ProviderSmokeTest PRIVATE cxx_std_17)
+target_compile_definitions(ProviderSmokeTest PRIVATE
+    UNICODE _UNICODE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    _WIN32_WINNT=0x0A00
+)
+target_link_libraries(ProviderSmokeTest PRIVATE ole32 oleaut32 user32)
