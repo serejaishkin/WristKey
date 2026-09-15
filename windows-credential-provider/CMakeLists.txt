@@ -19,6 +19,7 @@ target_compile_definitions(WristKeyCredentialProvider PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     _WIN32_WINNT=0x0A00
+    SECURITY_WIN32
 )
 
 # Credential providers are loaded by LogonUI, before a normal user session
@@ -44,6 +45,7 @@ target_link_libraries(WristKeyCredentialProvider PRIVATE
 set_target_properties(WristKeyCredentialProvider PROPERTIES
     OUTPUT_NAME "WristKeyCredentialProvider"
     WINDOWS_EXPORT_ALL_SYMBOLS OFF
+    LINK_FLAGS "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/WristKeyCredentialProvider.def"
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
