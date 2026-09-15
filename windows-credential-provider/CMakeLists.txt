@@ -22,9 +22,6 @@ target_compile_definitions(WristKeyCredentialProvider PRIVATE
     SECURITY_WIN32
 )
 
-# Credential providers are loaded by LogonUI, before a normal user session
-# exists. Keep the DLL self-contained and avoid a dependency on the VC++ CRT
-# redistributable that may not be present at the logon screen.
 if(MSVC)
     set_property(TARGET WristKeyCredentialProvider PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
