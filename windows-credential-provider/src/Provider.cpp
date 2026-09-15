@@ -202,7 +202,7 @@ HRESULT WristKeyProvider::CreateCredentials() {
 
         if (SUCCEEDED(userHr) && username && sid) {
             auto* credential = new (std::nothrow) WristKeyProviderCredential(
-                this, username, sid);
+                this, _scenario, username, sid);
             if (credential) {
                 _credentials.push_back(credential);
             }
@@ -251,8 +251,14 @@ void WristKeyProvider::RefreshStatus() {
 // -----------------------------------------------------------------------------
 
 WristKeyProviderCredential::WristKeyProviderCredential(
-    WristKeyProvider* provider, std::wstring username, std::wstring sid)
-    : _provider(provider), _username(std::move(username)), _sid(std::move(sid)) {
+    WristKeyProvider* provider,
+    CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+    std::wstring username,
+    std::wstring sid)
+    : _provider(provider),
+      _scenario(scenario),
+      _username(std::move(username)),
+      _sid(std::move(sid)) {
     if (_provider) _provider->AddRef();
 }
 
