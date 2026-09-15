@@ -37,7 +37,10 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID) {
     return TRUE;
 }
 
-extern "C" __declspec(dllexport)
+// Exports are declared in WristKeyCredentialProvider.def, matching Microsoft's
+// Credential Provider sample. This avoids conflicting dllimport/dllexport
+// declarations from the Windows COM headers for the standard COM entry points.
+extern "C"
 HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID clsid, REFIID iid, void** ppv) {
     if (clsid != CLSID_WristKeyCredentialProvider) return CLASS_E_CLASSNOTAVAILABLE;
     auto* f = new (std::nothrow) ClassFactory();
@@ -47,7 +50,7 @@ HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID clsid, REFIID iid, void** ppv)
     return hr;
 }
 
-extern "C" __declspec(dllexport)
+extern "C"
 HRESULT STDAPICALLTYPE DllCanUnloadNow() {
     return (g_objects == 0 && g_locks == 0) ? S_OK : S_FALSE;
 }
@@ -61,7 +64,7 @@ static HRESULT WriteClsidKey(HKEY root, const wchar_t* subkey, const wchar_t* va
     return HRESULT_FROM_WIN32(rc);
 }
 
-extern "C" __declspec(dllexport)
+extern "C"
 HRESULT STDAPICALLTYPE DllRegisterServer() {
     wchar_t path[MAX_PATH]{};
     if (!GetModuleFileNameW(g_module, path, ARRAYSIZE(path))) return HRESULT_FROM_WIN32(GetLastError());
@@ -86,7 +89,7 @@ HRESULT STDAPICALLTYPE DllRegisterServer() {
     return WriteClsidKey(HKEY_LOCAL_MACHINE, key, L"WristKey Credential Provider");
 }
 
-extern "C" __declspec(dllexport)
+extern "C"
 HRESULT STDAPICALLTYPE DllUnregisterServer() {
     wchar_t clsid[64]{};
     StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
