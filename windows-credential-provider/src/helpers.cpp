@@ -3,6 +3,8 @@
 #include <strsafe.h>
 #include <new>
 #include <string>
+#include <stdint.h>
+#include <limits.h>
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "secur32.lib")
