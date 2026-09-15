@@ -10,6 +10,7 @@ add_library(WristKeyCredentialProvider SHARED
     src/Provider.cpp
     src/Credential.cpp
     src/exports.cpp
+    src/helpers.cpp
 )
 
 target_compile_features(WristKeyCredentialProvider PRIVATE cxx_std_17)
@@ -29,7 +30,16 @@ if(MSVC)
 endif()
 
 target_include_directories(WristKeyCredentialProvider PRIVATE include)
-target_link_libraries(WristKeyCredentialProvider PRIVATE ole32 oleaut32 advapi32 user32 netapi32)
+target_link_libraries(WristKeyCredentialProvider PRIVATE
+    ole32
+    oleaut32
+    advapi32
+    user32
+    netapi32
+    credui
+    secur32
+    shlwapi
+)
 
 set_target_properties(WristKeyCredentialProvider PROPERTIES
     OUTPUT_NAME "WristKeyCredentialProvider"
