@@ -87,3 +87,25 @@ target_compile_definitions(UserArraySmokeTest PRIVATE
     _WIN32_WINNT=0x0A00
 )
 target_link_libraries(UserArraySmokeTest PRIVATE ole32 oleaut32 user32 propsys)
+
+# Isolated serialization test. It runs the real GetSerialization() path,
+# but replaces the WristKey daemon with a local named-pipe test server. It
+# never registers the provider or invokes LogonUI, and therefore cannot alter
+# the Windows sign-in flow.
+add_executable(SerializationSmokeTest tests/SerializationSmokeTest.cpp)
+target_compile_features(SerializationSmokeTest PRIVATE cxx_std_17)
+target_compile_definitions(SerializationSmokeTest PRIVATE
+    UNICODE _UNICODE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+    _WIN32_WINNT=0x0A00
+)
+target_link_libraries(SerializationSmokeTest PRIVATE
+    ole32
+    oleaut32
+    advapi32
+    user32
+    credui
+    secur32
+    propsys
+)
