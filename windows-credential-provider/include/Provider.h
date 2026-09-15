@@ -6,10 +6,6 @@
 #include <string>
 #include <vector>
 
-// Keep this provider self-contained: including ShlGuid.h pulls in the legacy
-// shell automation declarations and can conflict with the SDK headers used by
-// Credential Provider builds. These two GUIDs are the only ShlGuid values we
-// need here.
 #ifndef GUID_NULL
 #define GUID_NULL GUID{0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0}}
 #endif
@@ -24,7 +20,10 @@ class WristKeyProvider;
 
 class WristKeyProviderCredential final : public ICredentialProviderCredential2 {
 public:
-    WristKeyProviderCredential(WristKeyProvider* provider, std::wstring username, std::wstring sid);
+    WristKeyProviderCredential(WristKeyProvider* provider,
+                               CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+                               std::wstring username,
+                               std::wstring sid);
     ~WristKeyProviderCredential();
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
@@ -60,6 +59,7 @@ public:
 private:
     LONG _ref = 1;
     WristKeyProvider* _provider = nullptr;
+    CREDENTIAL_PROVIDER_USAGE_SCENARIO _scenario = CPUS_INVALID;
     ICredentialProviderCredentialEvents* _events = nullptr;
     std::wstring _username;
     std::wstring _sid;
