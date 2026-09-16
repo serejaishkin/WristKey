@@ -2,6 +2,9 @@
 #include <credentialprovider.h>
 #include <ntsecapi.h>
 #include <wincred.h>
+#include <initguid.h>  // must precede propkey.h so PKEY_Identity_* get defined
+#include <propkey.h>
+#include <propvarutil.h>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -373,9 +376,11 @@ int wmain(int argc, wchar_t** argv) {
 
     CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
     CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION serialization{};
-    BOOL serializationAutoLogon = FALSE;
+    PWSTR serializationStatus = nullptr;
+    CREDENTIAL_PROVIDER_STATUS_ICON serializationIcon = CPSI_NONE;
 
-    hr = credential->GetSerialization(&response, &serialization, &serializationAutoLogon);
+    hr = credential->GetSerialization(&response, &serialization, &serializationStatus, &serializationIcon);
+    if (serializationStatus) CoTaskMemFree(serializationStatus);
 
     pipeThread.join();
 
@@ -395,8 +400,8 @@ int wmain(int argc, wchar_t** argv) {
         return 18;
     }
 
-    if (serializationAutoLogon != FALSE) {
-        std::wcerr << L"Unexpected auto-logon flag.\n";
+    if (serializationIcon != CPSI_SUCCESS) {
+        std::wcerr << L"Unexpected serialization status icon.\n";
         CoTaskMemFree(serialization.rgbSerialization);
         credential->Release();
         provider->Release();
@@ -468,7 +473,9 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     CRED_PROTECTION_TYPE protectionType = CredUnprotected;
-    if (!CredIsProtectedW(protectedPassword.c_str(), &protectionType) ||
+    // CredIsProtectedW takes a mutable buffer despite not modifying it.
+    std::wstring protectedPasswordBuf = protectedPassword;
+    if (!CredIsProtectedW(&protectedPasswordBuf[0], &protectionType) ||
         protectionType == CredUnprotected) {
         std::wcerr << L"Serialized password is not CredProtect-protected.\n";
         CoTaskMemFree(serialization.rgbSerialization);

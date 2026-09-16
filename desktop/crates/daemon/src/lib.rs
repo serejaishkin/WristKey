@@ -245,6 +245,20 @@ mod pipe_server {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
+    use wristkey_core::vault::KeyProtector;
+    use wristkey_platform_win::WindowsKeyProtector;
+
+    /// DPAPI-protect the Windows password before it touches storage.
+    /// Only the same user on the same machine can decrypt it.
+    fn protect_password(password: &str) -> Result<Vec<u8>> {
+        Ok(WindowsKeyProtector.protect(password.as_bytes()))
+    }
+
+    fn unprotect_password(encrypted: &[u8]) -> Result<String> {
+        let plain = WindowsKeyProtector.unprotect(encrypted)
+            .ok_or_else(|| WristKeyError::Storage("failed to decrypt stored password (DPAPI)".into()))?;
+        String::from_utf8(plain).map_err(|_| WristKeyError::Storage("stored password is not valid UTF-8".into()))
+    }
 
     pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
         loop {
@@ -268,22 +282,61 @@ mod pipe_server {
         if reader.read_line(&mut line).await.is_err() { return; }
         let request: serde_json::Value = match serde_json::from_str(line.trim()) {
             Ok(v) => v,
-            Err(e) => { let _ = reader.get_mut().write_all(format!(r#"{{"status":"error","message":"{}"}}\n"#, e).as_bytes()).await; return; }
+            Err(e) => {
+                let _ = reader.get_mut().write_all(format!("{{\"status\":\"error\",\"message\":\"{}\"}}\n", e).as_bytes()).await;
+                return;
+            }
         };
         let response = match request.get("action").and_then(|v| v.as_str()).unwrap_or("") {
             "unlock" => match do_ble_unlock(session, ble, conn_mgr).await {
                 Ok(password) => serde_json::json!({"status":"success","password":password}),
                 Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
             },
+            "set_password" => {
+                let password = request.get("password").and_then(|v| v.as_str()).unwrap_or("");
+                if password.is_empty() {
+                    serde_json::json!({"status":"error","message":"empty password"})
+                } else {
+                    match set_stored_password(session, password).await {
+                        Ok(()) => serde_json::json!({"status":"success"}),
+                        Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
+                    }
+                }
+            }
+            "clear_password" => match clear_stored_password(session).await {
+                Ok(()) => serde_json::json!({"status":"success"}),
+                Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
+            },
+            "has_password" => {
+                let configured = session.list_paired_devices().await
+                    .ok()
+                    .and_then(|devices| devices.first().map(|d| d.windows_password.is_some()))
+                    .unwrap_or(false);
+                serde_json::json!({"status":"success","configured":configured})
+            }
             _ => serde_json::json!({"status":"error","message":"unknown action"}),
         };
         let _ = reader.get_mut().write_all(format!("{}\n", response).as_bytes()).await;
         let _ = reader.get_mut().flush().await;
     }
 
+    async fn set_stored_password(session: Arc<SessionManager>, password: &str) -> Result<()> {
+        let device = session.list_paired_devices().await?
+            .into_iter().next().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
+        session.set_device_password(device.id, protect_password(password)?).await
+    }
+
+    async fn clear_stored_password(session: Arc<SessionManager>) -> Result<()> {
+        let device = session.list_paired_devices().await?
+            .into_iter().next().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
+        session.clear_device_password(device.id).await
+    }
+
     async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>) -> Result<String> {
         let devices = session.list_paired_devices().await?;
         let device = devices.first().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
+        let encrypted_password = device.windows_password.clone()
+            .ok_or_else(|| WristKeyError::Session("windows password not configured; use set_password first".into()))?;
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
         let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: None,
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
@@ -298,6 +351,8 @@ mod pipe_server {
         if data.len() < 65 { return Err(WristKeyError::Protocol("unlock response too short".into())); }
         let response = Response { signature: data[..64].to_vec(), user_present: data[64] != 0, timestamp: chrono::Utc::now() };
         session.verify_unlock(&response).await?;
-        Ok("authenticated".to_string())
+        // The watch confirmed presence; only now decrypt and hand over the
+        // stored Windows password to the credential provider.
+        unprotect_password(&encrypted_password)
     }
 }

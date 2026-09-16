@@ -328,6 +328,11 @@ impl SessionManager {
         let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         Ok(device.windows_password.clone())
     }
+    pub async fn clear_device_password(&self, device_id: Uuid) -> Result<()> {
+        let mut device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        device.windows_password = None; self.storage.save_device(&device).await?;
+        info!("cleared stored password for device {}", device_id); Ok(())
+    }
     pub async fn pair_device(&self, id: &str, name: &str, rssi: i32, address: &str) -> Result<()> {
         let (priv_key, pub_key) = self.crypto.generate_keypair().await?;
         let challenge = self.begin_pairing().await?;

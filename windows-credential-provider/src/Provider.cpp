@@ -429,14 +429,34 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetUserSid(PWSTR* sid) {
 // BLE unlock / Microsoft-style Windows credential serialization
 // -----------------------------------------------------------------------------
 
-static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
+static std::wstring Utf8ToWide(const std::string& text) {
+    const int wideLength = MultiByteToWideChar(CP_UTF8, 0, text.c_str(),
+                                               static_cast<int>(text.size()),
+                                               nullptr, 0);
+    if (wideLength <= 0) return std::wstring();
+    std::wstring wide(static_cast<size_t>(wideLength), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()),
+                        &wide[0], wideLength);
+    return wide;
+}
+
+// Connects to the WristKey daemon pipe, runs the BLE challenge against the
+// watch, and on success receives the DPAPI-decrypted Windows password.
+// On failure fills `outError` with a user-readable reason.
+static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& outError) {
     const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
 
-    if (!WaitNamedPipeW(pipeName, 2000)) return false;
+    if (!WaitNamedPipeW(pipeName, 2000)) {
+        outError = L"WristKey daemon is not running.";
+        return false;
+    }
 
     HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                               OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) return false;
+    if (pipe == INVALID_HANDLE_VALUE) {
+        outError = L"WristKey: cannot connect to the daemon.";
+        return false;
+    }
 
     DWORD mode = PIPE_READMODE_BYTE;
     SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
@@ -445,19 +465,21 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
     DWORD written = 0;
     if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
         CloseHandle(pipe);
+        outError = L"WristKey: daemon communication failed.";
         return false;
     }
 
     std::string response;
     char buffer[512];
     const DWORD deadline = GetTickCount() + 15000;
+    bool timedOut = false;
 
     for (;;) {
         DWORD available = 0;
         if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
             if (GetTickCount() > deadline) {
-                CloseHandle(pipe);
-                return false;
+                timedOut = true;
+                break;
             }
             Sleep(100);
             continue;
@@ -468,31 +490,50 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword) {
         buffer[read] = '\0';
         response.append(buffer, read);
         if (response.find('\n') != std::string::npos) break;
-        if (GetTickCount() > deadline) break;
+        if (GetTickCount() > deadline) { timedOut = true; break; }
     }
 
     CloseHandle(pipe);
 
-    if (response.find("\"status\":\"success\"") == std::string::npos) return false;
+    if (timedOut && response.empty()) {
+        outError = L"WristKey: daemon did not answer.";
+        return false;
+    }
+
+    if (response.find("\"status\":\"success\"") == std::string::npos) {
+        // Surface the daemon's own reason (watch timeout, no password
+        // configured, no paired device, ...) instead of a generic message.
+        static const std::string messageKey = "\"message\":\"";
+        size_t start = response.find(messageKey);
+        if (start != std::string::npos) {
+            start += messageKey.size();
+            const size_t end = response.find('"', start);
+            if (end != std::string::npos) {
+                outError = L"WristKey: " + Utf8ToWide(response.substr(start, end - start)) + L".";
+                return false;
+            }
+        }
+        outError = L"WristKey: the watch did not confirm the unlock.";
+        return false;
+    }
 
     const std::string key = "\"password\":\"";
     size_t start = response.find(key);
-    if (start == std::string::npos) return false;
+    if (start == std::string::npos) {
+        outError = L"WristKey: daemon returned no password.";
+        return false;
+    }
     start += key.size();
     const size_t end = response.find('"', start);
-    if (end == std::string::npos) return false;
+    if (end == std::string::npos) {
+        outError = L"WristKey: daemon returned a malformed response.";
+        return false;
+    }
 
     const std::string password = response.substr(start, end - start);
-    const int wideLength = MultiByteToWideChar(CP_UTF8, 0, password.c_str(),
-                                                static_cast<int>(password.size()),
-                                                nullptr, 0);
-    if (wideLength <= 0) return false;
-
-    outPassword.assign(wideLength, L'\0');
-    if (MultiByteToWideChar(CP_UTF8, 0, password.c_str(),
-                            static_cast<int>(password.size()),
-                            &outPassword[0], wideLength) != wideLength) {
-        outPassword.clear();
+    outPassword = Utf8ToWide(password);
+    if (outPassword.empty()) {
+        outError = L"WristKey: daemon returned a malformed password.";
         return false;
     }
     return true;
@@ -572,8 +613,12 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
     *icon = CPSI_NONE;
 
     std::wstring password;
-    if (!RequestUnlockFromDaemon(password)) {
-        CopyString(L"WristKey: confirm the unlock on your watch.", status);
+    std::wstring daemonError;
+    if (!RequestUnlockFromDaemon(password, daemonError)) {
+        CopyString((daemonError.empty()
+                        ? L"WristKey: confirm the unlock on your watch."
+                        : daemonError.c_str()),
+                   status);
         *icon = CPSI_WARNING;
         return S_OK;
     }
