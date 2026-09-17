@@ -262,17 +262,36 @@ mod pipe_server {
 
     pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
         loop {
-            tokio::select! {
-                _ = shutdown.changed() => { info!("Pipe server shutting down"); return; }
-                _ = async {
-                    match ServerOptions::new().create(r"\\.\pipe\wristkey") {
-                        Ok(server) => handle_client(server, session.clone(), ble.clone(), conn_mgr.clone()).await,
-                        Err(e) => { warn!("pipe server create failed: {}", e); sleep(Duration::from_secs(1)).await; }
-                    }
-                    #[allow(clippy::never_loop)]
-                    loop { std::future::pending::<()>().await; }
-                } => {}
-            }
+            // A named-pipe instance serves exactly one client. Create a fresh
+            // instance for every connection and hand the connected instance to a
+            // per-connection task, so the daemon keeps accepting clients.
+            let server = match ServerOptions::new().create(r"\\.\pipe\wristkey") {
+                Ok(server) => server,
+                Err(e) => {
+                    warn!("pipe server create failed: {}", e);
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+
+            let connected = tokio::select! {
+                _ = shutdown.changed() => {
+                    info!("Pipe server shutting down");
+                    return;
+                }
+                result = server.connect() => match result {
+                    Ok(()) => true,
+                    Err(e) => { warn!("pipe client connect failed: {}", e); false }
+                },
+            };
+            if !connected { continue; }
+
+            let session = session.clone();
+            let ble = ble.clone();
+            let conn_mgr = conn_mgr.clone();
+            tokio::spawn(async move {
+                handle_client(server, session, ble, conn_mgr).await;
+            });
         }
     }
 

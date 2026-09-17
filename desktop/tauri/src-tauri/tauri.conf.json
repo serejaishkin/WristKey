@@ -3,7 +3,7 @@
   "productName": "WristKey",
   "identifier": "com.wristkey.app",
   "build": {
-    "beforeBuildCommand": "cmd /C src-tauri\\build-cp.cmd",
+    "beforeBuildCommand": "cmd /C ..\\..\\build-provider.cmd",
     "beforeDevCommand": "",
     "frontendDist": "../src",
     "devUrl": "http://localhost:1420"
@@ -38,8 +38,7 @@
       "wix": null
     },
     "resources": [
-      "../../crates/credential-provider/bin/Release/net48/WristKeyCredentialProvider.dll",
-      "../../crates/credential-provider/bin/Release/net48/Newtonsoft.Json.dll"
+      "../../../windows-credential-provider/build/Release/WristKeyCredentialProvider.dll"
     ],
     "icon": [
       "icons/32x32.png",

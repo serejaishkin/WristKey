@@ -168,7 +168,7 @@ static void RunTestPipeServer(PipeServerResult* result) {
     // JSON with escaped characters (\\ -> '\', \" -> '"', \u0442... -> Cyrillic
     // "тест"). A naive parser would cut the password at the first '"'.
     constexpr char kResponse[] =
-        "{\"status\":\"success\",\"password\":\"TestPassword123! \\\\\"quoted\\\\\" "
+        "{\"status\":\"success\",\"password\":\"TestPassword123! \\\"quoted\\\" \\\\ "
         "\\u0442\\u0435\\u0441\\u0442\"}\n";
 
     HANDLE pipe = CreateNamedPipeW(
@@ -495,7 +495,9 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring unprotected;
     unprotected.resize(protectedPassword.size() + 64);
     ULONG unprotectedChars = static_cast<ULONG>(unprotected.size());
-    if (!CredUnprotectW(&protectedPasswordBuf[0], &unprotected[0], &unprotectedChars)) {
+    if (!CredUnprotectW(FALSE, &protectedPasswordBuf[0],
+                        static_cast<DWORD>(protectedPasswordBuf.size()),
+                        &unprotected[0], &unprotectedChars)) {
         std::wcerr << L"CredUnprotectW failed: " << GetLastError() << L"\n";
         CoTaskMemFree(serialization.rgbSerialization);
         credential->Release();
@@ -504,9 +506,12 @@ int wmain(int argc, wchar_t** argv) {
         return 28;
     }
     unprotected.resize(unprotectedChars);
+    // CredProtect is applied with wcslen+1, so the unprotected blob carries the
+    // terminating NUL; drop it before comparing with the daemon password.
+    if (!unprotected.empty() && unprotected.back() == L'\0') unprotected.pop_back();
 
     const std::wstring expectedPassword =
-        L"TestPassword123! \\\"quoted\\\" \x0442\x0435\x0441\x0442";
+        L"TestPassword123! \"quoted\" \\ \x0442\x0435\x0441\x0442";
     if (unprotected != expectedPassword) {
         std::wcerr << L"Decoded password does not match the escaped daemon response.\n";
         CoTaskMemFree(serialization.rgbSerialization);

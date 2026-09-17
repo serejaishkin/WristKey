@@ -224,4 +224,42 @@ pub mod win_service {
             .map_err(|e| format!("Query status failed: {:?}", e))?;
         Ok(format!("{:?}", status.current_state))
     }
+
+    pub fn is_elevated() -> bool {
+        std::process::Command::new("net")
+            .args(["session"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    pub fn try_start_service() -> Result<(), String> {
+        let manager = ServiceManager::local_computer(
+            None::<&str>,
+            ServiceManagerAccess::CONNECT,
+        ).map_err(|e| format!("Service manager open: {:?}", e))?;
+
+        let service = manager.open_service(
+            SERVICE_NAME,
+            ServiceAccess::QUERY_STATUS | ServiceAccess::START,
+        ).map_err(|_| "WristKey service not installed".to_string())?;
+
+        let status = service.query_status()
+            .map_err(|e| format!("Query status: {:?}", e))?;
+
+        match status.current_state {
+            ServiceState::Running | ServiceState::StartPending => {
+                info!("WristKey service already running");
+                Ok(())
+            }
+            _ => {
+                service.start(&[] as &[std::ffi::OsString])
+                    .map_err(|e| format!("Start service: {:?}", e))?;
+                info!("WristKey service started");
+                Ok(())
+            }
+        }
+    }
 }

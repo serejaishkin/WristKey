@@ -148,8 +148,89 @@ impl WindowsSecurity {
         "DPAPI (Windows Data Protection)"
     }
 
-    pub async fn ensure_dll_extracted() -> std::result::Result<String, String> {
-        Err("Native Credential Provider DLL is not bundled in this development build. Build/download windows-credential-provider x64 first.".to_string())
+    /// Locate the native x64 Credential Provider DLL. Searches next to the
+    /// executable, the in-repo build output (development layout) and the
+    /// installed location under Program Files.
+    pub fn resolve_credential_provider_dll() -> Option<std::path::PathBuf> {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("WristKeyCredentialProvider.dll"));
+                // Development layout: <repo>\desktop\target\release\wristkey-tauri.exe
+                candidates.push(
+                    dir.join("..")
+                        .join("..")
+                        .join("..")
+                        .join("windows-credential-provider")
+                        .join("build")
+                        .join("Release")
+                        .join("WristKeyCredentialProvider.dll"),
+                );
+            }
+        }
+        candidates.push(std::path::PathBuf::from(
+            r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll",
+        ));
+        candidates.into_iter().find(|p| p.exists())
+    }
+
+    /// Register the native Credential Provider on startup if it is missing.
+    /// Registration needs Administrator, so a non-elevated process asks for
+    /// elevation by relaunching itself with `--register-cp`.
+    pub fn ensure_credential_provider_registered() {
+        if Self::is_credential_provider_registered() {
+            return;
+        }
+        match Self::resolve_credential_provider_dll() {
+            Some(dll) => match Self::register_credential_provider(dll.to_string_lossy().as_ref()) {
+                Ok(()) => tracing::info!("Credential Provider auto-registered on startup"),
+                Err(e) => {
+                    tracing::warn!("Automatic registration failed ({}); requesting elevation", e);
+                    Self::relaunch_elevated_for_registration();
+                }
+            },
+            None => tracing::warn!("Credential Provider DLL not found next to the executable"),
+        }
+    }
+
+    fn relaunch_elevated_for_registration() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                tracing::warn!("Cannot resolve executable path for provider registration: {}", e);
+                return;
+            }
+        };
+        let to_wide = |s: &std::ffi::OsStr| -> Vec<u16> {
+            s.encode_wide().chain(std::iter::once(0)).collect()
+        };
+        let verb = to_wide(std::ffi::OsStr::new("runas"));
+        let file = to_wide(exe.as_os_str());
+        let params = to_wide(std::ffi::OsStr::new("--register-cp"));
+
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(verb.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR(params.as_ptr()),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if (result.0 as isize) <= 32 {
+            tracing::warn!(
+                "Credential Provider elevation was cancelled or failed (code {})",
+                result.0 as isize
+            );
+        } else {
+            tracing::info!("Requested elevated Credential Provider registration");
+        }
     }
 
     pub fn register_credential_provider(dll_path: &str) -> std::result::Result<(), String> {
