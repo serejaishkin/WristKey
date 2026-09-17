@@ -23,7 +23,10 @@ class WristKeyBleService : Service() {
         private const val TAG = "WristKeyBleService"
         private const val DEBUG_TAG = "WristKeyBLE"
         private const val NOTIFICATION_ID = 1
+        private const val CHALLENGE_NOTIFICATION_ID = 2
         private const val CHANNEL_ID = "wristkey_ble_channel"
+        private const val CHALLENGE_CHANNEL_ID = "wristkey_confirm_channel"
+        private const val CHALLENGE_CONFIRM_TIMEOUT_MS = 10_000L
         // Shared with the settings UI so the paired PC list reflects reality.
         const val PREFS_NAME = "WristKeyPrefs"
         const val PREFS_PAIRED_ADDRESS = "paired_device_address"
@@ -33,6 +36,9 @@ class WristKeyBleService : Service() {
         // Sent by the settings UI to forget the current paired PC and return
         // the watch to new-PC pairing mode.
         const val ACTION_FORGET_DEVICE = "com.wristkey.FORGET_DEVICE"
+        // Extra on UnlockActivity marking it as a challenge confirmation
+        // (no recent wrist motion) rather than a password-unlock request.
+        const val EXTRA_CHALLENGE_CONFIRM = "challenge_confirm"
         private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         val SERVICE_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         val CHALLENGE_CHAR_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567891")
@@ -63,6 +69,11 @@ class WristKeyBleService : Service() {
     private var pairingDeviceAddress: String? = null
     private var requestingPcName: String? = null
     private var currentChallenge: ByteArray? = null
+    // Challenge awaiting explicit user confirmation on the watch (motion gate).
+    private var pendingChallenge: ByteArray? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val challengeTimeoutRunnable = object : Runnable { override fun run() { onChallengeConfirmationTimeout() } }
+    private var challengeTimeoutScheduled = false
     private var wakeLock: PowerManager.WakeLock? = null
     private val keyStoreManager = KeyStoreManager()
     private val motionDetector by lazy { MotionDetector(this) }
@@ -122,7 +133,9 @@ class WristKeyBleService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_ble), NotificationManager.IMPORTANCE_LOW))
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_ble), NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(CHALLENGE_CHANNEL_ID, getString(R.string.notification_channel_confirm), NotificationManager.IMPORTANCE_HIGH))
         }
     }
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -271,7 +284,7 @@ class WristKeyBleService : Service() {
         }
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
             when (characteristic?.uuid) {
-                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed and notified (recent wrist motion)" else "no recent wrist motion - not signing"}") } else -> debug("Challenge ignored outside new pairing mode") } }
+                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed or confirmation UI shown" else "not answered (not paired / UI failed)"}") } else -> debug("Challenge ignored outside new pairing mode") } }
                 CONFIG_CHAR_UUID -> debug("Config write bytes=${value?.size ?: 0}")
                 UNLOCK_REQUEST_UUID -> handleUnlockRequest(value)
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }
@@ -295,23 +308,86 @@ class WristKeyBleService : Service() {
      * signature || user_present back over RESPONSE_CHAR. Sign ONLY for the
      * persisted peer and ONLY when wrist motion was seen recently -- this is
      * both the identity check (paired address) and the anti-relay gate.
+     * Without recent motion, fall back to an explicit on-watch confirmation
+     * instead of staying silent (silence left the PC on a 10 s timeout).
      */
     private fun respondToPairedChallenge(device: BluetoothDevice?, challenge: ByteArray?): Boolean {
         if (challenge == null || device == null) return false
         if (!isPaired()) return false
-        if (!motionDetector.hasRecentMotion()) return false
+        if (motionDetector.hasRecentMotion()) {
+            val answered = answerChallenge(challenge)
+            if (answered) debug("Paired challenge signed for ${device.address} (recent wrist motion)")
+            return answered
+        }
+        return requestExplicitChallengeConfirmation(challenge)
+    }
+
+    private fun answerChallenge(challenge: ByteArray): Boolean {
         return try {
             val signature = keyStoreManager.signChallenge(challenge)
             responseCharacteristic?.value = signature + byteArrayOf(1)
-            val target = connectedDevice ?: device
+            val target = connectedDevice
             gattServer?.notifyCharacteristicChanged(target, responseCharacteristic, false)
             _userPresent.set(true)
-            debug("Paired challenge signed (${signature.size} bytes) for ${device.address}")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to sign paired challenge", e)
             false
         }
+    }
+
+    /** Explicit refusal: a short answer the PC reads as a failed unlock
+     *  immediately instead of waiting out its response timeout. */
+    private fun refuseChallenge() {
+        try {
+            responseCharacteristic?.value = byteArrayOf(0)
+            connectedDevice?.let { gattServer?.notifyCharacteristicChanged(it, responseCharacteristic, false) }
+            debug("Challenge refused by user")
+        } catch (e: Exception) { Log.e(TAG, "Failed to notify challenge refusal", e) }
+    }
+
+    private fun requestExplicitChallengeConfirmation(challenge: ByteArray): Boolean {
+        pendingChallenge = challenge
+        _userPresentCountdown.set(10)
+        val notifier = getSystemService(NotificationManager::class.java)
+        val bodyIntent = Intent(this, UnlockActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra("user", pairedDeviceName ?: getString(R.string.default_pc_name))
+            putExtra(EXTRA_CHALLENGE_CONFIRM, true)
+        }
+        val approveIntent = Intent(UnlockActivity.ACTION_UNLOCK).apply { setPackage(packageName); putExtra(UnlockActivity.EXTRA_APPROVED, true) }
+        val refuseIntent = Intent(UnlockActivity.ACTION_UNLOCK).apply { setPackage(packageName); putExtra(UnlockActivity.EXTRA_APPROVED, false) }
+        val notification = NotificationCompat.Builder(this, CHALLENGE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle(getString(R.string.confirm_unlock_notification_title))
+            .setContentText(pairedDeviceName ?: getString(R.string.default_pc_name))
+            .setContentIntent(PendingIntent.getActivity(this, 0, bodyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .addAction(0, getString(R.string.btn_confirm), PendingIntent.getBroadcast(this, 1, approveIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .addAction(0, getString(R.string.btn_cancel), PendingIntent.getBroadcast(this, 2, refuseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setLocalOnly(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(CHALLENGE_CONFIRM_TIMEOUT_MS)
+            .build()
+        if (!challengeTimeoutScheduled) {
+            challengeTimeoutScheduled = true
+            mainHandler.postDelayed(challengeTimeoutRunnable, CHALLENGE_CONFIRM_TIMEOUT_MS)
+        }
+        notifier.notify(CHALLENGE_NOTIFICATION_ID, notification)
+        debug("No recent wrist motion -- challenge confirmation notification shown")
+        return true
+    }
+
+    /** Timeout fallback: without an explicit user decision the PC must not be
+     *  left waiting out its own 10 s timeout -- answer with an explicit
+     *  refusal so it fails fast instead of hanging silently. */
+    private fun onChallengeConfirmationTimeout() {
+        challengeTimeoutScheduled = false
+        if (pendingChallenge == null) return
+        debug("Challenge confirmation timed out -- explicit refusal sent")
+        pendingChallenge = null
+        try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}
+        refuseChallenge()
     }
 
     fun confirmPairing(): Boolean {
@@ -376,7 +452,23 @@ class WristKeyBleService : Service() {
         val filter = IntentFilter("com.wristkey.UNLOCK_ACTION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(unlockReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(unlockReceiver, filter)
     }
-    private val unlockReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { if (intent?.getBooleanExtra("approved", false) == true) sendUnlockResponse(getPairingKey(), null) else sendUnlockResponse(null, "CANCEL") } }
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val approved = intent?.getBooleanExtra("approved", false) == true
+            val challenge = pendingChallenge
+            if (challenge != null) {
+                // Decision for the challenge-confirmation flow.
+                pendingChallenge = null
+                if (challengeTimeoutScheduled) { challengeTimeoutScheduled = false; mainHandler.removeCallbacks(challengeTimeoutRunnable) }
+                try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}
+                if (approved) answerChallenge(challenge) else refuseChallenge()
+            } else if (approved) {
+                sendUnlockResponse(getPairingKey(), null)
+            } else {
+                sendUnlockResponse(null, "CANCEL")
+            }
+        }
+    }
     private fun registerBluetoothStateReceiver() {
         val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(bluetoothStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(bluetoothStateReceiver, filter)
@@ -387,5 +479,5 @@ class WristKeyBleService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(forgetReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(forgetReceiver, filter)
     }
     private val forgetReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { if (intent?.action == ACTION_FORGET_DEVICE) { debug("Forget requested from settings UI"); forgetDevice() } } }
-    override fun onDestroy() { stopAdvertising(); stopGattServer(); motionDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
+    override fun onDestroy() { mainHandler.removeCallbacks(challengeTimeoutRunnable); try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}; stopAdvertising(); stopGattServer(); motionDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
 }

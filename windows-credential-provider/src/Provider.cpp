@@ -3,6 +3,7 @@
 
 #include <credentialprovider.h>
 #include <propkey.h>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -440,6 +441,99 @@ static std::wstring Utf8ToWide(const std::string& text) {
     return wide;
 }
 
+// Extracts a JSON object string value, e.g. `"password": "a\"b\n"`, from a
+// daemon response and decodes its JSON escapes into raw UTF-8.
+// Handles \" \\ \/ \b \f \n \r \t and \uXXXX (including surrogate pairs).
+// A naive substring scan would break on passwords containing '"' or '\'
+// because serde_json on the daemon side escapes them.
+static bool ExtractJsonStringValue(const std::string& text, const std::string& key, std::string& out) {
+    const std::string needle = "\"" + key + "\":";
+    const size_t keyPos = text.find(needle);
+    if (keyPos == std::string::npos) return false;
+
+    size_t p = keyPos + needle.size();
+    while (p < text.size() && std::isspace(static_cast<unsigned char>(text[p]))) ++p;
+    if (p >= text.size() || text[p] != '"') return false;
+
+    ++p;  // opening quote
+    out.clear();
+    while (p < text.size()) {
+        const char c = text[p];
+        if (c == '"') return true;  // closing quote
+
+        if (c != '\\') {
+            out += c;
+            ++p;
+            continue;
+        }
+
+        ++p;
+        if (p >= text.size()) return false;
+        switch (text[p]) {
+        case '"':  out += '"';  ++p; break;
+        case '\\': out += '\\'; ++p; break;
+        case '/':  out += '/';  ++p; break;
+        case 'b':  out += '\b'; ++p; break;
+        case 'f':  out += '\f'; ++p; break;
+        case 'n':  out += '\n'; ++p; break;
+        case 'r':  out += '\r'; ++p; break;
+        case 't':  out += '\t'; ++p; break;
+        case 'u': {
+            unsigned cp = 0;
+            for (int i = 0; i < 4; ++i) {
+                ++p;
+                if (p >= text.size()) return false;
+                const char h = text[p];
+                cp <<= 4;
+                if (h >= '0' && h <= '9') cp |= static_cast<unsigned>(h - '0');
+                else if (h >= 'a' && h <= 'f') cp |= static_cast<unsigned>(h - 'a' + 10);
+                else if (h >= 'A' && h <= 'F') cp |= static_cast<unsigned>(h - 'A' + 10);
+                else return false;
+            }
+            // UTF-16 surrogate pair: \uD800-\uDBFF followed by \uDC00-\uDFFF.
+            if (cp >= 0xD800 && cp <= 0xDBFF && p + 6 < text.size() &&
+                text[p + 1] == '\\' && text[p + 2] == 'u') {
+                p += 2;
+                unsigned low = 0;
+                for (int i = 0; i < 4; ++i) {
+                    ++p;
+                    if (p >= text.size()) return false;
+                    const char h = text[p];
+                    low <<= 4;
+                    if (h >= '0' && h <= '9') low |= static_cast<unsigned>(h - '0');
+                    else if (h >= 'a' && h <= 'f') low |= static_cast<unsigned>(h - 'a' + 10);
+                    else if (h >= 'A' && h <= 'F') low |= static_cast<unsigned>(h - 'A' + 10);
+                    else return false;
+                }
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                }
+            }
+            if (cp < 0x80) {
+                out += static_cast<char>(cp);
+            } else if (cp < 0x800) {
+                out += static_cast<char>(0xC0 | (cp >> 6));
+                out += static_cast<char>(0x80 | (cp & 0x3F));
+            } else if (cp < 0x10000) {
+                out += static_cast<char>(0xE0 | (cp >> 12));
+                out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                out += static_cast<char>(0x80 | (cp & 0x3F));
+            } else {
+                out += static_cast<char>(0xF0 | (cp >> 18));
+                out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                out += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            ++p;
+            break;
+        }
+        default:
+            return false;  // invalid JSON escape
+        }
+    }
+    return false;  // unterminated string
+}
+
 // Connects to the WristKey daemon pipe, runs the BLE challenge against the
 // watch, and on success receives the DPAPI-decrypted Windows password.
 // On failure fills `outError` with a user-readable reason.
@@ -500,42 +594,26 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
         return false;
     }
 
-    if (response.find("\"status\":\"success\"") == std::string::npos) {
+    std::string status;
+    if (!ExtractJsonStringValue(response, "status", status) || status != "success") {
         // Surface the daemon's own reason (watch timeout, no password
         // configured, no paired device, ...) instead of a generic message.
-        static const std::string messageKey = "\"message\":\"";
-        size_t start = response.find(messageKey);
-        if (start != std::string::npos) {
-            start += messageKey.size();
-            const size_t end = response.find('"', start);
-            if (end != std::string::npos) {
-                outError = L"WristKey: " + Utf8ToWide(response.substr(start, end - start)) + L".";
-                return false;
-            }
+        std::string message;
+        if (ExtractJsonStringValue(response, "message", message) && !message.empty()) {
+            outError = L"WristKey: " + Utf8ToWide(message) + L".";
+        } else {
+            outError = L"WristKey: the watch did not confirm the unlock.";
         }
-        outError = L"WristKey: the watch did not confirm the unlock.";
         return false;
     }
 
-    const std::string key = "\"password\":\"";
-    size_t start = response.find(key);
-    if (start == std::string::npos) {
-        outError = L"WristKey: daemon returned no password.";
-        return false;
-    }
-    start += key.size();
-    const size_t end = response.find('"', start);
-    if (end == std::string::npos) {
-        outError = L"WristKey: daemon returned a malformed response.";
-        return false;
-    }
-
-    const std::string password = response.substr(start, end - start);
-    outPassword = Utf8ToWide(password);
-    if (outPassword.empty()) {
+    std::string password;
+    if (!ExtractJsonStringValue(response, "password", password) || password.empty()) {
         outError = L"WristKey: daemon returned a malformed password.";
         return false;
     }
+
+    outPassword = Utf8ToWide(password);
     return true;
 }
 
@@ -576,7 +654,7 @@ static HRESULT PackUnlockCredential(
 
         if (SUCCEEDED(hr)) {
             ULONG authPackage = 0;
-            hr = RetrieveNegotiateAuthPackage(&authPackage);
+            hr = RetrieveKerberosAuthPackage(&authPackage);
             if (SUCCEEDED(hr)) {
                 out->ulAuthenticationPackage = authPackage;
                 out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;

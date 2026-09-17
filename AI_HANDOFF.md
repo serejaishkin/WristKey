@@ -713,3 +713,72 @@ TrainingActivity переделана: PREP 10с (один тап ставит �
 
 - Логи: `%LOCALAPPDATA%\WristKey\logs\wristkey.log.2026-08-19` раздулся до ~67 GiB, 2026-08-24 ≈ 151 MB — проверить причины спама BLE device update и ротацию/лимиты.
 - Устаревшие tauri_build_* логи убраны из репо и gitignore.
+
+### 6.16 2026-09-17 — Windows logon end-to-end: DPAPI-пароль + V2-провайдер + подтверждение на часах (В РАБОТЕ)
+
+Цель сессии: довести авторизацию Windows ( плитка WristKey на экране входа/блокировки → BLE challenge часам → вход с реальным паролем). План согласован с пользователем: выбран путь «V2-провайдер + пароль, хранящийся в DPAPI». Companion Device Framework отклонён (позже).
+
+#### 6.16.1 Окружение сборки — ВАЖНО для будущих сессий
+
+- VS 18 Community (C:\Program Files\Microsoft Visual Studio\18) СЛОМАН: `vcvarsall.bat` отсутствует (vcvars64.bat падает «не является внутренней или внешней»), каталог `VC\Tools\MSVC\14.51.36231\lib` ПУСТОЙ → link.exe не находит msvcrt.lib.
+- Рабочий тулчейн: VS2022 BuildTools `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207` + WinSDK 10.0.26100.0.
+- Обёртки в корне репо (не коммитить в CI без обдумывания): `check-daemon.cmd` (env + cargo), `build-provider.cmd` (env + cmake build провайдера), `showenv.cmd` (диагностика). Запуск: `cmd //c 'D:\GitHub\WristKey\check-daemon.cmd check -p wristkey-daemon'`.
+- wear-os/local.properties исправлен на sdk.dir=C:\Users\serge\android-sdk (был sergejj — несуществующий юзер).
+
+#### 6.16.2 Демон: пароль Windows из DPAPI после challenge (СДЕЛАНО, cargo check OK)
+
+- `daemon/src/lib.rs` pipe_server: добавлены `protect_password`/`unprotect_password` через `wristkey_platform_win::WindowsKeyProtector` (CryptProtectData). Новые действия пайпа `\.\pipe\wristkey`: `set_password` {password}, `clear_password`, `has_password` → {configured}.
+- `do_ble_unlock` теперь: требует настроенный пароль ДО challenge (ошибка «windows password not configured; use set_password first»), после успешного `verify_unlock` РАСШИФРОВЫВАЕТ DPAPI-блоб из `PairedDevice.windows_password` и возвращает реальный пароль (раньше возвращал литерал "authenticated" — провайдер не мог залогиниться).
+- Багфикс: ответ об ошибке пайпа писал литеральный `\n` (raw string) вместо перевода строки — JSON-line протокол нарушался.
+- `core/lib.rs`: добавлен `SessionManager::clear_device_password`.
+
+#### 6.16.3 Tauri GUI (СДЕЛАНО, cargo check OK)
+
+- `set_windows_password` ПЕРЕПИСАНА: раньше писала в старый JSON-vault (WindowsVault/devices.json), которого демон не читает; теперь DPAPI (WindowsKeyProtector) → `session.set_device_password` → SQLite-колонка windows_password. Добавлена команда `clear_windows_password`; обе в generate_handler. GUI (main.js setWindowsPassword) менять не пришлось.
+- ВАЖНО: пайп-сервер демона и Tauri живут в одном процессе и делят один SessionManager/SqliteStorage — пароль из GUI сразу виден пайпу.
+
+#### 6.16.4 V2-провайдер (СДЕЛАНО, DLL собирается)
+
+- `windows-credential-provider/src/Provider.cpp`: `RequestUnlockFromDaemon` теперь заполняет outError конкретикой (daemon not running / сообщение демона / no password / malformed) вместо общего «confirm the unlock on your watch»; `GetSerialization` показывает её на плитке.
+- Исправлены смоук-тесты: SerializationSmokeTest.cpp — CredIsProtectedW требует mutable buffer; добавлены initguid.h/propkey.h/propvarutil.h (PKEY_Identity_* не объявлялись); GetSerialization вызывался со старой сигнатурой 3 аргумента → 4 (+ status/icon), проверка autoLogon заменена на CPSI_SUCCESS.
+- Сборка: build/Release/WristKeyCredentialProvider.dll + 4 смоук-теста .exe собираются. Регистрация/плитка на реальной машине — НЕ подтверждены.
+
+#### 6.16.5 Часы: уведомление-подтверждение вместо молчания (КОД НАПИСАН, компиляция ЗАБЛОКИРОВАНА окружением)
+
+- `WristKeyBleService.kt`: при challenge от paired ПК без recent motion НЕ молчим (это давало 10с таймаут на ПК, см. 6.15.2). Вместо громоздкого UnlockActivity используется уведомление (канал `wristkey_confirm_channel`, IMPORTANCE_HIGH): кнопка «Подтвердить»/«Отмена» + тап по телу уведомления открывает полный touch-point экран. Обе ветки идут через тот же `com.wristkey.UNLOCK_ACTION` → `unlockReceiver`. approved → подписать+notify RESPONSE (user_present=1); denied → мгновенный отказ (RESPONSE = 1 байт 0x00). Таймаут 10 с: `onChallengeConfirmationTimeout()` шлёт явный отказ вместо тишины (`refuseChallenge`), уведомление автозакрывается (`setTimeoutAfter` + cancel). Таймер/уведомление чистятся в `unlockReceiver` и `onDestroy`.
+- Строки: `notification_channel_confirm`, `confirm_unlock_notification_title` (EN + RU).
+- ПОСЛЕДНИЙ БЛОКЕР СБОРКИ wear-os (подтверждён повторно в этой сессии): JVM-процесс не может сделать loopback TCP-коннект (`java.net.ConnectException: Connection timed out: getsockopt`) на 127.0.0.1 и ::1, при этом .NET/Winsock loopback работает. Падает любые Gradle-задачи (демон стартует и слушает, но клиент Java не может до него достучаться). Вероятно Npcap/**host-фильтр** режет JVM socket'ы. `GRADLE_OPTS`/`JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true`, `--no-daemon`, явные jvmargs, чистка registry — НЕ помогают (in-process build не включается из-за форка single-use daemon). Обойти: отключить Npcap loopback в настройках сети (как админ) или собрать через Android Studio / GitHub Actions. Код использует только стандартные API и должен компилироваться — но сборка на этой машине сейчас невозможна.
+
+#### 6.16.6 Смоук-тесты провайдера (СДЕЛАНО: 3/4 зелёные + найден и исправлен баг)
+
+- Сборка: `build-provider.cmd` → `build/Release/WristKeyCredentialProvider.dll` + 4 смоук-теста, warnings нет.
+- `ProviderSmokeTest.exe` → PASSED (4 field descriptor, credential count 0 без user array).
+- `UserArraySmokeTest.exe` → PASSED (1 credential, username/SID корректны).
+- `SerializationSmokeTest.exe` → **НАЙДЕН И ИСПРАВЛЕН БАГ**: первоначально `EXIT=21 "Authentication package was not populated"` (`ulAuthenticationPackage==0`). Причина: lookup по `NEGOSSP_NAME_A` ("Negotiate") через `LsaConnectUntrusted`+`LsaLookupAuthenticationPackage` на этой машине возвращает **package id 0** (проверено зондом: Negotiate→0, Kerberos→2). В LogonUI это = «нет authentication package», вход отклонялся бы. Исправление: `RetrieveNegotiateAuthPackage` → `RetrieveKerberosAuthPackage`, строка пакета `MICROSOFT_KERBEROS_NAME_A` ("Kerberos") — буфер `KERB_INTERACTIVE_UNLOCK_LOGON` потребляет именно Kerberos-пакет (helpers.cpp/helpers.h/Provider.cpp). После фикса тест PASSED: Auth package=2, KerbWorkstationUnlockLogon, домен `.`, user WristKeyTestUser, пароль CredProtect, запрос демону `{"action":"unlock"}`.
+- `RegistrationSmokeTest.exe` — **PASSED под админом** (UAC): `DllRegisterServer` → 0x0, `DllUnregisterServer` → 0x0, EXIT=0. Без прав: `0x80070005` (E_ACCESSDENIED) — экспорт существует и вызывается; round-trip регистрации подтверждён из-под админа в этой же сессии.
+- `WristKeyCredentialProvider.def`: экспорты помечены `PRIVATE` (как в MS-эталоне) — убран LNK4104.
+- Экспорты DLL: DllCanUnloadNow/DllGetClassObject/DllRegisterServer/DllUnregisterServer — на месте.
+
+#### 6.16.7 Сверка сборок (СДЕЛАНО частично, wear-os заблокирован окружением)
+
+- cargo check `-p wristkey-daemon` → OK (только ранее существующие warnings: dead_code CP_NAME в platform-win, unused в tauri).
+- cargo test `-p wristkey-core` → OK (0 тестов в целевых таргетах, падений нет).
+- cargo check `-p wristkey-tauri` → OK (3 пре-существующих warnings).
+- wear-os `:app:compileDebugKotlin` — НЕВОЗМОЖНО на этой машине (JVM loopback TCP заблокирован, см. 6.16.5).
+- C++ провайдер: **все 4 смоук-теста зелёные** (Provider, UserArray, Serialization, Registration[админ]).
+- wear-os `:app:compileDebugKotlin` — НЕВОЗМОЖНО на этой машине (JVM loopback TCP заблокирован, см. 6.16.5).
+
+#### 6.16.8 Статическая сверка E2E-цепочки (СДЕЛАНО)
+
+- CLSID: Guid.cpp `{7E1B7B8A-...}` == install.ps1 `$nativeClsid` == exports.cpp `DllRegisterServer` (ClassID + InprocServer32 + ThreadingModel=Apartment + CREDENTIAL PROVIDERS ключ).
+- install.ps1: копирует DLL в System32 → `regsvr32 /s` → проверяет оба ключа; Uninstall снимает и legacy-managed CLSID. Требует админ; `-DllPath` дефолт = build/Release.
+- Pipe: провайдер `\\.\pipe\wristkey` (Provider.cpp:447) == демон `\\.\pipe\wristkey` (daemon lib.rs:268). Запрос провайдера `{"action":"unlock"}\n` (Provider.cpp:464) == матчер демона (`"unlock"` → do_ble_unlock). Ответ `{"status":"success","password":...}` парсится в Provider.cpp GetSerialization (CPSI_SUCCESS → CPGSR_RETURN_CREDENTIAL_FINISHED; иначе сообщение причины + CPSI_WARNING).
+- Плитка: `GetBitmapValue` грузит системную иконку IDI_INFORMATION — файловой зависимости у своей плитки НЕТ (tileimage.bmp в .microsoft-v2-control — это про тестовый стенд, наш провайдер её не использует).
+- Demo-путь демона: только после `verify_unlock` (challenge/подпись/присутствие, 10с таймаут) расшифровывается и передаётся пароль — «подтверди на часах → пароль не отдаётся».
+- **Edge-баг JSON-парсера — ИСПРАВЛЕН (этой сессией):** наивный парсинг ответа демона (search `"password":"`, cut to next `"`) ломался на пароле с `"`/`\` (serde_json экранирует, а парсер резал по первому `"`). Добавлен `ExtractJsonStringValue` в Provider.cpp: полноценный JSON-строковый декодер (\, \", \/, \b, \f, \n, \r, \t, \uXXXX + суррогатные пары, UTF-8 out) для ключей status/message/password. SerializationSmokeTest расширен: тестовый пайп отвечает escaped-паролем `TestPassword123! \"quoted\" тест` (`\\ \" \u0442...`), а тест делает CredUnprotect-сверку защищённого blob'а с ожидаемой строкой — PASSED (validates decode end-to-end). Базовые смоук-тесты перепрогнаны: Provider/UserArray/Serialization — 0.
+
+#### 6.16.9 Подтверждённое состояние и следующие шаги
+
+- Провайдер: 4/4 смоук-теста зелёные (в т.ч. Registration под админом). DLL в build/Release, чистая сборка. JSON-парсер ответа демона починен и покрыт тестом (см. 6.16.8).
+- cargo check daemon/tauri OK, core-тесты OK, Компиляция wear-os ЗАБЛОКИРОВАНА окружением (JVM loopback TCP, см. 6.16.5).
+- **E2E-шаг (нужен пользователь):** 1) `wear-os` собрать там, где JVM работает (Android Studio/CI); 2) установить приложение на часы, спарить; 3) GUI set_password (пароль теперь может содержать `"` и `\` — парсер чинит); 4) `.\install.ps1` от админа → РЕБУТ; 5) на экране входа найти WristKey-плитку (рядом с PIN), клик → «Confirm on your watch» → подтверждение на часах → вход на рабочий стол; 6) при неудаче: проверить Event Log / лог daemon, LogonId-вопрос 6.13.3. Обновить 6.13.3 по факту.

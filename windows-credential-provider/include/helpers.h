@@ -21,7 +21,7 @@ HRESULT KerbInteractiveUnlockLogonPack(
     BYTE** prgb,
     DWORD* pcb);
 
-HRESULT RetrieveNegotiateAuthPackage(ULONG* pulAuthPackage);
+HRESULT RetrieveKerberosAuthPackage(ULONG* pulAuthPackage);
 
 HRESULT ProtectIfNecessaryAndCopyPassword(
     PCWSTR pwzPassword,

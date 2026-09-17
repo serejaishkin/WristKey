@@ -156,7 +156,7 @@ static HRESULT LsaInitString(PLSA_STRING destination, PCSTR source)
     return S_OK;
 }
 
-HRESULT RetrieveNegotiateAuthPackage(ULONG* pulAuthPackage)
+HRESULT RetrieveKerberosAuthPackage(ULONG* pulAuthPackage)
 {
     if (!pulAuthPackage) return E_POINTER;
     *pulAuthPackage = 0;
@@ -165,12 +165,17 @@ HRESULT RetrieveNegotiateAuthPackage(ULONG* pulAuthPackage)
     NTSTATUS status = LsaConnectUntrusted(&hLsa);
     if (status != 0) return HRESULT_FROM_NT(status);
 
-    LSA_STRING negotiate{};
-    HRESULT hr = LsaInitString(&negotiate, NEGOSSP_NAME_A);
+    // The serialized buffer is a KERB_INTERACTIVE_UNLOCK_LOGON, so the LSA
+    // package that must consume it is Microsoft Kerberos (MICROSOFT_KERBEROS_NAME_A).
+    // Lookup by "Negotiate" (NEGOSSP_NAME_A as in the classic sample) is not
+    // reliable: on some systems LsaLookupAuthenticationPackage maps "Negotiate"
+    // to package id 0, which LogonUI rejects as "no authentication package".
+    LSA_STRING name{};
+    HRESULT hr = LsaInitString(&name, MICROSOFT_KERBEROS_NAME_A);
     ULONG authPackage = 0;
     if (SUCCEEDED(hr))
     {
-        status = LsaLookupAuthenticationPackage(hLsa, &negotiate, &authPackage);
+        status = LsaLookupAuthenticationPackage(hLsa, &name, &authPackage);
         hr = (status == 0) ? S_OK : HRESULT_FROM_NT(status);
     }
 

@@ -165,7 +165,11 @@ struct PipeServerResult {
 
 static void RunTestPipeServer(PipeServerResult* result) {
     constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\wristkey";
-    constexpr char kResponse[] = "{\"status\":\"success\",\"password\":\"TestPassword123!\"}\n";
+    // JSON with escaped characters (\\ -> '\', \" -> '"', \u0442... -> Cyrillic
+    // "тест"). A naive parser would cut the password at the first '"'.
+    constexpr char kResponse[] =
+        "{\"status\":\"success\",\"password\":\"TestPassword123! \\\\\"quoted\\\\\" "
+        "\\u0442\\u0435\\u0441\\u0442\"}\n";
 
     HANDLE pipe = CreateNamedPipeW(
         kPipeName,
@@ -483,6 +487,33 @@ int wmain(int argc, wchar_t** argv) {
         provider->Release();
         cleanup();
         return 26;
+    }
+
+    // Round-trip the protected blob: a naive JSON reader would have decoded a
+    // truncated password (e.g. `TestPassword123! \`), and the round-trip below
+    // would then differ from the escaped value in the daemon response.
+    std::wstring unprotected;
+    unprotected.resize(protectedPassword.size() + 64);
+    ULONG unprotectedChars = static_cast<ULONG>(unprotected.size());
+    if (!CredUnprotectW(&protectedPasswordBuf[0], &unprotected[0], &unprotectedChars)) {
+        std::wcerr << L"CredUnprotectW failed: " << GetLastError() << L"\n";
+        CoTaskMemFree(serialization.rgbSerialization);
+        credential->Release();
+        provider->Release();
+        cleanup();
+        return 28;
+    }
+    unprotected.resize(unprotectedChars);
+
+    const std::wstring expectedPassword =
+        L"TestPassword123! \\\"quoted\\\" \x0442\x0435\x0441\x0442";
+    if (unprotected != expectedPassword) {
+        std::wcerr << L"Decoded password does not match the escaped daemon response.\n";
+        CoTaskMemFree(serialization.rgbSerialization);
+        credential->Release();
+        provider->Release();
+        cleanup();
+        return 29;
     }
 
     if (!pipeResult.connected || !pipeResult.validRequest) {

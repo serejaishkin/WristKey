@@ -118,9 +118,11 @@
 
     <!-- BLE Service -->
     <string name="notification_channel_ble">WristKey BLE</string>
+    <string name="notification_channel_confirm">Unlock confirmation</string>
     <string name="notification_title">WristKey</string>
     <string name="notification_paired">Paired: %1$s</string>
     <string name="notification_setup">New PC setup — PIN: %1$s</string>
+    <string name="confirm_unlock_notification_title">Confirm PC unlock</string>
     <string name="default_unknown">Unknown</string>
 
     <!-- Permissions -->

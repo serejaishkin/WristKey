@@ -118,9 +118,11 @@
 
     <!-- BLE Service -->
     <string name="notification_channel_ble">WristKey BLE</string>
+    <string name="notification_channel_confirm">Подтверждение разблокировки</string>
     <string name="notification_title">WristKey</string>
     <string name="notification_paired">Сопряжён: %1$s</string>
     <string name="notification_setup">Настройка нового ПК — PIN: %1$s</string>
+    <string name="confirm_unlock_notification_title">Подтвердить разблокировку ПК</string>
     <string name="default_unknown">Неизвестно</string>
 
     <!-- Permissions -->
