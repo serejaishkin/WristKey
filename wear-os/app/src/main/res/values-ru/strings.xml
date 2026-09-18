@@ -20,6 +20,8 @@
     <string name="chip_training">🎯 Обучение точки</string>
     <string name="chip_settings">⚙ Настройки</string>
     <string name="chip_new_pc">＋ Настроить новый ПК</string>
+    <string name="chip_paired_pc">💻 Сопряжённый ПК</string>
+    <string name="btn_unlock">🔓 Разблокировать ПК</string>
     <string name="dialog_new_pc_title">Настроить новый ПК?</string>
     <string name="dialog_new_pc_body">Будет создан новый код настройки.\nТекущий ПК будет заменён новым.</string>
     <string name="toast_new_code_created">Новый код создан</string>

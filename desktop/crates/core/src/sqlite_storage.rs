@@ -18,7 +18,7 @@ impl SqliteStorage {
             WristKeyError::Storage(format!("failed to open sqlite db at {:?}: {}", path, e))
         })?;
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
+            "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS devices (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, public_key BLOB NOT NULL,
                 device_id BLOB, paired_at TEXT NOT NULL, baseline_rssi INTEGER NOT NULL,
@@ -35,6 +35,13 @@ impl SqliteStorage {
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
     pub fn open_default() -> Result<Self> {
+        if let Ok(dir) = std::env::var("WRISTKEY_DATA_DIR") {
+            if !dir.is_empty() {
+                let path = PathBuf::from(dir);
+                std::fs::create_dir_all(&path).map_err(|e| WristKeyError::Storage(format!("failed to create data dir: {}", e)))?;
+                return Self::new(path.join("wristkey.sqlite"));
+            }
+        }
         let dirs = directories::ProjectDirs::from("", "", "WristKey")
             .ok_or_else(|| WristKeyError::Storage("cannot determine data directory".into()))?;
         let path = dirs.data_dir();

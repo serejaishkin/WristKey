@@ -33,6 +33,23 @@ pub mod win_service {
         }
     }
 
+    fn init_service_logging(log_dir: &std::path::Path) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+        let writer = crate::log_rolling::RollingWriter::new(
+            &log_dir.join("wristkey-service.log"),
+            20 * 1024 * 1024,
+            3,
+        ).ok()?;
+        let (non_blocking, guard) = tracing_appender::non_blocking(writer);
+        tracing_subscriber::fmt()
+            .with_writer(non_blocking)
+            .with_ansi(false)
+            .with_level(true)
+            .with_target(true)
+            .try_init()
+            .ok()?;
+        Some(guard)
+    }
+
     fn run_service() -> windows_service::Result<()> {
         let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
@@ -66,13 +83,16 @@ pub mod win_service {
             process_id: None,
         })?;
 
-        info!("WristKey service starting...");
-
-        // Init logging
-        let log_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("WristKey/logs");
+        // Init logging to a file so the service is diagnosable.
+        let log_dir = match std::env::var("WRISTKEY_DATA_DIR") {
+            Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir).join("logs"),
+            _ => dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("WristKey/logs"),
+        };
         std::fs::create_dir_all(&log_dir).ok();
+        let _log_guard = init_service_logging(&log_dir);
+        info!("WristKey service starting... (data dir: {:?})", std::env::var("WRISTKEY_DATA_DIR").ok());
 
         status_handle.set_service_status(ServiceStatus {
             service_type: SERVICE_TYPE,
@@ -171,6 +191,15 @@ pub mod win_service {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
 
+        let data_dir = directories::ProjectDirs::from("", "", "WristKey")
+            .map(|d| d.data_dir().to_string_lossy().to_string())
+            .unwrap_or_default();
+        let mut launch_arguments = vec![OsString::from("--service")];
+        if !data_dir.is_empty() {
+            launch_arguments.push(OsString::from("--data-dir"));
+            launch_arguments.push(OsString::from(data_dir));
+        }
+
         let service_info = ServiceInfo {
             name: OsString::from(SERVICE_NAME),
             display_name: OsString::from("WristKey BLE Unlock"),
@@ -178,7 +207,7 @@ pub mod win_service {
             start_type: ServiceStartType::AutoStart,
             error_control: ServiceErrorControl::Normal,
             executable_path: std::path::PathBuf::from(exe_path),
-            launch_arguments: vec![OsString::from("--service")],
+            launch_arguments,
             dependencies: vec![],
             account_name: None,
             account_password: None,

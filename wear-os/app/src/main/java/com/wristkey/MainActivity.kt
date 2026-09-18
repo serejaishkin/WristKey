@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
         var pin by remember { mutableStateOf("----") }
         var statusText by remember { mutableStateOf(getString(R.string.status_launching)) }
         var paired by remember { mutableStateOf(false) }
+        var pairedPcName by remember { mutableStateOf<String?>(null) }
         var advertising by remember { mutableStateOf(false) }
         var pairingRequested by remember { mutableStateOf(false) }
         var showNewPcConfirm by remember { mutableStateOf(false) }
@@ -135,6 +136,7 @@ class MainActivity : ComponentActivity() {
             while (true) {
                 val svc = bleService
                 paired = svc?.isPaired() == true
+                pairedPcName = if (paired) svc?.getPairedDeviceName() else null
                 pairingRequested = svc?.pairingRequested?.get() == true
                 advertising = svc?.isAdvertising() == true
                 pin = if (!paired || newSetupMode) svc?.getAdvertisePin() ?: "----" else "----"
@@ -192,6 +194,25 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     if (paired) {
+                        item {
+                            Button(
+                                onClick = { startActivity(Intent(this@MainActivity, com.wristkey.ui.UnlockActivity::class.java)) },
+                                modifier = Modifier.fillMaxWidth(0.92f)
+                            ) { Text(getString(R.string.btn_unlock)) }
+                        }
+                        item {
+                            Chip(
+                                label = { Text(getString(R.string.chip_paired_pc)) },
+                                secondaryLabel = { Text(pairedPcName ?: getString(R.string.label_pc)) },
+                                onClick = {
+                                    startActivity(
+                                        Intent(this@MainActivity, SettingsActivity::class.java)
+                                            .putExtra(SettingsActivity.EXTRA_START_ROUTE, SettingsActivity.ROUTE_PAIRED_DEVICES)
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth(0.92f)
+                            )
+                        }
                         item {
                             Chip(
                                 label = { Text(if (advertising) getString(R.string.chip_reconnect) else getString(R.string.chip_connect)) },

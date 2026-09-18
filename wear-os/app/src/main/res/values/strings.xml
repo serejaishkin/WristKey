@@ -20,6 +20,8 @@
     <string name="chip_training">🎯 Touch point training</string>
     <string name="chip_settings">⚙ Settings</string>
     <string name="chip_new_pc">＋ Set up new PC</string>
+    <string name="chip_paired_pc">💻 Paired PC</string>
+    <string name="btn_unlock">🔓 Unlock PC</string>
     <string name="dialog_new_pc_title">Set up new PC?</string>
     <string name="dialog_new_pc_body">A new setup code will be created.\nThe current PC will be replaced.</string>
     <string name="toast_new_code_created">New code created</string>

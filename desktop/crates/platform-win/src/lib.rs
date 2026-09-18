@@ -3,7 +3,7 @@ use wristkey_core::{PlatformSecurity, Result, SessionManager};
 use wristkey_crypto::generate_key;
 use std::sync::Arc;
 use windows::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
+    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_LOCAL_MACHINE,
 };
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 
@@ -17,7 +17,7 @@ impl KeyProtector for WindowsKeyProtector {
                 pbData: plaintext.as_ptr() as *mut u8,
             };
             let mut data_out = CRYPT_INTEGER_BLOB::default();
-            CryptProtectData(&mut data_in, None, None, None, None, 0, &mut data_out)
+            CryptProtectData(&mut data_in, None, None, None, None, CRYPTPROTECT_LOCAL_MACHINE, &mut data_out)
                 .expect("CryptProtectData failed");
             let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
             let result = slice.to_vec();

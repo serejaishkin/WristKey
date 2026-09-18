@@ -158,34 +158,7 @@ fun TrainingScreen(bleService: () -> WristKeyBleService?, onDone: () -> Unit, on
             drawCircle(Color.Black, radius = 5f, center = center)
         }
 
-        Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            when (phase) {
-                TrainPhase.PREP -> Text(
-                    stringResource(R.string.training_prep, secondsLeft),
-                    style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center
-                )
-                TrainPhase.RECORD -> Text(
-                    stringResource(R.string.training_record, secondsLeft, sampleCount),
-                    style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center
-                )
-                TrainPhase.DONE -> {
-                    Text(stringResource(R.string.training_done), style = MaterialTheme.typography.title3, textAlign = TextAlign.Center, color = Color(0xFF4CAF50))
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = onDone, modifier = Modifier.fillMaxWidth(0.6f)) { Text(stringResource(R.string.btn_done)) }
-                }
-            }
-            if (phase != TrainPhase.DONE) {
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onCancelled, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.5f)) { Text(stringResource(R.string.btn_cancel)) }
-            }
-        }
-
+        // Tap capture sits BELOW the controls so the Done/Cancel buttons stay clickable.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -221,5 +194,33 @@ fun TrainingScreen(bleService: () -> WristKeyBleService?, onDone: () -> Unit, on
                     }
                 }
         )
+
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            when (phase) {
+                TrainPhase.PREP -> Text(
+                    stringResource(R.string.training_prep, secondsLeft),
+                    style = MaterialTheme.typography.body1,
+                    textAlign = TextAlign.Center
+                )
+                TrainPhase.RECORD -> Text(
+                    stringResource(R.string.training_record, secondsLeft, sampleCount),
+                    style = MaterialTheme.typography.body1,
+                    textAlign = TextAlign.Center
+                )
+                TrainPhase.DONE -> {
+                    Text(stringResource(R.string.training_done), style = MaterialTheme.typography.title3, textAlign = TextAlign.Center, color = Color(0xFF4CAF50))
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onDone, modifier = Modifier.fillMaxWidth(0.6f)) { Text(stringResource(R.string.btn_done)) }
+                }
+            }
+            if (phase != TrainPhase.DONE) {
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onCancelled, colors = ButtonDefaults.secondaryButtonColors(), modifier = Modifier.fillMaxWidth(0.5f)) { Text(stringResource(R.string.btn_cancel)) }
+            }
+        }
     }
 }

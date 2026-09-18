@@ -26,26 +26,32 @@ import com.wristkey.security.TouchPointStore
 import com.wristkey.ui.TrainingActivity
 
 class SettingsActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_START_ROUTE = "start_route"
+        const val ROUTE_PAIRED_DEVICES = "paired_devices"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val startRoute = intent.getStringExtra(EXTRA_START_ROUTE) ?: "main"
         setContent {
             MaterialTheme {
-                SettingsNavHost()
+                SettingsNavHost(startRoute)
             }
         }
     }
 }
 
 @Composable
-fun SettingsNavHost() {
+fun SettingsNavHost(startRoute: String = "main") {
     val navController = rememberSwipeDismissableNavController()
     val context = LocalContext.current
     val settings = remember { WristKeySettings(context) }
 
     SwipeDismissableNavHost(
         navController = navController,
-        startDestination = "main"
+        startDestination = startRoute
     ) {
         composable("main") { MainSettingsScreen(navController, settings) }
         composable("confirm_mode") { ConfirmModeScreen(navController, settings) }
@@ -70,6 +76,12 @@ fun MainSettingsScreen(
 
     val touchContext = LocalContext.current
     val touchTrained = remember { mutableStateOf(TouchPointStore(touchContext).isTrained()) }
+    // Real pairing lives in the BLE service prefs; WristKeySettings.pairedDevices
+    // is a legacy set that is never written, which is why the count showed 0.
+    val pairedPrefs = remember { touchContext.getSharedPreferences(WristKeyBleService.PREFS_NAME, Context.MODE_PRIVATE) }
+    val pairedAddress = pairedPrefs.getString(WristKeyBleService.PREFS_PAIRED_ADDRESS, null)
+    val pairedName = pairedPrefs.getString(WristKeyBleService.PREFS_PAIRED_NAME, null)
+    val pairedCount = if (pairedAddress.isNullOrEmpty()) 0 else 1
 
     val listState = rememberScalingLazyListState()
 
@@ -121,7 +133,12 @@ fun MainSettingsScreen(
             item {
                 Chip(
                     label = { Text(stringResource(R.string.settings_paired_pcs)) },
-                    secondaryLabel = { Text("${settings.pairedDevices.size}${stringResource(R.string.settings_devices_suffix)}") },
+                    secondaryLabel = {
+                        Text(
+                            if (pairedCount == 0) "0${stringResource(R.string.settings_devices_suffix)}"
+                            else "$pairedCount${stringResource(R.string.settings_devices_suffix)} · ${pairedName ?: stringResource(R.string.label_pc)}"
+                        )
+                    },
                     onClick = { navController.navigate("paired_devices") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
