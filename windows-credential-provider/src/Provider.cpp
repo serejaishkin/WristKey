@@ -70,16 +70,25 @@ ULONG STDMETHODCALLTYPE WristKeyProvider::Release() {
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD) {
     switch (cpus) {
-    case CPUS_LOGON:
     case CPUS_UNLOCK_WORKSTATION:
-        // Match Microsoft's V2 sample: these are the two LogonUI scenarios
-        // needed for normal sign-in and workstation unlock.
+        // WristKey is intentionally unlock-only for now. Normal password/PIN
+        // sign-in must remain entirely owned by the built-in Windows providers.
         _scenario = cpus;
         _recreateCredentials = true;
         return S_OK;
-    case CPUS_CHANGE_PASSWORD:
+
     case CPUS_CREDUI:
+        // Credential UI is used by Settings / account-management flows.
+        // We explicitly participate but enumerate zero credentials, so WristKey
+        // cannot interfere with dialogs that are not the lock screen.
+        _scenario = cpus;
+        _recreateCredentials = true;
+        return S_OK;
+
+    case CPUS_LOGON:
+    case CPUS_CHANGE_PASSWORD:
         return E_NOTIMPL;
+
     default:
         return E_INVALIDARG;
     }
@@ -182,7 +191,12 @@ void WristKeyProvider::ReleaseCredentials() {
 HRESULT WristKeyProvider::CreateCredentials() {
     ReleaseCredentials();
 
-    if (!_userArray) return S_OK;
+    if (_scenario == CPUS_CREDUI) {
+        // Never expose a WristKey credential to generic Credential UI callers.
+        return S_OK;
+    }
+
+    if (_scenario != CPUS_UNLOCK_WORKSTATION || !_userArray) return S_OK;
 
     DWORD userCount = 0;
     HRESULT hr = _userArray->GetCount(&userCount);
@@ -718,6 +732,45 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
     return S_OK;
 }
 
+static std::wstring WinErrorText(DWORD error) {
+    if (error == ERROR_LOGON_FAILURE) {
+        return L"Windows rejected the username/password (error 1326 — logon failure).";
+    }
+    if (error == ERROR_ACCOUNT_DISABLED) {
+        return L"The Windows account is disabled.";
+    }
+    if (error == ERROR_ACCOUNT_LOCKED_OUT) {
+        return L"The Windows account is locked out.";
+    }
+    if (error == ERROR_PASSWORD_EXPIRED) {
+        return L"The Windows password has expired.";
+    }
+    if (error == ERROR_LOGON_TYPE_NOT_GRANTED) {
+        return L"The account is not allowed to log on with this credential type.";
+    }
+
+    wchar_t message[512]{};
+    const DWORD length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        error,
+        0,
+        message,
+        ARRAYSIZE(message),
+        nullptr);
+
+    if (length == 0) {
+        return L"Windows rejected the credential (Win32 error " +
+               std::to_wstring(error) + L").";
+    }
+
+    std::wstring text(message, length);
+    while (!text.empty() && (text.back() == L'\\r' || text.back() == L'\\n' || text.back() == L' ')) {
+        text.pop_back();
+    }
+    return L"Windows: " + text + L" (error " + std::to_wstring(error) + L").";
+}
+
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::ReportResult(
     NTSTATUS ntsStatus,
     NTSTATUS ntsSubstatus,
@@ -726,9 +779,19 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::ReportResult(
     if (status) *status = nullptr;
     if (icon) *icon = CPSI_NONE;
 
-    if (ntsStatus != 0) {
-        if (status) CopyString(L"WristKey: Windows rejected the credential.", status);
-        if (icon) *icon = CPSI_ERROR;
+    if (ntsStatus == 0 && ntsSubstatus == 0) {
+        return S_OK;
     }
+
+    // Prefer the substatus when present; it normally contains the specific
+    // reason behind generic STATUS_LOGON_FAILURE values.
+    const NTSTATUS detailStatus = ntsSubstatus != 0 ? ntsSubstatus : ntsStatus;
+    const DWORD winError = LsaNtStatusToWinError(detailStatus);
+
+    if (status) {
+        const std::wstring text = WinErrorText(winError);
+        CopyString((L"WristKey: " + text).c_str(), status);
+    }
+    if (icon) *icon = CPSI_ERROR;
     return S_OK;
 }
