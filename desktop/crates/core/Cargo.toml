@@ -17,7 +17,7 @@ p256 = { workspace = true }
 ecdsa = { workspace = true }
 sha2 = { workspace = true }
 rand = { workspace = true }
-rusqlite = { version = "0.40.2", features = ["bundled", "chrono", "uuid"] }
+rusqlite = { version = "0.30", features = ["bundled", "chrono", "uuid"] }
 bincode = "1.3"
 directories = "5"
 toml = "0.8"
