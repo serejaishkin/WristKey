@@ -1,7 +1,98 @@
-error: unexpected argument '-c' found
+warning: use of deprecated associated function `aes_gcm::aead::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+  --> crates\crypto\src\lib.rs:28:24
+   |
+28 |     let nonce = Nonce::from_slice(&ciphertext[..12]);
+   |                        ^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
 
-  tip: a similar argument exists: '--config'
+warning: `wristkey-crypto` (lib) generated 1 warning
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> crates\core\src\lib.rs:480:43
+    |
+480 |             let pairing_key_enc = base64::encode(self.protector.protect(pairing_key));
+    |                                           ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
 
-Usage: cargo.exe build [OPTIONS]
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:491:45
+    |
+491 |             let pairing_key_bytes = base64::decode(&device.pairing_key_enc)?;
+    |                                             ^^^^^^
 
-For more information, try '--help'.
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:506:47
+    |
+506 |                 let pairing_key_enc = base64::decode(&existing.pairing_key_enc)?;
+    |                                               ^^^^^^
+
+warning: use of deprecated function `base64::encode`: Use Engine::encode
+   --> crates\core\src\lib.rs:513:43
+    |
+513 |             let pairing_key_enc = base64::encode(self.protector.protect(&pairing_key));
+    |                                           ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:523:43
+    |
+523 |             let pairing_key_enc = base64::decode(&device.pairing_key_enc)?;
+    |                                           ^^^^^^
+
+warning: use of deprecated function `base64::decode`: Use Engine::decode
+   --> crates\core\src\lib.rs:533:43
+    |
+533 |             let pairing_key_enc = base64::decode(&device.pairing_key_enc)?;
+    |                                           ^^^^^^
+
+warning: `wristkey-core` (lib) generated 6 warnings
+warning: unused import: `GetLastError`
+   --> crates\platform-win\src\lib.rs:149:55
+    |
+149 |         use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+    |                                                       ^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated constant `CP_NAME` is never used
+   --> crates\platform-win\src\lib.rs:124:11
+    |
+108 | impl WindowsSecurity {
+    | -------------------- associated constant in this implementation
+...
+124 |     const CP_NAME: &'static str = "WristKey";
+    |           ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wristkey-platform-win` (lib) generated 2 warnings (run `cargo fix --lib -p wristkey-platform-win` to apply 1 suggestion)
+   Compiling wristkey-tauri v0.1.0 (D:\GitHub\WristKey\desktop\tauri\src-tauri)
+warning: unused import: `std::sync::mpsc`
+ --> tauri\src-tauri\src\service.rs:5:9
+  |
+5 |     use std::sync::mpsc;
+  |         ^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `daemon_enabled`
+  --> tauri\src-tauri\src\main.rs:37:236
+   |
+37 | ...o_string())?; let daemon_enabled=state.daemon.lock().unwrap().is_some(); #[cfg(target_os = "windows")] let cp_registered=WindowsS...
+   |                      ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_daemon_enabled`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `size` is never read
+  --> tauri\src-tauri\src\log_rolling.rs:30:13
+   |
+30 |             size = 0;
+   |             ^^^^^^^^ this value is reassigned later and never used
+...
+34 |         size = file.metadata()?.len();
+   |         ----------------------------- `size` is overwritten here before the previous value is read
+   |
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wristkey-tauri` (bin "wristkey-tauri") generated 3 warnings (run `cargo fix --bin "wristkey-tauri" -p wristkey-tauri` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 2m 46s

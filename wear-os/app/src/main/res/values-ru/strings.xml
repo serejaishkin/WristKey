@@ -17,7 +17,7 @@
     <string name="chip_reconnect">↻ Подключить последний ПК</string>
     <string name="chip_connect">▶ Подключить последний ПК</string>
     <string name="toast_waiting_connect">Ожидаю подключение последнего ПК</string>
-    <string name="chip_training">🎯 Обучение точки</string>
+    <string name="chip_training">🎯 Обучение зоны</string>
     <string name="chip_settings">⚙ Настройки</string>
     <string name="chip_new_pc">＋ Настроить новый ПК</string>
     <string name="chip_paired_pc">💻 Сопряжённый ПК</string>
@@ -85,14 +85,14 @@
     <string name="toast_pc_removed">Текущий ПК сброшен</string>
     <string name="btn_forget_pc">Забыть этот ПК</string>
 
-    <!-- Settings: Touch point -->
-    <string name="title_touch_point">👆 Точка касания</string>
-    <string name="touch_point_trained">Точка обучена: разблокировка подтверждается касанием в неё</string>
-    <string name="touch_point_not_set">Точка не настроена. Без неё unlock покажет кнопку.</string>
-    <string name="btn_train_point">Обучить точку</string>
+    <!-- Settings: Touch zone -->
+    <string name="title_touch_point">👆 Зона разблокировки</string>
+    <string name="touch_point_trained">Зона обучена: разблокировка подтверждается нахождением часов в зоне</string>
+    <string name="touch_point_not_set">Зона не настроена. Без неё разблокировка покажет кнопку.</string>
+    <string name="btn_train_point">Обучить зону</string>
     <string name="btn_retrain_point">Обучить заново</string>
-    <string name="toast_point_cleared">Точка сброшена</string>
-    <string name="btn_reset_point">Сбросить точку</string>
+    <string name="toast_point_cleared">Зона сброшена</string>
+    <string name="btn_reset_point">Сбросить зону</string>
 
     <!-- PairingActivity -->
     <string name="title_pair">Сопряжение WristKey</string>
@@ -104,18 +104,19 @@
     <string name="default_pc_name">Windows PC</string>
 
     <!-- TrainingActivity -->
-    <string name="training_prep">Обучение\n\nКоснитесь точки разблокировки\nОсталось: %1$d с</string>
-    <string name="training_record">Запись точки…\n%1$d с\n\nОбразцов: %2$d\nМожно коснуться ещё раз</string>
-    <string name="training_done">Точка сохранена ✓</string>
+    <string name="training_zone_prep">Поднесите руку\nблизко к зоне\nи подождите</string>
+    <string name="training_zone_record">Держите руку\nв зоне</string>
+    <string name="training_zone_done">Зона сохранена ✓</string>
+    <string name="training_countdown">%1$d с</string>
     <string name="btn_done">Готово</string>
 
     <!-- UnlockActivity -->
     <string name="title_unlock">🔓 Разблокировать ПК?</string>
-    <string name="unlock_point_not_set">Точка разблокировки не настроена</string>
-    <string name="btn_train_point_unlock">Обучить точку</string>
+    <string name="unlock_point_not_set">Зона разблокировки не обучена. Обучите её на главной странице.</string>
+    <string name="btn_train_point_unlock">Обучить зону</string>
     <string name="btn_cancel_unlock">✗ Отмена</string>
-    <string name="unlock_touch_instruction">Коснитесь точки\nразблокировки</string>
-    <string name="unlock_miss">Мимо (%1$d)</string>
+    <string name="unlock_zone_instruction">Оставайтесь в зоне\nи подтвердите</string>
+    <string name="btn_approve_unlock">✓ Разблокировать</string>
     <string name="default_user">Неизвестный ПК</string>
 
     <!-- BLE Service -->

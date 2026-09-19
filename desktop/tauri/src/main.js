@@ -201,9 +201,9 @@ async function pollWatchTraining() {
         if (!label) return;
         label.textContent = s.state;
         if (s.state === 'idle') { label.className = 'status-warn'; detail.style.display = 'none'; }
-        else if (s.state === 'prep') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = `Countdown: ${s.countdown}s — Tap the spot on your watch`; }
-        else if (s.state === 'record') { label.className = 'status-ok'; detail.style.display = 'block'; detail.textContent = `Recording: ${s.countdown}s, samples: ${s.samples || 0}`; }
-        else if (s.state === 'done') { label.className = 'status-ok'; detail.style.display = 'block'; detail.textContent = `Done! Point: (${(s.x*100).toFixed(1)}%, ${(s.y*100).toFixed(1)}%)`; }
+        else if (s.state === 'prep') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = `Phase 1/2 — Hold your hand near the zone\nCountdown: ${s.countdown}s\nRemember: no taps are needed`; }
+        else if (s.state === 'record') { label.className = 'status-ok'; detail.style.display = 'block'; detail.textContent = `Phase 2/2 — Hold the watch in the zone\nCountdown: ${s.countdown}s\nRSSI: ${s.zone_rssi ?? '—'} dBm · samples: ${s.samples || 0}`; }
+        else if (s.state === 'done') { label.className = 'status-ok'; detail.style.display = 'block'; detail.textContent = `Zone trained!\nBaseline RSSI: ${s.zone_rssi ?? '—'} dBm`; }
         else if (s.state === 'starting') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = 'Watch is starting training...'; }
         else if (s.state === 'cancelled') { label.className = 'status-warn'; detail.style.display = 'block'; detail.textContent = 'Training cancelled'; }
     } catch (e) { console.error('pollWatchTraining failed:', e); }

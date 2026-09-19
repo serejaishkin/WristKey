@@ -53,10 +53,14 @@ pub async fn wait_for_response(
             let ble = ble.clone();
             let conn = conn.clone();
             let read_task = tokio::spawn(async move { ble.read(&conn, response_char).await });
-            if let Ok(Ok(data)) = timeout(Duration::from_millis(1500), read_task).await {
-                if !data.is_empty() {
-                    debug!("response via read: {} bytes", data.len());
-                    return Ok(data);
+            if let Ok(join_result) = timeout(Duration::from_millis(1500), read_task).await {
+                if let Ok(read_result) = join_result {
+                    if let Ok(data) = read_result {
+                        if !data.is_empty() {
+                            debug!("response via read: {} bytes", data.len());
+                            return Ok(data);
+                        }
+                    }
                 }
             }
         }

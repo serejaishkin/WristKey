@@ -85,14 +85,14 @@
     <string name="toast_pc_removed">Current PC removed</string>
     <string name="btn_forget_pc">Forget this PC</string>
 
-    <!-- Settings: Touch point -->
-    <string name="title_touch_point">👆 Touch point</string>
-    <string name="touch_point_trained">Point trained: unlock is confirmed by tapping it</string>
-    <string name="touch_point_not_set">Point not set. Without it, unlock will show a button.</string>
-    <string name="btn_train_point">Train point</string>
-    <string name="btn_retrain_point">Retrain point</string>
-    <string name="toast_point_cleared">Point cleared</string>
-    <string name="btn_reset_point">Reset point</string>
+    <!-- Settings: Touch zone -->
+    <string name="title_touch_point">👆 Unlock zone</string>
+    <string name="touch_point_trained">Zone trained: unlock confirmed by holding the watch in the zone</string>
+    <string name="touch_point_not_set">Zone not set. Without it, unlock will show a button.</string>
+    <string name="btn_train_point">Train zone</string>
+    <string name="btn_retrain_point">Retrain zone</string>
+    <string name="toast_point_cleared">Zone cleared</string>
+    <string name="btn_reset_point">Reset zone</string>
 
     <!-- PairingActivity -->
     <string name="title_pair">Pair WristKey</string>
@@ -104,18 +104,19 @@
     <string name="default_pc_name">Windows PC</string>
 
     <!-- TrainingActivity -->
-    <string name="training_prep">Training\n\nTap the unlock point\nTime left: %1$d s</string>
-    <string name="training_record">Recording point…\n%1$d s\n\nSamples: %2$d\nTap again to refine</string>
-    <string name="training_done">Point saved ✓</string>
+    <string name="training_zone_prep">Bring your hand\nclose to the zone,\nthen wait</string>
+    <string name="training_zone_record">Hold still\nin the zone</string>
+    <string name="training_zone_done">Zone saved ✓</string>
+    <string name="training_countdown">%1$d s</string>
     <string name="btn_done">Done</string>
 
     <!-- UnlockActivity -->
     <string name="title_unlock">🔓 Unlock PC?</string>
-    <string name="unlock_point_not_set">Touch point not set</string>
-    <string name="btn_train_point_unlock">Train point</string>
+    <string name="unlock_point_not_set">Unlock zone not trained. Train it from the main page.</string>
+    <string name="btn_train_point_unlock">Train zone</string>
     <string name="btn_cancel_unlock">✗ Cancel</string>
-    <string name="unlock_touch_instruction">Tap the unlock\npoint</string>
-    <string name="unlock_miss">Miss (%1$d)</string>
+    <string name="unlock_zone_instruction">Stay in the zone\nand confirm</string>
+    <string name="btn_approve_unlock">✓ Unlock</string>
     <string name="default_user">Unknown PC</string>
 
     <!-- BLE Service -->
