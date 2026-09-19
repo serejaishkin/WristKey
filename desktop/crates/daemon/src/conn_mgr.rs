@@ -53,7 +53,14 @@ impl ConnectionManager {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
         info!("resolve_peripheral: scanning for saved_id={} name={:?} device_id={:?}",
             info.id, info.name, info.device_id);
-        let mut rx = adapter.scan(service_uuid).await?;
+        let mut rx = match timeout(Duration::from_secs(10), adapter.scan(service_uuid)).await {
+            Ok(Ok(rx)) => rx,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                let _ = timeout(Duration::from_secs(5), adapter.stop_scan()).await;
+                return Err(WristKeyError::Ble(format!("BLE scan start timed out")));
+            }
+        };
         let deadline = Instant::now() + Duration::from_secs(8);
 
         // First drain all already-enumerated peripherals that the scan task
@@ -82,7 +89,7 @@ impl ConnectionManager {
                     "BLE reconnect resolved (initial drain): saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
                     info.id, candidate.id, candidate.name, wristkey_advertised
                 );
-                let _ = adapter.stop_scan().await;
+                let _ = timeout(Duration::from_secs(5), adapter.stop_scan()).await;
                 return Ok(candidate);
             } else {
                 debug!(
@@ -119,7 +126,7 @@ impl ConnectionManager {
                             "BLE reconnect resolved (live event): saved_id={} -> current_id={} name={:?} wristkey_advertised={}",
                             info.id, candidate.id, candidate.name, wristkey_advertised
                         );
-                        let _ = adapter.stop_scan().await;
+                        let _ = timeout(Duration::from_secs(5), adapter.stop_scan()).await;
                         return Ok(candidate);
                     } else {
                         debug!(
@@ -134,7 +141,7 @@ impl ConnectionManager {
             }
         }
 
-        let _ = adapter.stop_scan().await;
+        let _ = timeout(Duration::from_secs(5), adapter.stop_scan()).await;
         Err(WristKeyError::Ble(format!(
             "paired BLE peripheral not discovered with WristKey advertisement (saved id {}, name {:?})",
             info.id, info.name
@@ -146,17 +153,24 @@ impl ConnectionManager {
         adapter: &Arc<dyn BleAdapter>,
         info: &PeripheralInfo,
     ) -> Result<Connection> {
-        let _ = adapter.stop_scan().await;
+        let _ = timeout(Duration::from_secs(5), adapter.stop_scan()).await;
 
         if let Some(conn) = self.connections.read().await.get(&info.id).cloned() {
-            match adapter.read_rssi(&conn).await {
-                Ok(rssi) => {
+            match timeout(Duration::from_secs(5), adapter.read_rssi(&conn)).await {
+                Ok(Ok(rssi)) => {
                     debug!("BLE connection alive for {} (RSSI {})", info.id, rssi);
                     return Ok(conn);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!("BLE connection stale for {}: {}; removing cached connection", info.id, e);
                     self.connections.write().await.remove(&info.id);
+                    self.resolved.write().await.remove(&info.id);
+                    let _ = adapter.disconnect(&conn).await;
+                }
+                Err(_) => {
+                    warn!("BLE connection stale for {}: RSSI read timed out; removing cached connection", info.id);
+                    self.connections.write().await.remove(&info.id);
+                    self.resolved.write().await.remove(&info.id);
                     let _ = adapter.disconnect(&conn).await;
                 }
             }
@@ -164,10 +178,18 @@ impl ConnectionManager {
 
         // Daemon and UI can ask for a connection at the same time. Serialize
         // discovery/connect so WinRT never gets several competing scans.
-        let _guard = self.reconnect_lock.lock().await;
+        info!("reconnect flow: acquiring serialization lock for {}", info.id);
+        let _guard = match timeout(Duration::from_secs(20), self.reconnect_lock.lock()).await {
+            Ok(guard) => guard,
+            Err(_) => {
+                warn!("reconnect_lock held for 20s by another task; bailing out of reconnect cycle");
+                return Err(WristKeyError::Ble("reconnect serialization lock timed out".into()));
+            }
+        };
+        info!("reconnect flow: lock acquired for {}", info.id);
 
         if let Some(conn) = self.connections.read().await.get(&info.id).cloned() {
-            if adapter.read_rssi(&conn).await.is_ok() {
+            if matches!(timeout(Duration::from_secs(5), adapter.read_rssi(&conn)).await, Ok(Ok(_))) {
                 return Ok(conn);
             }
         }
@@ -192,6 +214,7 @@ impl ConnectionManager {
             // to discovery if the direct link fails (address rotated, reboot).
             let remembered = self.resolved.read().await.get(&info.id).cloned();
             if let Some(current_id) = remembered {
+                info!("reconnect flow: trying remembered id {} for {}", current_id, info.id);
                 let candidate = PeripheralInfo {
                     id: current_id.clone(),
                     name: info.name.clone(),
@@ -201,15 +224,19 @@ impl ConnectionManager {
                     service_uuids: vec![Uuid::parse_str(SERVICE_UUID).unwrap()],
                     raw_manufacturer_data: None,
                 };
-                match adapter.connect(&candidate).await {
-                    Ok(conn) => {
+                match timeout(Duration::from_secs(20), adapter.connect(&candidate)).await {
+                    Ok(Ok(conn)) => {
                         info!("BLE reconnect direct (BT-first) for {} -> {}", info.id, current_id);
                         self.resolved.write().await.insert(info.id.clone(), current_id);
                         self.connections.write().await.insert(info.id.clone(), conn.clone());
                         return Ok(conn);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         warn!("BT-first direct connect to {} failed: {}; falling back to discovery", current_id, e);
+                        self.resolved.write().await.remove(&info.id);
+                    }
+                    Err(_) => {
+                        warn!("BT-first direct connect to {} timed out; falling back to discovery", current_id);
                         self.resolved.write().await.remove(&info.id);
                     }
                 }
@@ -229,16 +256,23 @@ impl ConnectionManager {
                 }
             };
 
-            match adapter.connect(&current).await {
-                Ok(conn) => {
+            match timeout(Duration::from_secs(20), adapter.connect(&current)).await {
+                Ok(Ok(conn)) => {
                     info!("BLE reconnect successful for {} (current id {})", info.id, current.id);
                     self.resolved.write().await.insert(info.id.clone(), current.id.clone());
                     self.connections.write().await.insert(info.id.clone(), conn.clone());
                     return Ok(conn);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!("BLE connect attempt {}/3 failed for {}: {}", attempt, info.id, e);
                     last_error = Some(e);
+                    if attempt < 3 {
+                        sleep(Duration::from_millis(700 * attempt as u64)).await;
+                    }
+                }
+                Err(_) => {
+                    warn!("BLE connect attempt {}/3 timed out for {}", attempt, info.id);
+                    last_error = Some(WristKeyError::Ble(format!("connect to {} timed out", info.id)));
                     if attempt < 3 {
                         sleep(Duration::from_millis(700 * attempt as u64)).await;
                     }

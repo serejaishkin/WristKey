@@ -7,7 +7,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::time::timeout;
 use uuid::Uuid;
 
 use tracing::warn;
@@ -19,6 +18,9 @@ use crate::ConnectionManager;
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
+// Must exceed the watch's 10s confirmation timeout so a negative answer
+// (1-byte refusal sent ~10s after the challenge) always reaches the PC.
+const RESPONSE_WAIT_SECS: u64 = 25;
 
 /// Perform one authenticated unlock exchange against the first paired watch.
 ///
@@ -79,17 +81,13 @@ pub async fn authenticate_device(
         return Err(WristKeyError::Ble("unlock challenge write failed".into()));
     }
 
-    let mut rx = ble.notify(&conn, response_char).await?;
-    let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
-        Ok(Some(data)) => data,
-        _ => {
-            let _ = ble.disconnect(&conn).await;
-            return Err(WristKeyError::Ble("unlock response timeout".into()));
-        }
-    };
+    let response_data = crate::wait_for_response(ble, &conn, response_char, RESPONSE_WAIT_SECS).await?;
 
     if response_data.len() != 65 {
-        let _ = ble.disconnect(&conn).await;
+        // The watch sends a 1-byte refusal ([0]) when the user declines or
+        // the confirmation UI times out; the connection is still healthy, so
+        // the caller keeps the cached session for the next attempt.
+        warn!("unlock: watch returned {} bytes (user denied?)", response_data.len());
         return Err(WristKeyError::Protocol(format!(
             "invalid unlock response length: {} bytes",
             response_data.len()

@@ -284,7 +284,7 @@ class WristKeyBleService : Service() {
         }
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
             when (characteristic?.uuid) {
-                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed or confirmation UI shown" else "not answered (not paired / UI failed)"}") } else -> debug("Challenge ignored outside new pairing mode") } }
+                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; responseCharacteristic?.value = ByteArray(0); when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed or confirmation UI shown" else "not answered (not paired / UI failed)"}") } else -> debug("Challenge ignored outside new pairing mode") } }
                 CONFIG_CHAR_UUID -> debug("Config write bytes=${value?.size ?: 0}")
                 UNLOCK_REQUEST_UUID -> handleUnlockRequest(value)
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }
@@ -298,6 +298,8 @@ class WristKeyBleService : Service() {
             when (characteristic?.uuid) {
                 PUBLIC_KEY_CHAR_UUID -> try { val key = keyStoreManager.getPublicKey(); if (offset >= key.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null) else gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, key.copyOfRange(offset, minOf(offset + 512, key.size))) } catch (e: Exception) { gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null) }
                 CONFIG_CHAR_UUID -> { val data = byteArrayOf(1, (currentPin shr 8).toByte(), currentPin.toByte(), if (isPaired()) 1 else 0); if (offset >= data.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null) else gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, data.copyOfRange(offset, data.size)) }
+                // Readable so the PC can poll for the answer when notify delivery is flaky.
+                RESPONSE_CHAR_UUID -> { val v = responseCharacteristic?.value ?: ByteArray(0); if (offset >= v.size) gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null) else gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, v.copyOfRange(offset, v.size)) }
                 else -> gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
             }
         }

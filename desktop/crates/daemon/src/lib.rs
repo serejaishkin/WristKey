@@ -13,11 +13,63 @@ use wristkey_core::{
     SessionManager, PlatformSecurity, Response,
     Result, WristKeyError, RssiSmoother,
 };
-use wristkey_ble::{BleAdapter, PeripheralInfo};
+use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const CHALLENGE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567891";
 const RESPONSE_CHAR: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567892";
+// The watch sends its explicit refusal ~10s after a challenge it cannot
+// confirm. The PC must wait LONGER than that to ever see it (10s vs 10s was
+// a guaranteed race that failed every unlock whose user was not already
+// present). A 65-byte signed answer arrives in milliseconds when motion is
+// recent, so this window only matters for negative answers.
+const RESPONSE_WAIT_SECS: u64 = 25;
+
+/// Wait for a watch response to a written challenge.
+///
+/// Delivery is polled by READING the response characteristic (the Android
+/// GattServer always serves fresh reads) with the NOTIFY stream as a cheap
+/// auxiliary path; btleplug's WinRT notifications have proven unreliable
+/// across reconnects, so nothing may depend on them alone.
+///
+/// Every poll read runs inside its own spawned task and is awaited for at
+/// most a short slice: a WinRT call that blocks its worker synchronously must
+/// not be able to freeze the shared daemon worker (which kills cycle caps).
+pub async fn wait_for_response(
+    ble: &Arc<dyn BleAdapter>,
+    conn: &Connection,
+    response_char: Uuid,
+    wait_secs: u64,
+) -> Result<Vec<u8>> {
+    let mut rx = ble.notify(conn, response_char).await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_secs);
+    let mut read_attempts = 0usize;
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(WristKeyError::Ble("unlock response timeout".into()));
+        }
+        if read_attempts < 24 {
+            read_attempts += 1;
+            let ble = ble.clone();
+            let conn = conn.clone();
+            let read_task = tokio::spawn(async move { ble.read(&conn, response_char).await });
+            if let Ok(Ok(data)) = timeout(Duration::from_millis(1500), read_task).await {
+                if !data.is_empty() {
+                    debug!("response via read: {} bytes", data.len());
+                    return Ok(data);
+                }
+            }
+        }
+        // Bounded peek at the notify stream so a working notification does
+        // not have to wait for the next poll epoch.
+        if let Ok(Ok(data)) = timeout(Duration::from_millis(250), rx.recv()).await {
+            if !data.is_empty() {
+                debug!("response via notify: {} bytes", data.len());
+                return Ok(data);
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ProximityAction {
@@ -47,6 +99,7 @@ pub struct Daemon {
     conn_mgr: Arc<ConnectionManager>,
     smoother: Mutex<RssiSmoother>,
     debounce: Mutex<DebounceCounter>,
+    last_unlock: Mutex<Option<std::time::Instant>>,
 }
 
 impl Daemon {
@@ -63,6 +116,7 @@ impl Daemon {
             conn_mgr,
             smoother: Mutex::new(RssiSmoother::new(-60i16)),
             debounce: Mutex::new(DebounceCounter::new(3)),
+            last_unlock: Mutex::new(None),
         }
     }
 
@@ -86,15 +140,20 @@ impl Daemon {
             let state = self.session.state().await;
             if !state.is_authenticated() {
                 info!("Daemon started with paired device -- attempting silent reconnect");
-                if let Err(e) = self.authenticate_device(&service_uuid, &devices).await {
-                    warn!("Silent reconnect failed: {}", e);
-                } else {
-                    info!("Silent reconnect successful");
+                match timeout(Duration::from_secs(45), self.authenticate_device(&service_uuid, &devices)).await {
+                    Ok(Ok(())) => info!("Silent reconnect successful"),
+                    Ok(Err(e)) => warn!("Silent reconnect failed: {}", e),
+                    Err(_) => warn!("Silent reconnect exceeded 45s; abandoned (daemon keeps cycling)"),
                 }
             }
         }
 
+        let mut last_cycle = std::time::Instant::now();
         loop {
+            let cycle_start = std::time::Instant::now();
+            if cycle_start.duration_since(last_cycle) > Duration::from_secs(10) {
+                info!("daemon loop: previous cycle stalled for {}s", cycle_start.duration_since(last_cycle).as_secs());
+            }
             tokio::select! {
                 _ = ticker.tick() => {},
                 _ = shutdown_rx.changed() => {
@@ -107,12 +166,32 @@ impl Daemon {
 
             let is_locked = self.platform.is_locked().await.unwrap_or(false);
             let session_state = self.session.state().await;
-            let action = self.check_proximity(&service_uuid, &devices, is_locked).await?;
+            // Run the proximity cycle under a hard slice. A wedged WinRT/
+            // btleplug call must never be able to stall the daemon loop: the
+            // future is abandoned and the loop keeps cycling (reconnecting).
+            let action = match timeout(Duration::from_secs(45), self.check_proximity(&service_uuid, &devices, is_locked)).await {
+                Ok(Ok(a)) => a,
+                Ok(Err(e)) => { warn!("proximity cycle error: {}", e); ProximityAction::None }
+                Err(_) => { warn!("proximity cycle exceeded 45s; abandoned (daemon keeps cycling)"); ProximityAction::None }
+            };
+            last_cycle = cycle_start;
 
             match action {
                 ProximityAction::Unlock if is_locked => {
-                    info!("Watch nearby and locked -> crypto unlock");
-                    if let Err(e) = self.unlock_with_crypto(&service_uuid, &devices).await { warn!("Unlock failed: {}", e); }
+                    // Debounce repeated challenges: while the PC stays locked
+                    // and the watch in range, each 2s cycle would otherwise
+                    // fire another concurrent unlock exchange.
+                    let allow_unlock = {
+                        let mut last = self.last_unlock.lock().await;
+                        match *last {
+                            Some(t) if t.elapsed() < Duration::from_secs(15) => false,
+                            _ => { *last = Some(std::time::Instant::now()); true }
+                        }
+                    };
+                    if allow_unlock {
+                        info!("Watch nearby and locked -> crypto unlock");
+                        if let Err(e) = self.unlock_with_crypto(&service_uuid, &devices).await { warn!("Unlock failed: {}", e); }
+                    }
                 }
                 ProximityAction::Lock if !is_locked && session_state.is_authenticated() => {
                     info!("Watch far away and unlocked -> locking");
@@ -132,9 +211,6 @@ impl Daemon {
         let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
         let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
-        // Subscribe BEFORE writing the challenge so a fast watch response
-        // cannot be missed between the write and the subscription.
-        let mut rx = self.ble.notify(&conn, response_char).await?;
         let challenge = self.session.begin_unlock(device.id).await?;
         let mut write_ok = false;
         for attempt in 1..=3 {
@@ -142,11 +218,14 @@ impl Daemon {
             warn!("Auth write attempt {} failed", attempt); sleep(Duration::from_millis(300)).await;
         }
         if !write_ok { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("auth write failed".into())); }
-        let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
-            Ok(Some(d)) => d,
-            _ => { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("auth response timeout".into())); }
-        };
-        if response_data.len() < 65 { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Protocol(format!("auth response too short: {} bytes", response_data.len()))); }
+        let response_data = wait_for_response(&self.ble, &conn, response_char, RESPONSE_WAIT_SECS).await?;
+        if response_data.len() < 65 {
+            // The watch sends a 1-byte refusal ([0]) when the user declines or
+            // the confirmation UI times out. The session is healthy: keep the
+            // cached connection so the next cycle does not force a reconnect.
+            warn!("auth: watch returned {} bytes (user denied?) -- keeping connection", response_data.len());
+            return Err(WristKeyError::Protocol(format!("auth response too short: {} bytes", response_data.len())));
+        }
         let response = Response { signature: response_data[..64].to_vec(), user_present: response_data[64] != 0, timestamp: chrono::Utc::now() };
         self.session.verify_unlock(&response).await?;
         info!("Silent authenticate OK for {}", device.name);
@@ -217,9 +296,6 @@ impl Daemon {
         let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
         let challenge_char = Uuid::parse_str(CHALLENGE_CHAR).unwrap();
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
-        // Subscribe BEFORE writing the challenge so a fast watch response
-        // cannot be missed between the write and the subscription.
-        let mut rx = self.ble.notify(&conn, response_char).await?;
         let challenge = self.session.begin_unlock(device.id).await?;
         let mut write_ok = false;
         for attempt in 1..=3 {
@@ -227,11 +303,11 @@ impl Daemon {
             warn!("Unlock write attempt {} failed", attempt); sleep(Duration::from_millis(300)).await;
         }
         if !write_ok { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("unlock write failed".into())); }
-        let response_data = match timeout(Duration::from_secs(10), rx.recv()).await {
-            Ok(Some(d)) => d,
-            _ => { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Ble("unlock response timeout".into())); }
-        };
-        if response_data.len() < 65 { let _ = self.ble.disconnect(&conn).await; return Err(WristKeyError::Protocol(format!("unlock response too short: {} bytes", response_data.len()))); }
+        let response_data = wait_for_response(&self.ble, &conn, response_char, RESPONSE_WAIT_SECS).await?;
+        if response_data.len() < 65 {
+            warn!("unlock: watch returned {} bytes (user denied?) -- keeping connection", response_data.len());
+            return Err(WristKeyError::Protocol(format!("unlock response too short: {} bytes", response_data.len())));
+        }
         let response = Response { signature: response_data[..64].to_vec(), user_present: response_data[64] != 0, timestamp: chrono::Utc::now() };
         self.session.verify_unlock(&response).await?;
         self.platform.unlock_screen().await?;
@@ -362,12 +438,10 @@ mod pipe_server {
             service_uuids: vec![service_uuid], raw_manufacturer_data: None };
         let conn = conn_mgr.get_or_connect(&ble, &info).await?;
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
-        // Subscribe before the challenge write: see unlock_with_crypto.
-        let mut rx = ble.notify(&conn, response_char).await?;
         let challenge = session.begin_unlock(device.id).await?;
         ble.write(&conn, Uuid::parse_str(CHALLENGE_CHAR).unwrap(), &challenge.to_bytes()).await?;
-        let data = timeout(Duration::from_secs(10), rx.recv()).await.ok().flatten().ok_or_else(|| WristKeyError::Ble("unlock response timeout".into()))?;
-        if data.len() < 65 { return Err(WristKeyError::Protocol("unlock response too short".into())); }
+        let data = wait_for_response(&ble, &conn, response_char, RESPONSE_WAIT_SECS).await?;
+        if data.len() < 65 { return Err(WristKeyError::Protocol(format!("unlock response too short: {} bytes", data.len()))); }
         let response = Response { signature: data[..64].to_vec(), user_present: data[64] != 0, timestamp: chrono::Utc::now() };
         session.verify_unlock(&response).await?;
         // The watch confirmed presence; only now decrypt and hand over the

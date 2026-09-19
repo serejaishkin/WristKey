@@ -144,9 +144,14 @@ pub mod win_service {
             }
         }
 
-        // Signal tokio daemon to shut down
+        // Signal tokio daemon to shut down. Bound the wait so `sc stop` always
+        // completes even if a BLE operation is wedged in progress; as a final
+        // safety net shutdown_timeout drops any remaining blocked tasks.
         let _ = tokio_shutdown_tx.send(());
-        rt.block_on(async { let _ = daemon_handle.await; });
+        rt.block_on(async {
+            let _ = tokio::time::timeout(Duration::from_secs(25), daemon_handle).await;
+        });
+        rt.shutdown_timeout(Duration::from_secs(5));
 
         status_handle.set_service_status(ServiceStatus {
             service_type: SERVICE_TYPE,
