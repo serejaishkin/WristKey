@@ -70,23 +70,20 @@ ULONG STDMETHODCALLTYPE WristKeyProvider::Release() {
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD) {
     switch (cpus) {
-    case CPUS_UNLOCK_WORKSTATION:
-        // WristKey is intentionally unlock-only for now. Normal password/PIN
-        // sign-in must remain entirely owned by the built-in Windows providers.
-        _scenario = cpus;
-        _recreateCredentials = true;
-        return S_OK;
-
-    case CPUS_CREDUI:
-        // Credential UI is used by Settings / account-management flows.
-        // We explicitly participate but enumerate zero credentials, so WristKey
-        // cannot interfere with dialogs that are not the lock screen.
-        _scenario = cpus;
-        _recreateCredentials = true;
-        return S_OK;
-
     case CPUS_LOGON:
+    case CPUS_UNLOCK_WORKSTATION:
+        // Normal sign-in and workstation unlock are the two LogonUI scenarios
+        // supported by the native V2 provider. Windows keeps its built-in
+        // password/PIN providers registered separately; WristKey only adds
+        // its own credential tile.
+        _scenario = cpus;
+        _recreateCredentials = true;
+        return S_OK;
+
     case CPUS_CHANGE_PASSWORD:
+    case CPUS_CREDUI:
+        // Do not participate in password-change or generic Credential UI flows.
+        // Returning E_NOTIMPL makes LogonUI/CredUI ignore this provider there.
         return E_NOTIMPL;
 
     default:
@@ -191,12 +188,9 @@ void WristKeyProvider::ReleaseCredentials() {
 HRESULT WristKeyProvider::CreateCredentials() {
     ReleaseCredentials();
 
-    if (_scenario == CPUS_CREDUI) {
-        // Never expose a WristKey credential to generic Credential UI callers.
+    if ((_scenario != CPUS_LOGON && _scenario != CPUS_UNLOCK_WORKSTATION) || !_userArray) {
         return S_OK;
     }
-
-    if (_scenario != CPUS_UNLOCK_WORKSTATION || !_userArray) return S_OK;
 
     DWORD userCount = 0;
     HRESULT hr = _userArray->GetCount(&userCount);

@@ -1,6 +1,6 @@
 # WristKey Windows Credential Provider V2
 
-The native x64 provider is the production Windows sign-in path. The old `.NET 4.8` provider is legacy and is not used for the Windows 10/11 **Sign-in options** tile.
+The native x64 provider is the production Windows sign-in/unlock path. The old `.NET 4.8` provider is legacy and is not used for the Windows 10/11 **Sign-in options** tile.
 
 ## Build on Windows
 
@@ -27,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File .\windows-credential-provider\install.p
   -DllPath "$PWD\windows-credential-provider\build\Release\WristKeyCredentialProvider.dll"
 ```
 
-Then **sign out/in or reboot Windows**. Open **Sign-in options** on the Windows lock screen. WristKey is implemented as a V2 Credential Provider and should appear as its own WristKey option/icon.
+Then **sign out/in or reboot Windows**. Open **Sign-in options** on the Windows lock screen. WristKey supports the normal **logon** and **workstation unlock** scenarios as its own credential tile; Windows' built-in password/PIN providers remain separate.
 
 The installer also removes the legacy managed-provider registration so the two implementations cannot compete for the same login UI.
 
@@ -46,3 +46,7 @@ wristkey-windows-credential-provider-x64
 ```
 
 The native provider is registered through its exported `DllRegisterServer`; Windows uses the native DLL directly as the COM `InprocServer32` implementation.
+
+## Scenario safety
+
+The native provider intentionally returns `E_NOTIMPL` for `CPUS_CREDUI` and `CPUS_CHANGE_PASSWORD`, so account-management dialogs and password-change UI do not host the LogonUI provider. A local smoke test covers `CPUS_LOGON`, `CPUS_UNLOCK_WORKSTATION`, `CPUS_CREDUI`, and `CPUS_CHANGE_PASSWORD` without installing the provider.

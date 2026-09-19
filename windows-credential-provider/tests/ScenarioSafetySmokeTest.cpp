@@ -59,9 +59,9 @@ int wmain(int argc, wchar_t** argv) {
         return 6;
     }
 
-    // Normal sign-in: WristKey must stay out of CPUS_LOGON so the built-in
-    // password/PIN providers remain the only normal sign-in credentials.
-    if (Check(provider->SetUsageScenario(CPUS_LOGON, 0), E_NOTIMPL,
+    // Normal sign-in: WristKey supports CPUS_LOGON and adds only its own tile.
+    // Built-in Windows password/PIN providers remain separate.
+    if (Check(provider->SetUsageScenario(CPUS_LOGON, 0), S_OK,
               L"CPUS_LOGON")) {
         provider->Release();
         cleanup();
@@ -76,23 +76,40 @@ int wmain(int argc, wchar_t** argv) {
         return 8;
     }
 
-    // Generic Credential UI: participate safely but expose no tiles.
-    if (Check(provider->SetUsageScenario(CPUS_CREDUI, 0), S_OK,
-              L"CPUS_CREDUI")) {
-        provider->Release();
-        cleanup();
-        return 9;
-    }
-
+    // With no user array yet, the supported logon scenario must enumerate no
+    // credentials rather than manufacturing a tile.
     DWORD count = 99;
     DWORD defaultIndex = 99;
     BOOL autoLogon = TRUE;
     hr = provider->GetCredentialCount(&count, &defaultIndex, &autoLogon);
     if (FAILED(hr) || count != 0 || defaultIndex != CREDENTIAL_PROVIDER_NO_DEFAULT || autoLogon) {
-        std::wcerr << L"CPUS_CREDUI must enumerate zero credentials.\n";
+        std::wcerr << L"CPUS_LOGON without a user array must enumerate zero credentials.\n";
+        provider->Release();
+        cleanup();
+        return 9;
+    }
+
+    // Unlock: WristKey remains available.
+    if (Check(provider->SetUsageScenario(CPUS_UNLOCK_WORKSTATION, 0), S_OK,
+              L"CPUS_UNLOCK_WORKSTATION")) {
         provider->Release();
         cleanup();
         return 10;
+    }
+
+    // Generic Credential UI and password-change flows must be rejected so
+    // account-management dialogs cannot host this LogonUI provider.
+    if (Check(provider->SetUsageScenario(CPUS_CREDUI, 0), E_NOTIMPL,
+              L"CPUS_CREDUI")) {
+        provider->Release();
+        cleanup();
+        return 11;
+    }
+    if (Check(provider->SetUsageScenario(CPUS_CHANGE_PASSWORD, 0), E_NOTIMPL,
+              L"CPUS_CHANGE_PASSWORD")) {
+        provider->Release();
+        cleanup();
+        return 12;
     }
 
     provider->Release();
