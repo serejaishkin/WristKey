@@ -63,8 +63,8 @@ target_compile_definitions(ProviderSmokeTest PRIVATE
 )
 target_link_libraries(ProviderSmokeTest PRIVATE ole32 oleaut32 user32)
 
-# Safe scenario smoke test. Verifies that WristKey is unlock-only, opts into
-# CREDUI without exposing a tile, and explicitly opts out of normal logon.
+# Safe scenario smoke test. Verifies normal logon/unlock support and explicit
+# opt-out from generic Credential UI/password-change flows.
 add_executable(ScenarioSafetySmokeTest tests/ScenarioSafetySmokeTest.cpp)
 target_compile_features(ScenarioSafetySmokeTest PRIVATE cxx_std_17)
 target_compile_definitions(ScenarioSafetySmokeTest PRIVATE
