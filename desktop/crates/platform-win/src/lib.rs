@@ -147,7 +147,7 @@ impl WindowsSecurity {
     pub fn validate_current_user_password(password: &str) -> std::result::Result<(), String> {
         use windows::core::PCWSTR;
         use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
-        use windows::Win32::Security::Authentication::Identity::{
+        use windows::Win32::Security::{
             LogonUserW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
         };
 
@@ -165,7 +165,7 @@ impl WindowsSecurity {
         let password_w = to_wide(password);
 
         let mut token = HANDLE::default();
-        let ok = unsafe {
+        let result = unsafe {
             LogonUserW(
                 PCWSTR(user_w.as_ptr()),
                 PCWSTR(domain_w.as_ptr()),
@@ -176,22 +176,25 @@ impl WindowsSecurity {
             )
         };
 
-        if ok.as_bool() {
-            unsafe { let _ = CloseHandle(token); }
-            return Ok(());
+        match result {
+            Ok(()) => {
+                unsafe { let _ = CloseHandle(token); }
+                Ok(())
+            }
+            Err(error) => {
+                let code = error.code().0 as u32;
+                let detail = match code {
+                    1326 => "The username or password is incorrect.",
+                    1331 => "The account is disabled.",
+                    1909 => "The account is locked out.",
+                    1330 => "The password has expired.",
+                    1385 => "The account is not allowed this logon type.",
+                    _ => "Windows rejected the current password.",
+                };
+
+                Err(format!("Password validation failed for {}\\{}: error {} — {}", domain, username, code, detail))
+            }
         }
-
-        let error = unsafe { GetLastError().0 };
-        let detail = match error {
-            1326 => "The username or password is incorrect.",
-            1331 => "The account is disabled.",
-            1909 => "The account is locked out.",
-            1330 => "The password has expired.",
-            1385 => "The account is not allowed this logon type.",
-            _ => "Windows rejected the current password.",
-        };
-
-        Err(format!("Password validation failed for {}\\{}: error {} — {}", domain, username, error, detail))
     }
 
     pub fn storage_type_description() -> &'static str {
