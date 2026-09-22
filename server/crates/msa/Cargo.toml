@@ -20,3 +20,7 @@ tracing-subscriber = { workspace = true }
 [lib]
 name = "wristkey_msa"
 path = "src/lib.rs"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
