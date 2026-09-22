@@ -1,7 +1,8 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use ed25519_dalek::{Signer, SigningKey};
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{Signature as EcdsaSignature, SigningKey};
 use tower::ServiceExt;
 
 use wristkey_msa::{register_message, router, ServerState};
@@ -30,12 +31,12 @@ async fn challenge_register_status_over_router() {
     let nonce_b64 = challenge["nonce_b64"].as_str().unwrap().to_owned();
     assert_eq!(challenge["ttl_secs"], 300);
 
-    let sk = SigningKey::from_bytes(&[7u8; 32]);
+    let sk = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
     let nonce = B64.decode(&nonce_b64).unwrap();
-    let sig = sk.sign(&register_message(&nonce));
+    let sig: EcdsaSignature = sk.sign(&register_message(&nonce));
     let reg = serde_json::json!({
         "pc_name": "DESK-MSA1",
-        "watch_pubkey_b64": B64.encode(sk.verifying_key().to_bytes()),
+        "watch_pubkey_b64": B64.encode(sk.verifying_key().to_encoded_point(false).as_bytes()),
         "msa_account": "user@outlook.com",
         "nonce_b64": nonce_b64,
         "signature_b64": B64.encode(sig.to_bytes()),

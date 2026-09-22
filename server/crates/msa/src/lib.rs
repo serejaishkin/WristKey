@@ -10,7 +10,8 @@ use axum::middleware::Next;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use ed25519_dalek::{Signature, VerifyingKey};
+use p256::ecdsa::signature::Verifier;
+use p256::ecdsa::{Signature, VerifyingKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -106,8 +107,9 @@ pub fn register_message(nonce: &[u8]) -> Vec<u8> {
 
 fn decode_pub(b64: &str) -> Result<VerifyingKey, String> {
     let bytes = B64.decode(b64).map_err(|e| format!("bad pubkey b64: {e}"))?;
-    let arr: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| format!("pubkey must be 32 bytes, got {}", v.len()))?;
-    VerifyingKey::from_bytes(&arr).map_err(|e| format!("bad ed25519 pubkey: {e}"))
+    // SEC1 uncompressed point: 04 || X(32) || Y(32), same as watch's KeyStoreManager.getPublicKey()
+    let pubkey = p256::PublicKey::from_sec1_bytes(&bytes).map_err(|e| format!("bad P-256 pubkey: {e}"))?;
+    Ok(VerifyingKey::from(pubkey))
 }
 
 fn make_wristkey_id() -> String {
@@ -140,8 +142,8 @@ pub fn do_register(s: &ServerState, req: RegisterReq) -> Result<WatchBinding, Ha
     let vk = decode_pub(&req.watch_pubkey_b64).map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))?;
     let nonce = s.consume_challenge(&req.nonce_b64).map_err(|e| (axum::http::StatusCode::UNAUTHORIZED, e))?;
     let sig_bytes = B64.decode(&req.signature_b64).map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("bad signature b64: {e}")))?;
-    let sig = Signature::from_slice(&sig_bytes).map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("bad signature: {e}")))?;
-    vk.verify_strict(&register_message(&nonce), &sig)
+    let sig = Signature::from_slice(&sig_bytes).map_err(|e| (axum::http::StatusCode::UNAUTHORIZED, format!("bad signature: {e}")))?;
+    vk.verify(&register_message(&nonce), &sig)
         .map_err(|e| (axum::http::StatusCode::UNAUTHORIZED, format!("signature verification failed: {e}")))?;
     let mut wristkey_id = format!("wk-{}", make_wristkey_id());
     while s.lookup(&wristkey_id).is_some() {
@@ -302,14 +304,19 @@ pub async fn run(listen: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
+    use p256::ecdsa::signature::Signer;
+    use p256::ecdsa::{SigningKey, Signature as EcdsaSignature};
+
+    fn test_key(byte: u8) -> SigningKey {
+        SigningKey::from_bytes((&[byte; 32]).into()).unwrap()
+    }
 
     fn signed_register(sk: &SigningKey, nonce_b64: &str) -> RegisterReq {
         let nonce = B64.decode(nonce_b64).unwrap();
-        let sig = sk.sign(&register_message(&nonce));
+        let sig: EcdsaSignature = sk.sign(&register_message(&nonce));
         RegisterReq {
             pc_name: "DESK-MSA1".into(),
-            watch_pubkey_b64: B64.encode(sk.verifying_key().to_bytes()),
+            watch_pubkey_b64: B64.encode(sk.verifying_key().to_encoded_point(false).as_bytes()),
             msa_account: "user@outlook.com".into(),
             nonce_b64: nonce_b64.into(),
             signature_b64: B64.encode(sig.to_bytes()),
@@ -319,7 +326,7 @@ mod tests {
     #[test]
     fn register_then_lookup_then_status() {
         let state = ServerState::new();
-        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let sk = test_key(7);
         let nonce = state.issue_challenge();
         let b = do_register(&state, signed_register(&sk, &nonce)).expect("register ok");
         assert_eq!(state.count(), 1);
@@ -339,7 +346,7 @@ mod tests {
     #[test]
     fn register_rejects_bad_signature() {
         let state = ServerState::new();
-        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let sk = test_key(7);
         let nonce = state.issue_challenge();
         let mut req = signed_register(&sk, &nonce);
         req.signature_b64 = B64.encode([0u8; 64]);
@@ -351,12 +358,13 @@ mod tests {
     #[test]
     fn register_rejects_foreign_key_signature() {
         let state = ServerState::new();
-        let sk = SigningKey::from_bytes(&[7u8; 32]);
-        let other = SigningKey::from_bytes(&[9u8; 32]);
+        let sk = test_key(7);
+        let other = test_key(9);
         let nonce = state.issue_challenge();
         let mut req = signed_register(&sk, &nonce);
         let nonce_raw = B64.decode(&nonce).unwrap();
-        req.signature_b64 = B64.encode(other.sign(&register_message(&nonce_raw)).to_bytes());
+        let sig: EcdsaSignature = other.sign(&register_message(&nonce_raw));
+        req.signature_b64 = B64.encode(sig.to_bytes());
         let err = do_register(&state, req).unwrap_err();
         assert_eq!(err.0, axum::http::StatusCode::UNAUTHORIZED);
     }
@@ -364,7 +372,7 @@ mod tests {
     #[test]
     fn register_rejects_reused_nonce() {
         let state = ServerState::new();
-        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let sk = test_key(7);
         let nonce = state.issue_challenge();
         do_register(&state, signed_register(&sk, &nonce)).expect("first register ok");
         let err = do_register(&state, signed_register(&sk, &nonce)).unwrap_err();
@@ -375,7 +383,7 @@ mod tests {
     #[test]
     fn register_rejects_missing_challenge() {
         let state = ServerState::new();
-        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let sk = test_key(7);
         let never_issued = B64.encode([1u8; 16]);
         let err = do_register(&state, signed_register(&sk, &never_issued)).unwrap_err();
         assert_eq!(err.0, axum::http::StatusCode::UNAUTHORIZED);
