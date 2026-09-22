@@ -122,7 +122,7 @@ async fn status(State(s): State<Arc<ServerState>>, axum::extract::Path(id): axum
 pub fn router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/api/v1/register", post(register))
-        .route("/api/v1/status/:wristkey_id", get(status))
+        .route("/api/v1/status/{wristkey_id}", get(status))
         .with_state(state)
 }
 
