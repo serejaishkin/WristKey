@@ -12,6 +12,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listen = std::env::var("WRISTKEY_MSA_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:8787".to_owned());
+    let token = std::env::var("WRISTKEY_MSA_TOKEN").ok();
+    wristkey_msa::configure_auth(token);
     info!("starting wristkey-msa on {listen}");
     run(&listen).await?;
     Ok(())

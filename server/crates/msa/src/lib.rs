@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use axum::extract::State;
+use axum::extract::{Request, State};
+use axum::http::header::AUTHORIZATION;
+use axum::http::StatusCode;
+use axum::middleware::Next;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -170,19 +174,63 @@ async fn status(State(s): State<Arc<ServerState>>, axum::extract::Path(id): axum
     s.lookup(&id).map(|b| Json(status_resp(b))).ok_or((axum::http::StatusCode::NOT_FOUND, "no such binding".into()))
 }
 
+static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
+
+pub fn configure_auth(token: Option<String>) {
+    if let Some(t) = token {
+        let _ = AUTH_TOKEN.set(t);
+    }
+}
+
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) { diff |= x ^ y; }
+    diff == 0
+}
+
+async fn bearer_auth(req: Request, next: Next) -> Result<axum::response::Response, StatusCode> {
+    let Some(expected) = AUTH_TOKEN.get() else {
+        return Ok(next.run(req).await);
+    };
+    let header = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let provided = header
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if !ct_eq(provided.as_bytes(), expected.as_bytes()) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(next.run(req).await)
+}
+
+async fn health() -> &'static str { "ok" }
+
 pub fn router(state: Arc<ServerState>) -> Router {
-    Router::new()
+    let api = Router::new()
         .route("/api/v1/challenge", post(challenge))
         .route("/api/v1/register", post(register))
         .route("/api/v1/status/{wristkey_id}", get(status))
+        .layer(axum::middleware::from_fn(bearer_auth));
+    Router::new()
+        .route("/api/v1/health", get(health))
+        .merge(api)
         .with_state(state)
 }
 
 pub async fn run(listen: &str) -> std::io::Result<()> {
+    let auth = AUTH_TOKEN.get().is_some();
+    let is_lan = listen.starts_with("0.0.0.0") || listen.starts_with("[::") || listen.starts_with("::");
+    if is_lan && !auth {
+        tracing::warn!("listening on {listen} WITHOUT auth token - anyone on the LAN can call this API. Set WRISTKEY_MSA_TOKEN.");
+    }
     let state = Arc::new(ServerState::new());
     let app = router(state);
     let listener = tokio::net::TcpListener::bind(listen).await?;
-    info!("wristkey-msa listening on {listen}");
+    info!("wristkey-msa listening on {listen} (auth: {})", if auth { "Bearer token" } else { "none" });
     axum::serve(listener, app).await
 }
 
