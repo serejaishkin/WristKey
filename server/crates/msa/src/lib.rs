@@ -176,6 +176,71 @@ async fn status(State(s): State<Arc<ServerState>>, axum::extract::Path(id): axum
 
 static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppMode {
+    Local,
+    Lan,
+}
+
+impl AppMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "lan" => Some(Self::Lan),
+            _ => None,
+        }
+    }
+
+    pub fn default_listen(self) -> &'static str {
+        match self {
+            Self::Local => "127.0.0.1:8787",
+            Self::Lan => "0.0.0.0:8787",
+        }
+    }
+}
+
+impl std::fmt::Display for AppMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Local => "local",
+            Self::Lan => "lan",
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub mode: AppMode,
+    pub listen: String,
+    pub token: Option<String>,
+}
+
+impl Config {
+    pub fn resolve(
+        cli_mode: Option<String>,
+        cli_listen: Option<String>,
+        cli_token: Option<String>,
+    ) -> Result<Self, String> {
+        let mode = cli_mode
+            .or_else(|| std::env::var("WRISTKEY_MSA_MODE").ok())
+            .map(|s| {
+                AppMode::parse(&s).ok_or_else(|| format!("unknown mode '{s}' (expected 'local' or 'lan')"))
+            })
+            .transpose()?
+            .unwrap_or(AppMode::Local);
+        let listen = cli_listen
+            .or_else(|| std::env::var("WRISTKEY_MSA_LISTEN").ok())
+            .unwrap_or_else(|| mode.default_listen().to_owned());
+        let token = cli_token.or_else(|| std::env::var("WRISTKEY_MSA_TOKEN").ok());
+        match mode {
+            AppMode::Lan if token.is_none() => Err(
+                "lan mode requires a Bearer token; pass --token or set WRISTKEY_MSA_TOKEN".into(),
+            ),
+            _ => Ok(Config { mode, listen, token }),
+        }
+    }
+}
+
 pub fn configure_auth(token: Option<String>) {
     if let Some(t) = token {
         let _ = AUTH_TOKEN.set(t);
@@ -314,5 +379,69 @@ mod tests {
         let never_issued = B64.encode([1u8; 16]);
         let err = do_register(&state, signed_register(&sk, &never_issued)).unwrap_err();
         assert_eq!(err.0, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn app_mode_parse_and_defaults() {
+        assert_eq!(AppMode::parse("local"), Some(AppMode::Local));
+        assert_eq!(AppMode::parse("lan"), Some(AppMode::Lan));
+        assert_eq!(AppMode::parse("relay"), None);
+        assert_eq!(AppMode::Local.default_listen(), "127.0.0.1:8787");
+        assert_eq!(AppMode::Lan.default_listen(), "0.0.0.0:8787");
+        assert_eq!(AppMode::Local.to_string(), "local");
+        assert_eq!(AppMode::Lan.to_string(), "lan");
+    }
+
+    #[test]
+    fn config_resolution() {
+        let saved_mode = std::env::var("WRISTKEY_MSA_MODE").ok();
+        let saved_listen = std::env::var("WRISTKEY_MSA_LISTEN").ok();
+        let saved_token = std::env::var("WRISTKEY_MSA_TOKEN").ok();
+        std::env::remove_var("WRISTKEY_MSA_MODE");
+        std::env::remove_var("WRISTKEY_MSA_LISTEN");
+        std::env::remove_var("WRISTKEY_MSA_TOKEN");
+
+        let cfg = Config::resolve(None, None, None).unwrap();
+        assert_eq!(cfg.mode, AppMode::Local);
+        assert_eq!(cfg.listen, "127.0.0.1:8787");
+        assert!(cfg.token.is_none());
+
+        let err = Config::resolve(Some("lan".into()), None, None).unwrap_err();
+        assert!(err.contains("token"), "lan without token must fail: {err}");
+
+        let cfg = Config::resolve(Some("lan".into()), None, Some("t".into())).unwrap();
+        assert_eq!(cfg.mode, AppMode::Lan);
+        assert_eq!(cfg.listen, "0.0.0.0:8787");
+        assert_eq!(cfg.token.as_deref(), Some("t"));
+
+        let err = Config::resolve(Some("relay".into()), None, None).unwrap_err();
+        assert!(err.contains("unknown mode"), "unexpected: {err}");
+
+        let cfg = Config::resolve(Some("local".into()), Some("10.0.0.5:9999".into()), None).unwrap();
+        assert_eq!(cfg.listen, "10.0.0.5:9999");
+
+        std::env::set_var("WRISTKEY_MSA_MODE", "lan");
+        std::env::set_var("WRISTKEY_MSA_TOKEN", "envtok");
+        let cfg = Config::resolve(None, None, None).unwrap();
+        assert_eq!(cfg.mode, AppMode::Lan);
+        assert_eq!(cfg.token.as_deref(), Some("envtok"));
+
+        let cfg = Config::resolve(Some("local".into()), Some("127.0.0.1:1".into()), Some("flagtok".into()))
+            .unwrap();
+        assert_eq!(cfg.mode, AppMode::Local);
+        assert_eq!(cfg.token.as_deref(), Some("flagtok"));
+
+        match saved_mode {
+            Some(v) => std::env::set_var("WRISTKEY_MSA_MODE", v),
+            None => std::env::remove_var("WRISTKEY_MSA_MODE"),
+        }
+        match saved_listen {
+            Some(v) => std::env::set_var("WRISTKEY_MSA_LISTEN", v),
+            None => std::env::remove_var("WRISTKEY_MSA_LISTEN"),
+        }
+        match saved_token {
+            Some(v) => std::env::set_var("WRISTKEY_MSA_TOKEN", v),
+            None => std::env::remove_var("WRISTKEY_MSA_TOKEN"),
+        }
     }
 }
