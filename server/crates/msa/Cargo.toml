@@ -1,0 +1,22 @@
+﻿[package]
+name = "wristkey-msa"
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+description = "WristKey MSA (Microsoft Account) binding server - links a paired watch's ed25519 key to a Microsoft Account."
+repository = "https://github.com/WristKey-Watch/WristKey"
+
+[dependencies]
+axum = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lib]
+name = "wristkey_msa"
+path = "src/lib.rs"
