@@ -16,6 +16,11 @@ class WristKeySettings(context: Context) {
         private const val KEY_PAIRED_DEVICES = "paired_devices"
         private const val KEY_PAIRED_DEVICE_ADDRESS = "paired_device_address"
         private const val KEY_IS_CALIBRATED = "is_calibrated"
+        private const val KEY_LAN_SERVER_URL = "lan_server_url"
+        private const val KEY_LAN_TOKEN = "lan_token"
+        private const val KEY_LAN_PC_NAME = "lan_pc_name"
+        private const val KEY_LAN_MSA_ACCOUNT = "lan_msa_account"
+        private const val KEY_LAN_WRISTKEY_ID = "lan_wristkey_id"
 
         const val CONFIRM_GESTURE = 0
         const val CONFIRM_BUTTON = 1
@@ -88,6 +93,33 @@ class WristKeySettings(context: Context) {
             .remove(KEY_PROXIMITY_RSSI)
             .putBoolean(KEY_IS_CALIBRATED, false)
             .apply()
+    }
+
+    var lanServerUrl: String
+        get() = prefs.getString(KEY_LAN_SERVER_URL, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAN_SERVER_URL, value).apply()
+
+    var lanToken: String
+        get() = prefs.getString(KEY_LAN_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAN_TOKEN, value).apply()
+
+    var lanPcName: String
+        get() = prefs.getString(KEY_LAN_PC_NAME, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAN_PC_NAME, value).apply()
+
+    var lanMsaAccount: String
+        get() = prefs.getString(KEY_LAN_MSA_ACCOUNT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LAN_MSA_ACCOUNT, value).apply()
+
+    val lanWristkeyId: String?
+        get() = prefs.getString(KEY_LAN_WRISTKEY_ID, null)
+
+    fun saveLanBinding(wristkeyId: String) {
+        prefs.edit().putString(KEY_LAN_WRISTKEY_ID, wristkeyId).apply()
+    }
+
+    fun clearLanBinding() {
+        prefs.edit().remove(KEY_LAN_WRISTKEY_ID).apply()
     }
 
     fun reset() {

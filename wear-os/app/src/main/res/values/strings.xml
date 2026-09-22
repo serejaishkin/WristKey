@@ -130,4 +130,29 @@
 
     <!-- Permissions -->
     <string name="bluetooth_permissions_required">Bluetooth permissions required</string>
+
+    <!-- Settings: LAN server -->
+    <string name="settings_lan_server">LAN server</string>
+    <string name="lan_title">🌐 LAN server</string>
+    <string name="lan_server_url">Server URL</string>
+    <string name="lan_placeholder_server">http://192.168.1.10:8787</string>
+    <string name="lan_token">Token (optional)</string>
+    <string name="lan_placeholder_token">optional</string>
+    <string name="lan_pc_name">PC name</string>
+    <string name="lan_placeholder_pc">DESK-WRK1</string>
+    <string name="lan_msa_account">MSA account</string>
+    <string name="lan_placeholder_account">user@outlook.com</string>
+    <string name="lan_save">Save</string>
+    <string name="lan_saved">Saved</string>
+    <string name="lan_check">Check server</string>
+    <string name="lan_checking">Checking server…</string>
+    <string name="lan_health_ok">Server reachable</string>
+    <string name="lan_register">Link to server</string>
+    <string name="lan_linking">Linking watch…</string>
+    <string name="lan_registered">Linked</string>
+    <string name="lan_not_registered">Not linked</string>
+    <string name="lan_unlink">Unlink</string>
+    <string name="lan_status_linked">Linked: %1$s</string>
+    <string name="lan_err">Error: %1$s</string>
+    <string name="lan_missing">Fill server, PC name and account</string>
 </resources>

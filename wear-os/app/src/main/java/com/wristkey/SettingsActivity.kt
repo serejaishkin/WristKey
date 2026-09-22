@@ -10,9 +10,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
@@ -22,8 +31,12 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.wristkey.ble.WristKeyBleService
+import com.wristkey.net.LanClient
+import com.wristkey.security.KeyStoreManager
 import com.wristkey.security.TouchPointStore
 import com.wristkey.ui.TrainingActivity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
     companion object {
@@ -57,6 +70,7 @@ fun SettingsNavHost(startRoute: String = "main") {
         composable("confirm_mode") { ConfirmModeScreen(navController, settings) }
         composable("rssi_threshold") { RssiThresholdScreen(navController, settings) }
         composable("paired_devices") { PairedDevicesScreen(navController, settings) }
+        composable("lan_setup") { LanSetupScreen(navController, settings) }
         composable("proximity_unlock") { ProximityUnlockScreen(navController, settings) }
         composable("calibration") { CalibrationScreen(navController, settings, null) }
         composable("touch_point") { TouchPointScreen(navController) }
@@ -140,6 +154,16 @@ fun MainSettingsScreen(
                         )
                     },
                     onClick = { navController.navigate("paired_devices") },
+                    modifier = Modifier.fillMaxWidth(0.9f)
+                )
+            }
+
+            item {
+                val lanRegistered = settings.lanWristkeyId != null
+                Chip(
+                    label = { Text(stringResource(R.string.settings_lan_server)) },
+                    secondaryLabel = { Text(if (lanRegistered) stringResource(R.string.lan_registered) else stringResource(R.string.lan_not_registered)) },
+                    onClick = { navController.navigate("lan_setup") },
                     modifier = Modifier.fillMaxWidth(0.9f)
                 )
             }
@@ -539,6 +563,250 @@ fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
                         colors = ButtonDefaults.secondaryButtonColors(),
                         modifier = Modifier.padding(top = 6.dp)
                     ) { Text(stringResource(R.string.btn_reset_point)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String = "",
+    keyboardType: KeyboardType = KeyboardType.Text,
+    isPassword: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.secondary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colors.surface)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.body2,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+                decorationBox = { inner ->
+                    if (value.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            style = MaterialTheme.typography.caption2,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f)
+                        )
+                    }
+                    inner()
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun LanSetupScreen(
+    navController: androidx.navigation.NavHostController,
+    settings: WristKeySettings
+) {
+    val listState = rememberScalingLazyListState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val keyStoreManager = remember { KeyStoreManager() }
+
+    val pairedPrefs = remember { context.getSharedPreferences(WristKeyBleService.PREFS_NAME, Context.MODE_PRIVATE) }
+    val defaultPcName = pairedPrefs.getString(WristKeyBleService.PREFS_PAIRED_NAME, null)
+
+    var serverUrl by remember { mutableStateOf(settings.lanServerUrl) }
+    var token by remember { mutableStateOf(settings.lanToken) }
+    var pcName by remember { mutableStateOf(settings.lanPcName.takeIf { it.isNotBlank() } ?: (defaultPcName ?: "")) }
+    var msaAccount by remember { mutableStateOf(settings.lanMsaAccount) }
+    var registeredId by remember { mutableStateOf(settings.lanWristkeyId) }
+    var statusText by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    fun persistFields() {
+        settings.lanServerUrl = serverUrl
+        settings.lanToken = token
+        settings.lanPcName = pcName
+        settings.lanMsaAccount = msaAccount
+    }
+
+    Scaffold(
+        timeText = { TimeText() },
+        vignette = { Vignette(vignettePosition = VignettePosition.TopAndBottom) },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                Text(
+                    text = stringResource(R.string.lan_title),
+                    style = MaterialTheme.typography.title3,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                )
+            }
+
+            item {
+                LanTextField(
+                    value = serverUrl,
+                    onValueChange = { serverUrl = it },
+                    label = context.getString(R.string.lan_server_url),
+                    placeholder = context.getString(R.string.lan_placeholder_server),
+                    keyboardType = KeyboardType.Uri,
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                )
+            }
+
+            item {
+                LanTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = context.getString(R.string.lan_token),
+                    placeholder = context.getString(R.string.lan_placeholder_token),
+                    isPassword = true,
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                )
+            }
+
+            item {
+                LanTextField(
+                    value = pcName,
+                    onValueChange = { pcName = it },
+                    label = context.getString(R.string.lan_pc_name),
+                    placeholder = context.getString(R.string.lan_placeholder_pc),
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                )
+            }
+
+            item {
+                LanTextField(
+                    value = msaAccount,
+                    onValueChange = { msaAccount = it },
+                    label = context.getString(R.string.lan_msa_account),
+                    placeholder = context.getString(R.string.lan_placeholder_account),
+                    keyboardType = KeyboardType.Email,
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                )
+            }
+
+            statusText?.let { message ->
+                item {
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colors.secondary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            item {
+                Button(
+                    onClick = {
+                        persistFields()
+                        Toast.makeText(context, context.getString(R.string.lan_saved), Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                ) { Text(stringResource(R.string.lan_save)) }
+            }
+
+            item {
+                Button(
+                    enabled = !busy,
+                    onClick = {
+                        if (serverUrl.isBlank()) {
+                            statusText = context.getString(R.string.lan_err, context.getString(R.string.lan_missing))
+                            return@Button
+                        }
+                        busy = true
+                        statusText = context.getString(R.string.lan_checking)
+                        scope.launch(Dispatchers.IO) {
+                            val result = try {
+                                LanClient.health(serverUrl, token.takeIf { it.isNotBlank() })
+                                context.getString(R.string.lan_health_ok)
+                            } catch (e: Exception) {
+                                context.getString(R.string.lan_err, e.message)
+                            }
+                            scope.launch(Dispatchers.Main) {
+                                busy = false
+                                statusText = result
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.secondaryButtonColors(),
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                ) { Text(stringResource(R.string.lan_check)) }
+            }
+
+            item {
+                Button(
+                    enabled = !busy,
+                    onClick = {
+                        val url = serverUrl.trim()
+                        val pc = pcName.trim()
+                        val account = msaAccount.trim()
+                        if (url.isBlank() || pc.isBlank() || account.isBlank()) {
+                            statusText = context.getString(R.string.lan_err, context.getString(R.string.lan_missing))
+                            return@Button
+                        }
+                        persistFields()
+                        busy = true
+                        statusText = context.getString(R.string.lan_linking)
+                        scope.launch(Dispatchers.IO) {
+                            val result = try {
+                                val resp = LanClient.register(
+                                    baseUrl = url,
+                                    token = token.takeIf { it.isNotBlank() },
+                                    pcName = pc,
+                                    msaAccount = account,
+                                    watchPubkey = keyStoreManager.getPublicKey(),
+                                    sign = keyStoreManager::signChallenge
+                                )
+                                val id = resp.getString("wristkey_id")
+                                settings.saveLanBinding(id)
+                                context.getString(R.string.lan_status_linked, id)
+                            } catch (e: Exception) {
+                                context.getString(R.string.lan_err, e.message ?: "unknown")
+                            }
+                            scope.launch(Dispatchers.Main) {
+                                busy = false
+                                statusText = result
+                                registeredId = settings.lanWristkeyId
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(0.92f)
+                ) { Text(stringResource(R.string.lan_register)) }
+            }
+
+            if (registeredId != null) {
+                item {
+                    Button(
+                        onClick = {
+                            settings.clearLanBinding()
+                            registeredId = null
+                            statusText = null
+                        },
+                        colors = ButtonDefaults.secondaryButtonColors(),
+                        modifier = Modifier.fillMaxWidth(0.92f)
+                    ) { Text(stringResource(R.string.lan_unlink)) }
                 }
             }
         }

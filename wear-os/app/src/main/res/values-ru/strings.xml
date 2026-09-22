@@ -130,4 +130,29 @@
 
     <!-- Permissions -->
     <string name="bluetooth_permissions_required">Требуются разрешения Bluetooth</string>
+
+    <!-- Settings: LAN server -->
+    <string name="settings_lan_server">LAN-сервер</string>
+    <string name="lan_title">🌐 LAN-сервер</string>
+    <string name="lan_server_url">Адрес сервера</string>
+    <string name="lan_placeholder_server">http://192.168.1.10:8787</string>
+    <string name="lan_token">Токен (необязательно)</string>
+    <string name="lan_placeholder_token">необязательно</string>
+    <string name="lan_pc_name">Имя ПК</string>
+    <string name="lan_placeholder_pc">DESK-WRK1</string>
+    <string name="lan_msa_account">MSA-аккаунт</string>
+    <string name="lan_placeholder_account">user@outlook.com</string>
+    <string name="lan_save">Сохранить</string>
+    <string name="lan_saved">Сохранено</string>
+    <string name="lan_check">Проверить сервер</string>
+    <string name="lan_checking">Проверка сервера…</string>
+    <string name="lan_health_ok">Сервер доступен</string>
+    <string name="lan_register">Привязать к серверу</string>
+    <string name="lan_linking">Привязка часов…</string>
+    <string name="lan_registered">Привязан</string>
+    <string name="lan_not_registered">Не привязан</string>
+    <string name="lan_unlink">Отвязать</string>
+    <string name="lan_status_linked">Привязан: %1$s</string>
+    <string name="lan_err">Ошибка: %1$s</string>
+    <string name="lan_missing">Заполните адрес, имя ПК и аккаунт</string>
 </resources>
