@@ -67,3 +67,64 @@ async fn challenge_register_status_over_router() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+/// A PC without Bluetooth cannot know the wristkey_id the server minted, so it
+/// resolves its own binding by the MSA account it authenticates with.
+#[tokio::test]
+async fn account_bindings_resolves_wristkey_id() {
+    let app = router(std::sync::Arc::new(ServerState::new()));
+
+    // No binding yet: 200 with an empty list, not an error.
+    let resp = app
+        .clone()
+        .oneshot(Request::builder().uri("/api/v1/account/user@outlook.com/bindings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let empty = body_json(resp).await;
+    assert_eq!(empty["msa_account"], "user@outlook.com");
+    assert_eq!(empty["bindings"].as_array().unwrap().len(), 0);
+
+    let sk = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
+    let nonce_b64 = body_json(
+        app.clone().oneshot(post_json("/api/v1/challenge", "{}")).await.unwrap(),
+    )
+    .await["nonce_b64"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let nonce = B64.decode(&nonce_b64).unwrap();
+    let sig: EcdsaSignature = sk.sign(&register_message(&nonce));
+    let reg = serde_json::json!({
+        "pc_name": "DESK-NOBT",
+        "watch_pubkey_b64": B64.encode(sk.verifying_key().to_encoded_point(false).as_bytes()),
+        "msa_account": "nobt@outlook.com",
+        "nonce_b64": nonce_b64,
+        "signature_b64": B64.encode(sig.to_bytes()),
+    });
+    let registered = body_json(
+        app.clone().oneshot(post_json("/api/v1/register", &reg.to_string())).await.unwrap(),
+    )
+    .await;
+    let wristkey_id = registered["wristkey_id"].as_str().unwrap().to_owned();
+
+    let resp = app
+        .clone()
+        .oneshot(Request::builder().uri("/api/v1/account/nobt@outlook.com/bindings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resolved = body_json(resp).await;
+    let bindings = resolved["bindings"].as_array().unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0]["wristkey_id"], wristkey_id.as_str());
+    assert_eq!(bindings[0]["pc_name"], "DESK-NOBT");
+
+    // Account isolation: another account must not see this binding.
+    let resp = app
+        .clone()
+        .oneshot(Request::builder().uri("/api/v1/account/someone-else@outlook.com/bindings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(body_json(resp).await["bindings"].as_array().unwrap().len(), 0);
+}

@@ -51,4 +51,32 @@ async fn bearer_token_required_when_configured() {
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["ttl_secs"], 300);
+
+    // Resolving a binding by account exposes PC identity, so it must be
+    // behind the token just like register/status.
+    for token in [None, Some("wrong")] {
+        let mut builder = Request::builder().uri("/api/v1/account/user@outlook.com/bindings");
+        if let Some(t) = token {
+            builder = builder.header("authorization", format!("Bearer {t}"));
+        }
+        let resp = app.clone().oneshot(builder.body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "account bindings must require the token (token={token:?})"
+        );
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/account/user@outlook.com/bindings")
+                .header("authorization", "Bearer s3cret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "correct token must pass");
 }

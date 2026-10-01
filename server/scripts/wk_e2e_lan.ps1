@@ -130,6 +130,24 @@ try {
     # 9. unknown id -> 404
     $st404 = Invoke-White "Get" "/api/v1/status/wk-11111111-1111-4111-8111-111111111111"
     Ok "unknown wristkey_id 404" ($st404.status -eq 404) "-> $($st404.status)"
+
+    # 10. PC without BT resolves its binding by MSA account (percent-encoded '@')
+    #     Must return the wristkey_id the SERVER minted at register time.
+    $acct = "e2e@wristkey.local"
+    $acctEnc = $acct.Replace("@", "%40")
+    $bind = Invoke-White "Get" "/api/v1/account/$acctEnc/bindings"
+    $bindJson = $bind.body | ConvertFrom-Json
+    $resolvedId = $bindJson.bindings[0].wristkey_id
+    Ok "account bindings resolve id" ($bind.status -eq 200 -and $resolvedId -eq $regJson.wristkey_id) "-> $($bind.status) resolved=$resolvedId registered=$($regJson.wristkey_id)"
+
+    # 11. account WITH token missing -> 401 (binding lookup leaks PC identity)
+    $bindNo = Invoke-White "Get" "/api/v1/account/$acctEnc/bindings" $null $false
+    Ok "account bindings without token 401" ($bindNo.status -eq 401) "-> $($bindNo.status)"
+
+    # 12. account isolation: another account sees an empty list, not a 404
+    $other = Invoke-White "Get" "/api/v1/account/someone%40else.local/bindings"
+    $otherJson = $other.body | ConvertFrom-Json
+    Ok "account bindings isolated" ($other.status -eq 200 -and $otherJson.bindings.Count -eq 0) "-> $($other.status) count=$($otherJson.bindings.Count)"
 }
 finally {
     $client.Dispose()

@@ -13,6 +13,7 @@ use wristkey_core::{
     SessionManager, PlatformSecurity, Response,
     Result, WristKeyError, RssiSmoother,
 };
+use wristkey_core::MsaClient;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
 
 const SERVICE_UUID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
@@ -375,6 +376,70 @@ mod pipe_server {
         }
     }
 
+    /// Same location the Tauri app reads its config from, so the CLI edits
+    /// and the app share one file.
+    pub fn config_path() -> std::path::PathBuf {
+        dirs_config_dir().join("WristKey/config.toml")
+    }
+
+    fn dirs_config_dir() -> std::path::PathBuf {
+        std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    }
+
+    /// Effective MSA settings for one request: fields present in the request
+    /// win, anything missing or empty falls back to the stored config.
+    fn msa_settings(request: &serde_json::Value, config: &wristkey_core::Config) -> (String, String, String) {
+        let pick = |key: &str| -> String {
+            request.get(key).and_then(|v| v.as_str()).map(|s| s.trim()).unwrap_or("").to_owned()
+        };
+        let pick_or = |key: &str, fallback: &str| -> String {
+            let v = pick(key);
+            if v.is_empty() { fallback.to_owned() } else { v }
+        };
+        let account = pick_or("msa_account", &config.msa_account);
+        // Windows login names arrive as DOMAIN\user; the server stores the bare
+        // account, so send the part after the last separator.
+        let account = match account.rsplit_once('\\') {
+            Some((_, user)) if !user.is_empty() => user.to_owned(),
+            _ => account,
+        };
+        (
+            pick_or("server_url", &config.msa_server_url),
+            pick_or("token", &config.msa_token),
+            account,
+        )
+    }
+
+    /// Resolve this PC's MSA binding over HTTP (LAN mode, no Bluetooth).
+    ///
+    /// A PC without BLE never learns the `wristkey_id` the server minted at
+    /// register time, so it looks its own binding up by the MSA account it
+    /// authenticates with. A 401 means the stored token is wrong for the
+    /// server's lan mode.
+    async fn msa_status(request: &serde_json::Value, config: &wristkey_core::Config) -> serde_json::Value {
+        let (server_url, token, account) = msa_settings(request, config);
+
+        if server_url.is_empty() {
+            return serde_json::json!({"status":"error","message":"msa server url is not configured (set msa_server_url)"});
+        }
+        if account.is_empty() {
+            return serde_json::json!({"status":"error","message":"msa account is not configured (set msa_account)"});
+        }
+
+        let client = MsaClient::new(server_url, Some(token).filter(|t| !t.is_empty()));
+        let bindings = match client.bindings_for_account(&account).await {
+            Ok(b) => b,
+            Err(e) => return serde_json::json!({"status":"error","message": e.to_string()}),
+        };
+        match bindings.into_iter().next() {
+            // No binding yet is a normal state: the watch has not registered.
+            None => serde_json::json!({"status":"success","linked":false,"msa_account":account}),
+            Some(b) => serde_json::json!({"status":"success","linked":true,"binding":b}),
+        }
+    }
+
     async fn handle_client(mut server: tokio::net::windows::named_pipe::NamedPipeServer, session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>) {
         let mut reader = BufReader::new(&mut server);
         let mut line = String::new();
@@ -412,6 +477,10 @@ mod pipe_server {
                     .and_then(|devices| devices.first().map(|d| d.windows_password.is_some()))
                     .unwrap_or(false);
                 serde_json::json!({"status":"success","configured":configured})
+            }
+            "msa_status" => {
+                let config = wristkey_core::Config::from_file(&config_path()).unwrap_or_default();
+                msa_status(&request, &config).await
             }
             _ => serde_json::json!({"status":"error","message":"unknown action"}),
         };
@@ -451,5 +520,80 @@ mod pipe_server {
         // The watch confirmed presence; only now decrypt and hand over the
         // stored Windows password to the credential provider.
         unprotect_password(&encrypted_password)
+    }
+
+    #[cfg(test)]
+    mod msa_tests {
+        use super::*;
+
+        fn config() -> wristkey_core::Config {
+            wristkey_core::Config {
+                msa_server_url: "http://10.0.0.5:8787".into(),
+                msa_token: "stored-token".into(),
+                msa_account: "stored@outlook.com".into(),
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn falls_back_to_config_when_request_omits_fields() {
+            let (url, token, account) = msa_settings(&serde_json::json!({"action":"msa_status"}), &config());
+            assert_eq!(url, "http://10.0.0.5:8787");
+            assert_eq!(token, "stored-token");
+            assert_eq!(account, "stored@outlook.com");
+        }
+
+        #[test]
+        fn request_fields_override_config() {
+            let req = serde_json::json!({
+                "server_url": "http://192.168.1.50:9000",
+                "token": "req-token",
+                "msa_account": "req@outlook.com",
+            });
+            let (url, token, account) = msa_settings(&req, &config());
+            assert_eq!(url, "http://192.168.1.50:9000");
+            assert_eq!(token, "req-token");
+            assert_eq!(account, "req@outlook.com");
+        }
+
+        #[test]
+        fn empty_and_wrong_typed_request_values_fall_back_to_config() {
+            let req = serde_json::json!({
+                "server_url": "",
+                "token": "   ",
+                "msa_account": 42,
+            });
+            let (url, token, account) = msa_settings(&req, &config());
+            assert_eq!(url, "http://10.0.0.5:8787");
+            assert_eq!(token, "stored-token");
+            assert_eq!(account, "stored@outlook.com");
+        }
+
+        #[test]
+        fn windows_domain_prefix_is_stripped_from_account() {
+            let req = serde_json::json!({"msa_account": "WORK\\serge@outlook.com"});
+            let (_, _, account) = msa_settings(&req, &config());
+            assert_eq!(account, "serge@outlook.com", "server stores the bare account");
+
+            // No username after the separator: keep the value as-is.
+            let req = serde_json::json!({"msa_account": "WORK\\"});
+            let (_, _, account) = msa_settings(&req, &config());
+            assert_eq!(account, "WORK\\");
+        }
+
+        #[test]
+        fn unconfigured_lan_yields_empty_settings() {
+            let empty = wristkey_core::Config::default();
+            let (url, token, account) = msa_settings(&serde_json::json!({}), &empty);
+            assert!(url.is_empty(), "BLE-only PC must report LAN as unconfigured");
+            assert!(token.is_empty());
+            assert!(account.is_empty());
+        }
+
+        #[test]
+        fn config_path_lives_next_to_the_tauri_config() {
+            let p = config_path();
+            assert!(p.ends_with(std::path::Path::new("WristKey").join("config.toml")), "got {}", p.display());
+        }
     }
 }

@@ -13,6 +13,9 @@ use uuid::Uuid;
 mod sqlite_storage;
 pub use sqlite_storage::SqliteStorage;
 
+pub mod msa;
+pub use msa::{MsaAccountBindings, MsaBinding, MsaClient, MsaError};
+
 pub type Result<T> = std::result::Result<T, WristKeyError>;
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -175,12 +178,20 @@ pub struct Config {
     pub log_to_file: bool,
     pub log_to_console: bool,
     pub log_level: String,
+    /// Base URL of the wristkey-msa server, e.g. http://192.168.1.10:8787.
+    /// Empty means LAN/HTTP mode is not configured (BLE-only PC).
+    pub msa_server_url: String,
+    /// Bearer token for the msa server (required by its `lan` mode).
+    pub msa_token: String,
+    /// The MSA account this PC authenticates with; used to resolve its binding.
+    pub msa_account: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self { auto_lock_timeout_sec: 30, rssi_threshold_offset_dbm: 15, challenge_timeout_sec: 10,
-            log_to_file: true, log_to_console: true, log_level: "info".into() }
+            log_to_file: true, log_to_console: true, log_level: "info".into(),
+            msa_server_url: String::new(), msa_token: String::new(), msa_account: String::new() }
     }
 }
 

@@ -43,6 +43,23 @@ impl ServerState {
         self.bindings.read().ok()?.get(wristkey_id).cloned()
     }
 
+    /// Newest-first bindings for one MSA account. A PC without Bluetooth never
+    /// learns its own wristkey_id (the server mints it at register time), so it
+    /// resolves the binding by the account it authenticates with instead.
+    pub fn lookup_by_account(&self, msa_account: &str) -> Vec<WatchBinding> {
+        let guard = match self.bindings.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let mut found: Vec<WatchBinding> = guard
+            .values()
+            .filter(|b| b.msa_account == msa_account)
+            .cloned()
+            .collect();
+        found.sort_by(|a, b| b.linked_at.cmp(&a.linked_at));
+        found
+    }
+
     pub fn insert(&self, b: WatchBinding) {
         self.bindings.write().expect("wristkey-msa state lock").insert(b.wristkey_id.clone(), b);
     }
@@ -94,6 +111,12 @@ pub struct StatusResp {
     pub msa_account: String,
     pub watch_pubkey_b64: String,
     pub linked_at: String,
+}
+
+#[derive(Serialize)]
+pub struct AccountBindingsResp {
+    pub msa_account: String,
+    pub bindings: Vec<StatusResp>,
 }
 
 pub fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
@@ -174,6 +197,14 @@ async fn register(State(s): State<Arc<ServerState>>, Json(req): Json<RegisterReq
 
 async fn status(State(s): State<Arc<ServerState>>, axum::extract::Path(id): axum::extract::Path<String>) -> Result<Json<StatusResp>, HandlerErr> {
     s.lookup(&id).map(|b| Json(status_resp(b))).ok_or((axum::http::StatusCode::NOT_FOUND, "no such binding".into()))
+}
+
+/// Resolve bindings by MSA account so a PC without Bluetooth can learn the
+/// wristkey_id the server minted for it. Always 200 with an (possibly empty)
+/// list: "no binding yet" is a normal state, not an error.
+async fn account_bindings(State(s): State<Arc<ServerState>>, axum::extract::Path(account): axum::extract::Path<String>) -> Json<AccountBindingsResp> {
+    let bindings: Vec<StatusResp> = s.lookup_by_account(&account).into_iter().map(status_resp).collect();
+    Json(AccountBindingsResp { msa_account: account, bindings })
 }
 
 static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
@@ -281,6 +312,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/v1/challenge", post(challenge))
         .route("/api/v1/register", post(register))
         .route("/api/v1/status/{wristkey_id}", get(status))
+        .route("/api/v1/account/{msa_account}/bindings", get(account_bindings))
         .layer(axum::middleware::from_fn(bearer_auth));
     Router::new()
         .route("/api/v1/health", get(health))
@@ -387,6 +419,60 @@ mod tests {
         let never_issued = B64.encode([1u8; 16]);
         let err = do_register(&state, signed_register(&sk, &never_issued)).unwrap_err();
         assert_eq!(err.0, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn lookup_by_account_returns_only_matching_newest_first() {
+        let state = ServerState::new();
+        let sk = test_key(7);
+        let n1 = state.issue_challenge();
+        let first = do_register(&state, signed_register(&sk, &n1)).expect("first register ok");
+        let n2 = state.issue_challenge();
+        let second = do_register(&state, signed_register(&sk, &n2)).expect("second register ok");
+
+        let found = state.lookup_by_account("user@outlook.com");
+        assert_eq!(found.len(), 2, "both registers belong to the same account");
+        assert!(found.iter().all(|b| b.msa_account == "user@outlook.com"));
+        assert_eq!(found[0].wristkey_id, second.wristkey_id, "newest binding first");
+        assert_eq!(found[1].wristkey_id, first.wristkey_id);
+        assert_ne!(first.wristkey_id, second.wristkey_id);
+
+        assert!(state.lookup_by_account("other@outlook.com").is_empty(), "account isolation");
+        assert!(state.lookup_by_account("").is_empty());
+    }
+
+    #[test]
+    fn lookup_by_account_isolates_accounts_per_key() {
+        let state = ServerState::new();
+
+        let a = state.issue_challenge();
+        let mut first = signed_register(&test_key(7), &a);
+        first.msa_account = "alice@outlook.com".into();
+        let first_binding = do_register(&state, first).expect("register 7 ok");
+
+        let b = state.issue_challenge();
+        let mut second = signed_register(&test_key(9), &b);
+        second.msa_account = "bob@outlook.com".into();
+        let second_binding = do_register(&state, second).expect("register 9 ok");
+
+        let alice = state.lookup_by_account("alice@outlook.com");
+        assert_eq!(alice.len(), 1, "alice must see only her own binding");
+        assert_eq!(alice[0].wristkey_id, first_binding.wristkey_id);
+        // The stored pubkey must be the key that actually signed for that account.
+        assert_eq!(
+            alice[0].watch_pubkey_b64,
+            B64.encode(test_key(7).verifying_key().to_encoded_point(false).as_bytes())
+        );
+
+        let bob = state.lookup_by_account("bob@outlook.com");
+        assert_eq!(bob.len(), 1);
+        assert_eq!(bob[0].wristkey_id, second_binding.wristkey_id);
+        assert_eq!(
+            bob[0].watch_pubkey_b64,
+            B64.encode(test_key(9).verifying_key().to_encoded_point(false).as_bytes())
+        );
+
+        assert_eq!(state.count(), 2);
     }
 
     #[test]
