@@ -82,10 +82,14 @@ pub struct BtleplugAdapter {
     _manager: Manager,
     adapter: Adapter,
     connected: Arc<RwLock<HashMap<String, Peripheral>>>,
-    // One broadcast feed per connected peripheral so a second notify() call
-    // on the same session reuses the live subscription instead of calling
+    // One broadcast feed per (peripheral, characteristic) so a second notify()
+    // call on the same session reuses the live subscription instead of calling
     // Peripheral::notifications() again (btleplug lets it be consumed once).
-    notify_channels: Arc<RwLock<HashMap<String, broadcast::Sender<Vec<u8>>>>>,
+    // The characteristic MUST be part of the key: RESPONSE and TRAINING_CONTROL
+    // are both subscribed on the same link, and a peripheral-only key would hand
+    // back the RESPONSE feed to a TRAINING_CONTROL caller (and vice versa), so
+    // the second caller would silently never see its own notifications.
+    notify_channels: Arc<RwLock<HashMap<(String, Uuid), broadcast::Sender<Vec<u8>>>>>,
 }
 
 impl BtleplugAdapter {
@@ -253,24 +257,57 @@ impl BleAdapter for BtleplugAdapter {
             bounded(15, peripheral.connect()).await?;
         }
 
+        // Windows returns a PARTIAL GATT cache: `discover_services` can resolve
+        // the WristKey service UUID while its characteristics are still missing,
+        // which made every later write fail with "characteristic ... not found".
+        // Retry until the characteristics the protocol actually needs are there.
+        const REQUIRED: [Uuid; 3] = [
+            Uuid::from_u128(0xa1b2c3d4_e5f6_7890_abcd_ef1234567891),
+            Uuid::from_u128(0xa1b2c3d4_e5f6_7890_abcd_ef1234567892),
+            Uuid::from_u128(0xa1b2c3d4_e5f6_7890_abcd_ef1234567893),
+        ];
+        const SERVICE: Uuid = Uuid::from_u128(0xa1b2c3d4_e5f6_7890_abcd_ef1234567890);
+
         let mut services = Vec::new();
+        let mut seen: HashSet<Uuid> = HashSet::new();
         for attempt in 1..=8 {
             if let Err(e) = bounded(6, peripheral.discover_services()).await {
                 warn!("GATT discovery attempt {} failed: {}", attempt, e);
             }
             services = peripheral.services().into_iter().collect();
-            if !services.is_empty() { break; }
+            seen = services
+                .iter()
+                .filter(|s| s.uuid == SERVICE)
+                .flat_map(|s| s.characteristics.iter().map(|c| c.uuid))
+                .collect();
+            if REQUIRED.iter().all(|c| seen.contains(c)) {
+                info!("GATT discovery complete on attempt {} ({} required characteristics)", attempt, REQUIRED.len());
+                break;
+            }
+            debug!(
+                "GATT discovery attempt {}: {} required characteristics present",
+                attempt,
+                REQUIRED.iter().filter(|c| seen.contains(c)).count()
+            );
             tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
         }
 
-        let has_wristkey = services.iter().any(|s| s.uuid.to_string().eq_ignore_ascii_case("a1b2c3d4-e5f6-7890-abcd-ef1234567890"));
         for svc in &services {
             info!("GATT service: {}", svc.uuid);
             for ch in &svc.characteristics { debug!("  characteristic {} props={:?}", ch.uuid, ch.properties); }
         }
-        if !has_wristkey {
+        // Guard on all required characteristics, not just the first one: a
+        // partial cache that exposes only CHALLENGE would otherwise pass here
+        // and fail later with a vaguer "characteristic not found".
+        if REQUIRED.iter().any(|c| !seen.contains(c)) {
             let _ = bounded(5, peripheral.disconnect()).await;
-            return Err(WristKeyError::Ble("connected device does not expose WristKey GATT service".into()));
+            let missing: Vec<String> = REQUIRED.iter().filter(|c| !seen.contains(c)).map(|c| c.to_string()).collect();
+            let advertised: Vec<String> = services.iter().map(|s| s.uuid.to_string()).collect();
+            return Err(WristKeyError::Ble(format!(
+                "connected device does not expose the WristKey GATT service (missing characteristics: {}; discovered services: {:?})",
+                missing.join(", "),
+                advertised
+            )));
         }
 
         self.connected.write().await.insert(info.id.clone(), peripheral);
@@ -278,7 +315,9 @@ impl BleAdapter for BtleplugAdapter {
     }
 
     async fn disconnect(&self, conn: &Connection) -> Result<()> {
-        self.notify_channels.write().await.remove(&conn.peripheral_id);
+        // Drop every feed belonging to this peripheral, whatever characteristic
+        // it was subscribed to.
+        self.notify_channels.write().await.retain(|(id, _), _| id != &conn.peripheral_id);
         let peripheral = self.connected.write().await.remove(&conn.peripheral_id);
         if let Some(peripheral) = peripheral {
             // Best-effort cleanup, fire-and-forget. A wedged WinRT disconnect
@@ -300,7 +339,8 @@ impl BleAdapter for BtleplugAdapter {
 
     async fn notify(&self, conn: &Connection, characteristic: Uuid) -> Result<broadcast::Receiver<Vec<u8>>> {
         let peripheral = self.get_connected(&conn.peripheral_id).await?;
-        if let Some(tx) = self.notify_channels.read().await.get(&conn.peripheral_id) {
+        let key = (conn.peripheral_id.clone(), characteristic);
+        if let Some(tx) = self.notify_channels.read().await.get(&key) {
             return Ok(tx.subscribe());
         }
         let chars = peripheral.characteristics();
@@ -313,7 +353,7 @@ impl BleAdapter for BtleplugAdapter {
         let mut notifications = bounded(10, peripheral.notifications()).await?;
         let (tx, _) = broadcast::channel(64);
         let rx = tx.subscribe();
-        self.notify_channels.write().await.insert(conn.peripheral_id.clone(), tx.clone());
+        self.notify_channels.write().await.insert(key, tx.clone());
         tokio::spawn(async move {
             while let Some(n) = notifications.next().await {
                 if n.uuid == characteristic && tx.send(n.value).is_err() { break; }

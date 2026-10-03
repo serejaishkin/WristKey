@@ -105,5 +105,15 @@
   "msa_status_checking": "Checking…",
   "msa_status_linked": "Linked",
   "msa_status_unlinked": "Watch not registered yet",
-  "msa_status_error": "Error"
+  "msa_status_error": "Error",
+  "msa_proc_label": "Server process:",
+  "msa_proc_running": "running",
+  "msa_proc_stopped": "stopped",
+  "msa_proc_start": "▶ Start server",
+  "msa_proc_stop": "⏹ Stop server",
+  "msa_proc_started": "Server started",
+  "msa_proc_no_token": "Started without a token: the watch cannot register.",
+  "msa_proc_noexe": "wristkey-msa.exe not found next to the app; build it with server/build-server.cmd build",
+  "msa_listen": "Listen address",
+  "msa_listen_hint": "Use 0.0.0.0 so the watch on Wi-Fi can reach this PC. 127.0.0.1 makes the server unreachable for it."
 }

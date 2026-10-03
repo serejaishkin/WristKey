@@ -105,5 +105,15 @@
   "msa_status_checking": "Проверка…",
   "msa_status_linked": "Привязано",
   "msa_status_unlinked": "Часы ещё не зарегистрированы",
-  "msa_status_error": "Ошибка"
+  "msa_status_error": "Ошибка",
+  "msa_proc_label": "Процесс сервера:",
+  "msa_proc_running": "работает",
+  "msa_proc_stopped": "остановлен",
+  "msa_proc_start": "▶ Запустить сервер",
+  "msa_proc_stop": "⏹ Остановить сервер",
+  "msa_proc_started": "Сервер запущен",
+  "msa_proc_no_token": "Запущен без токена: часы не смогут зарегистрироваться.",
+  "msa_proc_noexe": "wristkey-msa.exe не найден рядом с приложением; соберите: server/build-server.cmd build",
+  "msa_listen": "Адрес прослушивания",
+  "msa_listen_hint": "Используйте 0.0.0.0, чтобы часы по Wi-Fi достучались до этого ПК. 127.0.0.1 сделает сервер для них недоступным."
 }

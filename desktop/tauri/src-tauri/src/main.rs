@@ -100,6 +100,69 @@ fn config_file()->std::path::PathBuf{dirs::config_dir().unwrap_or_else(||std::pa
         Ok(None)=>Ok(serde_json::json!({"status":"success","linked":false,"msa_account":account})),
         Err(e)=>Ok(serde_json::json!({"status":"error","message":e.to_string()})),
     }}
+/// Locate the `wristkey-msa` binary: next to the app, an explicit override,
+/// or the repo layout used during development.
+fn find_msa_exe()->Option<std::path::PathBuf>{
+    let mut candidates:Vec<std::path::PathBuf>=Vec::new();
+    if let Ok(exe)=std::env::current_exe(){if let Some(dir)=exe.parent(){candidates.push(dir.join("wristkey-msa.exe"));}}
+    if let Ok(dir)=std::env::var("WRISTKEY_MSA_EXE"){candidates.push(std::path::PathBuf::from(dir));}
+    if let Ok(dir)=std::env::var("WRISTKEY_MSA_DIR"){candidates.push(std::path::PathBuf::from(dir).join("wristkey-msa.exe"));}
+    candidates.push(std::path::PathBuf::from("wristkey-msa.exe"));
+    candidates.into_iter().find(|p|p.exists())
+}
+
+/// Child process slot for the MSA server. Held in a static so the tray/app can
+/// stop what it started; the server is never spawned twice.
+static MSA_SERVER:std::sync::OnceLock<std::sync::Mutex<Option<std::process::Child>>> = std::sync::OnceLock::new();
+fn msa_server_slot()->&'static std::sync::Mutex<Option<std::process::Child>>{MSA_SERVER.get_or_init(||std::sync::Mutex::new(None))}
+
+/// Start `wristkey-msa` as a child of the app.
+///
+/// `listen` defaults to 0.0.0.0: on purpose, because the watch is a different
+/// device, so 127.0.0.1 would make the server unreachable for it. LAN mode
+/// refuses anonymous writes, so an empty token is only useful for read-only
+/// probing and is warned about.
+#[tauri::command] async fn start_msa_server(listen:Option<String>,token:Option<String>)->Result<String,String>{
+    let exe=find_msa_exe().ok_or_else(||"wristkey-msa.exe not found. Build it with server\\build-server.cmd build and put it next to WristKey.exe".to_string())?;
+    let saved=wristkey_core::Config::from_file(&config_file()).unwrap_or_default();
+    let listen=listen.map(|l|l.trim().to_owned()).filter(|l|!l.is_empty()).unwrap_or_else(||"0.0.0.0:8787".to_string());
+    let token=token.map(|t|t.trim().to_owned()).filter(|t|!t.is_empty()).unwrap_or(saved.msa_token);
+    {
+        let mut slot=msa_server_slot().lock().unwrap();
+        if let Some(child)=slot.as_mut(){if child.try_wait().ok().flatten().is_none(){return Err("MSA server is already running".into());}}
+    }
+    let mut cmd=std::process::Command::new(&exe);
+    cmd.arg("--mode").arg("lan").arg("--listen").arg(&listen);
+    if !token.is_empty(){cmd.arg("--token").arg(&token);}
+    #[cfg(windows)]{use std::os::windows::process::CommandExt;cmd.creation_flags(0x08000000);} // CREATE_NO_WINDOW
+    let child=cmd.spawn().map_err(|e|format!("failed to start {}: {}",exe.display(),e))?;
+    let pid=child.id();
+    *msa_server_slot().lock().unwrap()=Some(child);
+    info!("MSA server started pid={} listen={} exe={}",pid,listen,exe.display());
+    if token.is_empty(){warn!("MSA server started without a bearer token; set one in Settings or the watch cannot register");}
+    Ok(format!("pid {} on {}",pid,listen))
+}
+
+#[tauri::command] async fn stop_msa_server()->Result<(),String>{
+    let mut slot=msa_server_slot().lock().unwrap();
+    match slot.as_mut(){
+        Some(child)=>{let pid=child.id();child.kill().map_err(|e|format!("failed to stop MSA server: {}",e))?;*slot=None;info!("MSA server stopped pid={}",pid);Ok(())}
+        None=>Ok(()),
+    }
+}
+
+#[tauri::command] async fn msa_server_status()->Result<serde_json::Value,String>{
+    let running={
+        let mut slot=msa_server_slot().lock().unwrap();
+        match slot.as_mut(){
+            // Reap an exited child so the GUI reflects reality instead of a stale handle.
+            Some(child)=>matches!(child.try_wait(),Ok(None)),
+            None=>false,
+        }
+    };
+    Ok(serde_json::json!({"running":running,"executable":find_msa_exe().map(|p|p.display().to_string())}))
+}
+
 #[cfg(target_os="windows")]
 #[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<(),String>{
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
@@ -215,4 +278,4 @@ async fn main() {
             warn!("Service auto-start: {}", e);
         }
     }
-}tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,clear_windows_password,get_config,update_config,set_config,get_msa_config,set_msa_config,check_msa_connection,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();#[cfg(windows)]let service_running=service::win_service::get_service_status().map(|st|st=="Running"||st=="StartPending").unwrap_or(false);#[cfg(not(windows))]let service_running=false;if service_running{info!("Windows service is running; skipping in-process daemon to avoid pipe/BLE conflict")}else{tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});}let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}
+}tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,clear_windows_password,get_config,update_config,set_config,get_msa_config,set_msa_config,check_msa_connection,start_msa_server,stop_msa_server,msa_server_status,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();#[cfg(windows)]let service_running=service::win_service::get_service_status().map(|st|st=="Running"||st=="StartPending").unwrap_or(false);#[cfg(not(windows))]let service_running=false;if service_running{info!("Windows service is running; skipping in-process daemon to avoid pipe/BLE conflict")}else{tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});}let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}

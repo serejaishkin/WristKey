@@ -189,6 +189,45 @@ async function checkMsaConnection() {
     finally { btn.disabled = false; }
 }
 
+async function refreshMsaServerStatus() {
+    const t = (k, f) => (window.WristKeyI18n ? window.WristKeyI18n.t(k) : f);
+    try {
+        const s = await invoke('msa_server_status');
+        const el = document.getElementById('msaProcStatus');
+        el.textContent = s.running ? t('msa_proc_running', 'running') : t('msa_proc_stopped', 'stopped');
+        el.className = s.running ? 'status-ok' : 'status-warn';
+        document.getElementById('msaExePath').textContent = s.executable || t('msa_proc_noexe', 'wristkey-msa.exe not found next to the app; build it with server/build-server.cmd build');
+    } catch (e) { console.error('refreshMsaServerStatus failed:', e); }
+}
+
+async function startMsaServer() {
+    const btn = document.getElementById('msaStartBtn');
+    const t = (k, f) => (window.WristKeyI18n ? window.WristKeyI18n.t(k) : f);
+    btn.disabled = true;
+    try {
+        // Reuse the saved token when the field is blank: the watch needs the
+        // same one, and typing it twice is a good way to get it wrong.
+        const msa = await invoke('get_msa_config');
+        const token = document.getElementById('msaTokenInput').value.trim() || (msa.msa_token || '');
+        const info = await invoke('start_msa_server', {
+            listen: document.getElementById('msaListenInput').value.trim() || null, token: token || null,
+        });
+        await refreshMsaServerStatus();
+        await checkMsaConnection();
+        if (!token) setMsaStatus('warn', t('msa_proc_no_token', 'Started without a token: the watch cannot register.'));
+        else setMsaStatus('ok', t('msa_proc_started', 'Server started') + ' (' + info + ')');
+    } catch (e) { setMsaStatus('bad', '❌ ' + e); }
+    finally { btn.disabled = false; }
+}
+
+async function stopMsaServer() {
+    const btn = document.getElementById('msaStopBtn');
+    btn.disabled = true;
+    try { await invoke('stop_msa_server'); await refreshMsaServerStatus(); }
+    catch (e) { setMsaStatus('bad', '❌ ' + e); }
+    finally { btn.disabled = false; }
+}
+
 async function toggleDaemon() {
     const enabled = document.getElementById('daemonToggle').checked;
     try { await invoke(enabled ? 'start_daemon' : 'stop_daemon'); daemonEnabled = enabled; await refreshStatus(); }
@@ -330,7 +369,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const copyLogBtn = document.getElementById('copyLogDirBtn'); if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogDir);
     const msaSaveBtn = document.getElementById('msaSaveBtn'); if (msaSaveBtn) msaSaveBtn.addEventListener('click', saveMsaConfig);
     const msaCheckBtn = document.getElementById('msaCheckBtn'); if (msaCheckBtn) msaCheckBtn.addEventListener('click', checkMsaConnection);
+    const msaStartBtn = document.getElementById('msaStartBtn'); if (msaStartBtn) msaStartBtn.addEventListener('click', startMsaServer);
+    const msaStopBtn = document.getElementById('msaStopBtn'); if (msaStopBtn) msaStopBtn.addEventListener('click', stopMsaServer);
     const svcInstallBtn = document.getElementById('svcInstallBtn'); if (svcInstallBtn) svcInstallBtn.addEventListener('click', installService);
     const svcUninstallBtn = document.getElementById('svcUninstallBtn'); if (svcUninstallBtn) svcUninstallBtn.addEventListener('click', uninstallService);
-    refreshStatus(); refreshDevices(); loadConfig(); loadMsaConfig(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
+    refreshStatus(); refreshDevices(); loadConfig(); loadMsaConfig(); refreshMsaServerStatus(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
 });
