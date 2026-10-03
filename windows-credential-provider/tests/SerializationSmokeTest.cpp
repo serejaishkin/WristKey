@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <credentialprovider.h>
 #include <ntsecapi.h>
+#include <security.h>
 #include <wincred.h>
 #include <initguid.h>  // must precede propkey.h so PKEY_Identity_* get defined
 #include <propkey.h>
@@ -422,8 +423,36 @@ int wmain(int argc, wchar_t** argv) {
         return 20;
     }
 
-    if (serialization.ulAuthenticationPackage == 0) {
-        std::wcerr << L"Authentication package was not populated.\n";
+    // Regression guard: the provider must serialize an unlock buffer for
+    // the Negotiate package. This is essential for local accounts; using
+    // Kerberos directly causes ERROR_NO_LOGON_SERVERS (1311) on a PC that
+    // is not joined to a reachable domain.
+    HANDLE hLsa = nullptr;
+    NTSTATUS lsaStatus = LsaConnectUntrusted(&hLsa);
+    if (lsaStatus != 0) {
+        std::wcerr << L"LsaConnectUntrusted failed: 0x" << std::hex
+                   << static_cast<unsigned long>(lsaStatus) << L"\n";
+        CoTaskMemFree(serialization.rgbSerialization);
+        credential->Release();
+        provider->Release();
+        cleanup();
+        return 21;
+    }
+
+    const char negotiateName[] = NEGOSSP_NAME_A;
+    LSA_STRING negotiateString{};
+    negotiateString.Buffer = const_cast<PCHAR>(negotiateName);
+    negotiateString.Length = static_cast<USHORT>(strlen(negotiateName));
+    negotiateString.MaximumLength = static_cast<USHORT>(negotiateString.Length + 1);
+
+    ULONG expectedNegotiatePackage = 0;
+    lsaStatus = LsaLookupAuthenticationPackage(hLsa, &negotiateString, &expectedNegotiatePackage);
+    LsaDeregisterLogonProcess(hLsa);
+
+    if (lsaStatus != 0 || serialization.ulAuthenticationPackage != expectedNegotiatePackage) {
+        std::wcerr << L"Unexpected authentication package. Expected Negotiate package "
+                   << expectedNegotiatePackage << L", got "
+                   << serialization.ulAuthenticationPackage << L"\n";
         CoTaskMemFree(serialization.rgbSerialization);
         credential->Release();
         provider->Release();
