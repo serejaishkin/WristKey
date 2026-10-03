@@ -161,7 +161,151 @@ pub fn percent_encode_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Config;
+    use crate::{Config, EcdsaP256Crypto, MemoryStorage, SessionManager};
+    use std::sync::Arc;
+
+    fn session() -> SessionManager {
+        SessionManager::new(Arc::new(EcdsaP256Crypto), Arc::new(MemoryStorage::new()))
+    }
+
+    fn binding() -> MsaBinding {
+        MsaBinding {
+            wristkey_id: "wk-12345678-1234-4234-8234-123456789abc".into(),
+            pc_name: "DESK-LAN".into(),
+            msa_account: "user@outlook.com".into(),
+            watch_pubkey_b64: "BAtzbWFpbwo=".into(),
+            linked_at: "2026-09-22T10:00:00+00:00".into(),
+        }
+    }
+
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    #[test]
+    fn wristkey_id_maps_to_stable_device_uuid() {
+        let a = crate::uuid_from_wristkey_id("wk-12345678-1234-4234-8234-123456789abc").unwrap();
+        let b = crate::uuid_from_wristkey_id("wk-12345678-1234-4234-8234-123456789abc").unwrap();
+        assert_eq!(a, b, "the LAN password slot must survive restarts");
+        assert_eq!(a.to_string(), "12345678-1234-4234-8234-123456789abc");
+
+        // Bare uuid without the prefix is accepted too.
+        assert_eq!(crate::uuid_from_wristkey_id("12345678-1234-4234-8234-123456789abc").unwrap(), a);
+
+        assert!(crate::uuid_from_wristkey_id("not-a-uuid").is_err());
+        assert!(crate::uuid_from_wristkey_id("").is_err());
+    }
+
+    #[test]
+    fn lan_slot_is_keyed_by_account_not_wristkey_id() {
+        // The server mints a NEW wristkey_id on every re-register, so the slot
+        // must follow the MSA account or the password would be lost.
+        let a = binding();
+        let mut reregistered = a.clone();
+        reregistered.wristkey_id = "wk-99999999-9999-4999-8999-999999999999".into();
+
+        let first = crate::lan_device_id(&a.msa_account).unwrap();
+        let second = crate::lan_device_id(&reregistered.msa_account).unwrap();
+        assert_eq!(first, second, "same account must map to the same slot");
+        assert_ne!(a.wristkey_id, reregistered.wristkey_id, "precondition: the id really rotates");
+
+        // Different accounts get independent slots; whitespace is normalized.
+        assert_ne!(crate::lan_device_id("alice@outlook.com").unwrap(), crate::lan_device_id("bob@outlook.com").unwrap());
+        assert_eq!(crate::lan_device_id("  user@outlook.com ").unwrap(), crate::lan_device_id("user@outlook.com").unwrap());
+        assert!(crate::lan_device_id("   ").is_err());
+    }
+
+    #[test]
+    fn password_survives_wristkey_id_rotation() {
+        let s = session();
+        let a = binding();
+        block_on(s.set_lan_device_password(&a, b"secret".to_vec())).unwrap();
+
+        let mut rotated = a.clone();
+        rotated.wristkey_id = "wk-99999999-9999-4999-8999-999999999999".into();
+        assert_eq!(
+            block_on(s.get_lan_device_password(&rotated)).unwrap().unwrap(),
+            b"secret".to_vec(),
+            "re-registering on the watch must not lose the stored password"
+        );
+        // The rotated id's metadata is adopted into the same single record.
+        assert_eq!(block_on(s.list_paired_devices()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lan_device_record_is_created_from_binding() {
+        let s = session();
+        let b = binding();
+        let device = block_on(s.upsert_lan_device(&b)).unwrap();
+        assert_eq!(device.name, "DESK-LAN");
+        assert_eq!(device.public_key, crate::base64_decode(&b.watch_pubkey_b64));
+        assert!(device.windows_password.is_none());
+
+        let devices = block_on(s.list_paired_devices()).unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, device.id);
+    }
+
+    #[test]
+    fn lan_password_round_trips_and_survives_re_upsert() {
+        let s = session();
+        let b = binding();
+        assert!(block_on(s.get_lan_device_password(&b)).unwrap().is_none());
+
+        block_on(s.set_lan_device_password(&b, b"encrypted-secret".to_vec())).unwrap();
+        assert_eq!(
+            block_on(s.get_lan_device_password(&b)).unwrap().unwrap(),
+            b"encrypted-secret".to_vec()
+        );
+
+        // Re-resolving the same binding (e.g. after a watch re-register round) must
+        // refresh metadata WITHOUT clearing the stored password.
+        let mut refreshed = b.clone();
+        refreshed.pc_name = "DESK-LAN-RENAMED".into();
+        let device = block_on(s.upsert_lan_device(&refreshed)).unwrap();
+        assert_eq!(device.name, "DESK-LAN-RENAMED");
+        assert_eq!(
+            block_on(s.get_lan_device_password(&b)).unwrap().unwrap(),
+            b"encrypted-secret".to_vec(),
+            "upsert must never drop a stored password"
+        );
+    }
+
+    #[test]
+    fn different_bindings_get_independent_password_slots() {
+        let s = session();
+        let a = binding();
+        let mut b2 = binding();
+        b2.msa_account = "other@outlook.com".into();
+        block_on(s.set_lan_device_password(&a, b"first".to_vec())).unwrap();
+        block_on(s.set_lan_device_password(&b2, b"second".to_vec())).unwrap();
+        assert_eq!(block_on(s.get_lan_device_password(&a)).unwrap().unwrap(), b"first".to_vec());
+        assert_eq!(block_on(s.get_lan_device_password(&b2)).unwrap().unwrap(), b"second".to_vec());
+        assert_eq!(block_on(s.list_paired_devices()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn empty_watch_pubkey_does_not_wipe_existing_key() {
+        let s = session();
+        let b = binding();
+        let expected = crate::base64_decode(&b.watch_pubkey_b64);
+        block_on(s.upsert_lan_device(&b)).unwrap();
+        let mut no_key = b.clone();
+        no_key.watch_pubkey_b64 = String::new();
+        let device = block_on(s.upsert_lan_device(&no_key)).unwrap();
+        assert_eq!(device.public_key, expected, "an unparseable pubkey must not clear the key");
+    }
+
+    #[test]
+    fn crypto_engine_is_usable_in_core_tests() {
+        // Sanity check that the test session is wired to a working engine.
+        let s = session();
+        assert!(block_on(s.list_paired_devices()).unwrap().is_empty());
+    }
 
     #[test]
     fn base_url_drops_trailing_slashes() {

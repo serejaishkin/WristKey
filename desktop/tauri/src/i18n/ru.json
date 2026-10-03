@@ -90,5 +90,20 @@
   "status_cp_registered": "✅ Зарегистрирован",
   "status_cp_not_registered": "❌ Не зарегистрирован",
   "storage_tpm": "TPM 2.0",
-  "storage_software": "Программное"
+  "storage_software": "Программное",
+  "msa_title": "🌐 MSA-сервер (LAN-режим)",
+  "msa_desc": "Для ПК без Bluetooth. Часы регистрируются на wristkey-msa, а этот ПК находит свою привязку по аккаунту MSA ниже.",
+  "msa_server_url": "URL сервера",
+  "msa_token": "Bearer-токен",
+  "msa_placeholder_token": "WRISTKEY_MSA_TOKEN",
+  "msa_account": "Аккаунт MSA",
+  "msa_account_hint": "Должен совпадать с аккаунтом, указанным на часах. DOMAIN\\user отправляется как user.",
+  "msa_save": "💾 Сохранить",
+  "msa_check": "🔗 Проверить связь",
+  "msa_status_unknown": "Неизвестно",
+  "msa_status_saved": "Сохранено",
+  "msa_status_checking": "Проверка…",
+  "msa_status_linked": "Привязано",
+  "msa_status_unlinked": "Часы ещё не зарегистрированы",
+  "msa_status_error": "Ошибка"
 }

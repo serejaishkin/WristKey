@@ -90,5 +90,20 @@
   "status_cp_registered": "✅ Registered",
   "status_cp_not_registered": "❌ Not registered",
   "storage_tpm": "TPM 2.0",
-  "storage_software": "Software"
+  "storage_software": "Software",
+  "msa_title": "🌐 MSA Server (LAN mode)",
+  "msa_desc": "For a PC without Bluetooth. The watch registers itself with wristkey-msa; this PC resolves its own binding by the MSA account below.",
+  "msa_server_url": "Server URL",
+  "msa_token": "Bearer token",
+  "msa_placeholder_token": "WRISTKEY_MSA_TOKEN",
+  "msa_account": "MSA account",
+  "msa_account_hint": "Must match the account entered on the watch. DOMAIN\\user is sent as user.",
+  "msa_save": "💾 Save",
+  "msa_check": "🔗 Check connection",
+  "msa_status_unknown": "Unknown",
+  "msa_status_saved": "Saved",
+  "msa_status_checking": "Checking…",
+  "msa_status_linked": "Linked",
+  "msa_status_unlinked": "Watch not registered yet",
+  "msa_status_error": "Error"
 }

@@ -63,6 +63,43 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecu
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn clear_windows_password()->Result<(),String>{Err("Windows password storage is only available on Windows".into())}
 #[tauri::command] async fn get_config(state: State<'_, Arc<AppState>>)->Result<Config,String>{Ok(state.config.lock().unwrap().clone())}
+
+/// Config file the app, the daemon and the credential provider all share.
+fn config_file()->std::path::PathBuf{dirs::config_dir().unwrap_or_else(||std::path::PathBuf::from(".")).join("WristKey/config.toml")}
+
+#[derive(serde::Serialize)] struct MsaConfigDto { msa_server_url: String, msa_token: String, msa_account: String, linked: bool, wristkey_id: Option<String> }
+#[derive(serde::Deserialize)] struct MsaConfigInput { msa_server_url: String, msa_token: String, msa_account: String }
+
+#[tauri::command] async fn get_msa_config(state: State<'_, Arc<AppState>>)->Result<MsaConfigDto,String>{
+    let cfg=state.config.lock().unwrap().clone();
+    Ok(MsaConfigDto{linked:false,wristkey_id:None,msa_server_url:cfg.msa_server_url,msa_token:cfg.msa_token,msa_account:cfg.msa_account})}
+
+#[tauri::command] async fn set_msa_config(state: State<'_, Arc<AppState>>,cfg:MsaConfigInput)->Result<(),String>{
+    {
+        let mut guard=state.config.lock().unwrap();
+        guard.msa_server_url=cfg.msa_server_url.trim().trim_end_matches('/').to_owned();
+        guard.msa_token=cfg.msa_token.trim().to_owned();
+        guard.msa_account=cfg.msa_account.trim().to_owned();
+        let snapshot=guard.clone();
+        drop(guard);
+        if let Some(parent)=config_file().parent(){std::fs::create_dir_all(parent).ok();}
+        snapshot.to_file(&config_file()).map_err(|e|e.to_string())?;
+    }
+    Ok(())}
+
+/// Check the server and resolve this PC's own binding. Same call the daemon's
+/// msa_status action makes, exposed so the GUI can show link state directly.
+#[tauri::command] async fn check_msa_connection(state: State<'_, Arc<AppState>>)->Result<serde_json::Value,String>{
+    let cfg=state.config.lock().unwrap().clone();
+    if cfg.msa_server_url.is_empty(){return Ok(serde_json::json!({"status":"error","message":"msa server url is not configured"}))}
+    let account=match cfg.msa_account.rsplit_once('\\'){Some((_,u))if !u.is_empty()=>u.to_owned(),_=>cfg.msa_account.clone()};
+    if account.is_empty(){return Ok(serde_json::json!({"status":"error","message":"msa account is not configured"}))}
+    let client=wristkey_core::MsaClient::new(cfg.msa_server_url,Some(cfg.msa_token).filter(|t|!t.is_empty()));
+    match client.resolve_own_binding(&account).await{
+        Ok(Some(b))=>Ok(serde_json::json!({"status":"success","linked":true,"binding":b})),
+        Ok(None)=>Ok(serde_json::json!({"status":"success","linked":false,"msa_account":account})),
+        Err(e)=>Ok(serde_json::json!({"status":"error","message":e.to_string()})),
+    }}
 #[cfg(target_os="windows")]
 #[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<(),String>{
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
@@ -79,7 +116,12 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecu
 #[tauri::command] async fn unregister_credential_provider()->Result<(),String>{WindowsSecurity::unregister_credential_provider()}
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn unregister_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
-#[tauri::command] async fn update_config(state: State<'_, Arc<AppState>>,new_config:Config)->Result<(),String>{*state.config.lock().unwrap()=new_config;Ok(())}
+#[tauri::command] async fn update_config(state: State<'_, Arc<AppState>>,new_config:Config)->Result<(),String>{
+    // Persist, otherwise LAN/MSA settings are lost on restart: the daemon and
+    // the credential provider read this same file instead of in-memory state.
+    if let Some(parent)=config_file().parent(){std::fs::create_dir_all(parent).ok();}
+    new_config.to_file(&config_file()).map_err(|e|e.to_string())?;
+    *state.config.lock().unwrap()=new_config;Ok(())}
 #[tauri::command] async fn set_config(state: State<'_, Arc<AppState>>,config:Config)->Result<(),String>{update_config(state,config).await}
 #[tauri::command] async fn get_logs()->Result<Vec<String>,String>{use std::fs;let log_dir=LOG_DIR.get().ok_or("log dir not initialized")?;let mut lines=Vec::new();for i in (0..=5).rev(){let path=if i==0{log_dir.join("wristkey.log")}else{log_dir.join(format!("wristkey.log.{}",i))};if path.exists(){if let Ok(content)=fs::read_to_string(&path){for line in content.lines().rev(){lines.push(line.to_string());}}}}Ok(lines)}
 #[derive(serde::Deserialize)] struct TrainTouchRequest { x: f64, y: f64 }
@@ -173,4 +215,4 @@ async fn main() {
             warn!("Service auto-start: {}", e);
         }
     }
-}tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,clear_windows_password,get_config,update_config,set_config,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();#[cfg(windows)]let service_running=service::win_service::get_service_status().map(|st|st=="Running"||st=="StartPending").unwrap_or(false);#[cfg(not(windows))]let service_running=false;if service_running{info!("Windows service is running; skipping in-process daemon to avoid pipe/BLE conflict")}else{tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});}let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}
+}tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,clear_windows_password,get_config,update_config,set_config,get_msa_config,set_msa_config,check_msa_connection,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();#[cfg(windows)]let service_running=service::win_service::get_service_status().map(|st|st=="Running"||st=="StartPending").unwrap_or(false);#[cfg(not(windows))]let service_running=false;if service_running{info!("Windows service is running; skipping in-process daemon to avoid pipe/BLE conflict")}else{tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});}let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}

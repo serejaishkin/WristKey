@@ -137,8 +137,56 @@ async function loadConfig() {
 async function saveConfig() {
     try {
         const cfg = { auto_lock_timeout_sec: parseInt(document.getElementById('timeoutInput').value), rssi_threshold_offset_dbm: parseInt(document.getElementById('rssiInput').value), challenge_timeout_sec: parseInt(document.getElementById('challengeInput').value), log_to_file: document.getElementById('logFileToggle').checked, log_to_console: document.getElementById('logConsoleToggle').checked, log_level: document.getElementById('logLevelSelect').value };
+        // Carry the MSA fields through: Config uses serde defaults, so omitting
+        // them here would silently wipe the LAN settings on every Save.
+        const msa = await invoke('get_msa_config');
+        cfg.msa_server_url = msa.msa_server_url; cfg.msa_token = msa.msa_token; cfg.msa_account = msa.msa_account;
         await invoke('set_config', { config: cfg }); alert('💾 Saved!');
     } catch (e) { alert('❌ Save failed: ' + e); }
+}
+
+function msaStatusEl() { return document.getElementById('msaStatus'); }
+
+function setMsaStatus(kind, text) {
+    const el = msaStatusEl(); if (!el) return;
+    el.textContent = text;
+    el.className = kind === 'ok' ? 'status-ok' : (kind === 'bad' ? 'status-bad' : 'status-warn');
+}
+
+async function loadMsaConfig() {
+    try {
+        const msa = await invoke('get_msa_config');
+        document.getElementById('msaServerUrlInput').value = msa.msa_server_url || '';
+        document.getElementById('msaTokenInput').value = msa.msa_token || '';
+        document.getElementById('msaAccountInput').value = msa.msa_account || '';
+    } catch (e) { console.error('loadMsaConfig failed:', e); }
+}
+
+async function saveMsaConfig() {
+    try {
+        await invoke('set_msa_config', { cfg: {
+            msa_server_url: document.getElementById('msaServerUrlInput').value,
+            msa_token: document.getElementById('msaTokenInput').value,
+            msa_account: document.getElementById('msaAccountInput').value,
+        }});
+        setMsaStatus('warn', window.WristKeyI18n ? window.WristKeyI18n.t('msa_status_saved') : 'Saved');
+    } catch (e) { setMsaStatus('bad', (window.WristKeyI18n ? window.WristKeyI18n.t('msa_status_error') : 'Error') + ': ' + e); }
+}
+
+async function checkMsaConnection() {
+    const btn = document.getElementById('msaCheckBtn');
+    const t = (k, f) => (window.WristKeyI18n ? window.WristKeyI18n.t(k) : f);
+    // Persist first so the check uses exactly what the user typed.
+    await saveMsaConfig();
+    btn.disabled = true;
+    setMsaStatus('warn', t('msa_status_checking', 'Checking…'));
+    try {
+        const r = await invoke('check_msa_connection');
+        if (r.status !== 'success') setMsaStatus('bad', t('msa_status_error', 'Error') + ': ' + r.message);
+        else if (r.linked) setMsaStatus('ok', t('msa_status_linked', 'Linked') + ': ' + r.binding.wristkey_id);
+        else setMsaStatus('warn', t('msa_status_unlinked', 'Watch not registered yet'));
+    } catch (e) { setMsaStatus('bad', t('msa_status_error', 'Error') + ': ' + e); }
+    finally { btn.disabled = false; }
 }
 
 async function toggleDaemon() {
@@ -280,7 +328,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const cpUnregBtn = document.getElementById('cpUnregisterBtn'); if (cpUnregBtn) cpUnregBtn.addEventListener('click', unregisterCP);
     const winPwdBtn = document.getElementById('winPasswordBtn'); if (winPwdBtn) winPwdBtn.addEventListener('click', setWindowsPassword);
     const copyLogBtn = document.getElementById('copyLogDirBtn'); if (copyLogBtn) copyLogBtn.addEventListener('click', copyLogDir);
+    const msaSaveBtn = document.getElementById('msaSaveBtn'); if (msaSaveBtn) msaSaveBtn.addEventListener('click', saveMsaConfig);
+    const msaCheckBtn = document.getElementById('msaCheckBtn'); if (msaCheckBtn) msaCheckBtn.addEventListener('click', checkMsaConnection);
     const svcInstallBtn = document.getElementById('svcInstallBtn'); if (svcInstallBtn) svcInstallBtn.addEventListener('click', installService);
     const svcUninstallBtn = document.getElementById('svcUninstallBtn'); if (svcUninstallBtn) svcUninstallBtn.addEventListener('click', uninstallService);
-    refreshStatus(); refreshDevices(); loadConfig(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
+    refreshStatus(); refreshDevices(); loadConfig(); loadMsaConfig(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
 });

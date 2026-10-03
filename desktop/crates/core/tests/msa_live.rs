@@ -180,3 +180,48 @@ fn lan_mode_rejects_missing_and_wrong_token() {
     assert!(ok.unwrap().is_some());
     futures_lite_block_on(MsaClient::new(&base, None).health()).expect("health must be public");
 }
+
+/// The full no-Bluetooth unlock path: resolve the binding over HTTP against a
+/// real server, store the encrypted password in the LAN slot, read it back, and
+/// refresh metadata without losing it.
+#[test]
+#[ignore = "needs the wristkey-msa binary; set WRISTKEY_MSA_EXE"]
+fn lan_device_password_slot_works_against_real_server() {
+    use wristkey_core::{EcdsaP256Crypto, MemoryStorage, SessionManager};
+    use std::sync::Arc;
+
+    let listen = "127.0.0.1:18793";
+    let _server = Server::start(listen);
+    let base = format!("http://{listen}");
+    let account = "unlock@wristkey.local";
+
+    let client = MsaClient::new(&base, Some(TOKEN.into()));
+    // No binding yet: unlock must not silently succeed.
+    assert!(futures_lite_block_on(client.resolve_own_binding(account)).unwrap().is_none());
+
+    register_watch(&base, account);
+    let binding = futures_lite_block_on(client.resolve_own_binding(account)).unwrap().unwrap();
+
+    let session = SessionManager::new(Arc::new(EcdsaP256Crypto), Arc::new(MemoryStorage::new()));
+    assert!(futures_lite_block_on(session.get_lan_device_password(&binding)).unwrap().is_none());
+
+    futures_lite_block_on(session.set_lan_device_password(&binding, b"enc:hunter2".to_vec())).unwrap();
+    assert_eq!(
+        futures_lite_block_on(session.get_lan_device_password(&binding)).unwrap().unwrap(),
+        b"enc:hunter2".to_vec()
+    );
+
+    // A watch re-register mints a NEW wristkey_id. The stored password must
+    // still be reachable, because the PC keys its slot by the MSA account.
+    register_watch(&base, account);
+    let again = futures_lite_block_on(client.resolve_own_binding(account)).unwrap().unwrap();
+    assert_ne!(
+        again.wristkey_id, binding.wristkey_id,
+        "precondition: the server mints a new id on re-register"
+    );
+    assert_eq!(
+        futures_lite_block_on(session.get_lan_device_password(&again)).unwrap().unwrap(),
+        b"enc:hunter2".to_vec(),
+        "re-registration must not lose the stored password"
+    );
+}

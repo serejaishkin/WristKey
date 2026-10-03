@@ -40,8 +40,21 @@
 4. ответ: `{"status":"success","linked":true,"binding":{...}}` либо
    `{"status":"success","linked":false}` — часы не зарегистрированы
 
-Ограничение: наличие привязки не означает, что часы сейчас в сети — это только
-факт последнего register. Live-presence challenge для credential provider не реализован.
+Те же значения редактируются в GUI (Settings → MSA Server) и сохраняются в
+тот же config.toml; кнопка «Check connection» вызывает тот же resolve.
+
+### Разблокировка по LAN (без Bluetooth)
+Действия `unlock`, `set_password`, `has_password` в daemon работают с обоими
+транспортами: если BLE-часы спарены — используется BLE, иначе LAN-привязка.
+- `set_password` кладёт шифрованный пароль в слот, ключ которого —
+  **uuid v5 от `msa_account`**, а не `wristkey_id`: сервер выдаёт новый
+  `wristkey_id` при каждой повторной регистрации, и привязка к нему теряла бы пароль.
+- `unlock` резолвит привязку, читает пароль из слота и отдаёт его credential provider.
+- Метаданные привязки обновляются, но сохранённый пароль при re-upsert не затирается.
+
+Ограничение безопасности: наличие привязки не означает, что часы сейчас в сети —
+это только факт последнего register. LAN-unlock эквивалентен спаренному устройству,
+а не подтверждению присутствия. Live-presence challenge не реализован.
 
 ## Auto-Lock
 - RSSI < baseline - 15dBm for 30s → lock

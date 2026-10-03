@@ -18,6 +18,34 @@ pub use msa::{MsaAccountBindings, MsaBinding, MsaClient, MsaError};
 
 pub type Result<T> = std::result::Result<T, WristKeyError>;
 
+/// Recover the device-id Uuid from a server-minted `wristkey_id` (`wk-<uuid>`).
+fn uuid_from_wristkey_id(wristkey_id: &str) -> Result<Uuid> {
+    let raw = wristkey_id.strip_prefix("wk-").unwrap_or(wristkey_id);
+    Uuid::parse_str(raw).map_err(|e| WristKeyError::Session(format!("invalid wristkey_id {:?}: {}", wristkey_id, e)))
+}
+
+/// Stable device id for a LAN (MSA) account.
+///
+/// The MSA account is the only identifier the PC owns end-to-end: the watch
+/// address rotates, and the server mints a new `wristkey_id` on every
+/// re-register. Deriving the record id from the account keeps the stored
+/// password across re-registration and app restarts.
+fn lan_device_id(msa_account: &str) -> Result<Uuid> {
+    // uuid v5 (SHA-1, DNS namespace) so the same account always maps to the
+    // same slot on every machine and across releases.
+    fn dns_namespace() -> Uuid {
+        Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").expect("valid namespace uuid")
+    }
+    let account = msa_account.trim();
+    if account.is_empty() { return Err(WristKeyError::Session("msa account is empty".into())); }
+    Ok(Uuid::new_v5(&dns_namespace(), account.as_bytes()))
+}
+
+fn base64_decode(value: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(value).unwrap_or_default()
+}
+
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum WristKeyError {
     #[error("crypto error: {0}")]
@@ -343,6 +371,41 @@ impl SessionManager {
         let mut device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         device.windows_password = None; self.storage.save_device(&device).await?;
         info!("cleared stored password for device {}", device_id); Ok(())
+    }
+    /// Create-or-update the local device record backing an MSA (LAN) binding.
+    ///
+    /// A PC without Bluetooth never runs BLE pairing, so the slot that holds the
+    /// encrypted Windows password does not exist yet. The record id is derived
+    /// from the MSA ACCOUNT, not from `wristkey_id`: the server mints a new
+    /// wristkey_id on every re-register, so keying by it would silently drop the
+    /// stored password whenever the watch registers again.
+    pub async fn upsert_lan_device(&self, binding: &MsaBinding) -> Result<PairedDevice> {
+        let device_id = lan_device_id(&binding.msa_account)?;
+        let public_key = base64_decode(&binding.watch_pubkey_b64);
+        let existing = self.storage.load_device(device_id).await?;
+        let mut device = existing.unwrap_or_else(|| PairedDevice {
+            id: device_id,
+            name: binding.pc_name.clone(),
+            public_key: public_key.clone(),
+            device_id: Some(device_id.as_bytes().to_vec()),
+            paired_at: Utc::now(),
+            baseline_rssi: -55,
+            address: String::new(),
+            windows_password: None,
+        });
+        // Refresh what the server knows, but never drop a stored password.
+        device.name = binding.pc_name.clone();
+        if !public_key.is_empty() { device.public_key = public_key; }
+        self.storage.save_device(&device).await?;
+        Ok(device)
+    }
+    pub async fn set_lan_device_password(&self, binding: &MsaBinding, encrypted: Vec<u8>) -> Result<()> {
+        let device = self.upsert_lan_device(binding).await?;
+        self.set_device_password(device.id, encrypted).await
+    }
+    pub async fn get_lan_device_password(&self, binding: &MsaBinding) -> Result<Option<Vec<u8>>> {
+        let device_id = lan_device_id(&binding.msa_account)?;
+        Ok(self.storage.load_device(device_id).await?.and_then(|d| d.windows_password))
     }
     pub async fn pair_device(&self, id: &str, name: &str, rssi: i32, address: &str) -> Result<()> {
         let (priv_key, pub_key) = self.crypto.generate_keypair().await?;

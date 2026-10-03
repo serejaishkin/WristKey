@@ -451,8 +451,9 @@ mod pipe_server {
                 return;
             }
         };
+        let config = wristkey_core::Config::from_file(&config_path()).unwrap_or_default();
         let response = match request.get("action").and_then(|v| v.as_str()).unwrap_or("") {
-            "unlock" => match do_ble_unlock(session, ble, conn_mgr).await {
+            "unlock" => match do_ble_unlock(session, ble, conn_mgr, config).await {
                 Ok(password) => serde_json::json!({"status":"success","password":password}),
                 Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
             },
@@ -461,7 +462,12 @@ mod pipe_server {
                 if password.is_empty() {
                     serde_json::json!({"status":"error","message":"empty password"})
                 } else {
-                    match set_stored_password(session, password).await {
+                    // Paired watch first; a PC with no Bluetooth uses the LAN binding.
+                    let result = match set_stored_password(session.clone(), password).await {
+                        Ok(()) => Ok(()),
+                        Err(e) => set_stored_password_lan(session, &request, &config).await.map_err(|_| e),
+                    };
+                    match result {
                         Ok(()) => serde_json::json!({"status":"success"}),
                         Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
                     }
@@ -472,16 +478,16 @@ mod pipe_server {
                 Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
             },
             "has_password" => {
-                let configured = session.list_paired_devices().await
+                let paired = session.list_paired_devices().await
                     .ok()
                     .and_then(|devices| devices.first().map(|d| d.windows_password.is_some()))
                     .unwrap_or(false);
+                let linked = msa_settings(&request, &config).0 != "";
+                let configured = paired || (linked && msa_status(&request, &config).await
+                    .get("linked").and_then(|v| v.as_bool()).unwrap_or(false));
                 serde_json::json!({"status":"success","configured":configured})
             }
-            "msa_status" => {
-                let config = wristkey_core::Config::from_file(&config_path()).unwrap_or_default();
-                msa_status(&request, &config).await
-            }
+            "msa_status" => msa_status(&request, &config).await,
             _ => serde_json::json!({"status":"error","message":"unknown action"}),
         };
         let _ = reader.get_mut().write_all(format!("{}\n", response).as_bytes()).await;
@@ -500,9 +506,14 @@ mod pipe_server {
         session.clear_device_password(device.id).await
     }
 
-    async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>) -> Result<String> {
+    async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, config: wristkey_core::Config) -> Result<String> {
         let devices = session.list_paired_devices().await?;
-        let device = devices.first().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
+        // No BLE watch paired: fall back to the LAN binding if one is configured.
+        // Otherwise the credential provider has no way to unlock this PC.
+        let device = match devices.first() {
+            Some(d) => d,
+            None => return unlock_via_lan(&session, &config).await,
+        };
         let encrypted_password = device.windows_password.clone()
             .ok_or_else(|| WristKeyError::Session("windows password not configured; use set_password first".into()))?;
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
@@ -520,6 +531,42 @@ mod pipe_server {
         // The watch confirmed presence; only now decrypt and hand over the
         // stored Windows password to the credential provider.
         unprotect_password(&encrypted_password)
+    }
+
+    /// Unlock for a PC without Bluetooth: resolve the binding by MSA account and
+    /// hand over the stored Windows password.
+    ///
+    /// This does NOT prove the watch is currently present — it only proves the
+    /// watch registered with this server at some point. Treat it as the LAN
+    /// equivalent of a paired device.
+    async fn unlock_via_lan(session: &Arc<SessionManager>, config: &wristkey_core::Config) -> Result<String> {
+        let (server_url, token, account) = msa_settings(&serde_json::json!({}), config);
+        if server_url.is_empty() {
+            return Err(WristKeyError::Session("no paired devices and no MSA server configured".into()));
+        }
+        if account.is_empty() {
+            return Err(WristKeyError::Session("no paired devices and no MSA account configured".into()));
+        }
+        let client = MsaClient::new(server_url, Some(token).filter(|t| !t.is_empty()));
+        let binding = client.resolve_own_binding(&account).await
+            .map_err(|e| WristKeyError::Session(format!("msa resolve failed: {}", e)))?
+            .ok_or_else(|| WristKeyError::Session("msa server has no binding for this account; register on the watch first".into()))?;
+        info!("LAN unlock using binding {} ({})", binding.wristkey_id, binding.msa_account);
+
+        let encrypted = session.get_lan_device_password(&binding).await?
+            .ok_or_else(|| WristKeyError::Session("windows password not configured; use set_password first".into()))?;
+        unprotect_password(&encrypted)
+    }
+
+    async fn set_stored_password_lan(session: Arc<SessionManager>, request: &serde_json::Value, config: &wristkey_core::Config) -> Result<()> {
+        let (server_url, token, account) = msa_settings(request, config);
+        let password = request.get("password").and_then(|v| v.as_str()).unwrap_or("");
+        if password.is_empty() { return Err(WristKeyError::Session("empty password".into())); }
+        let client = MsaClient::new(server_url, Some(token).filter(|t| !t.is_empty()));
+        let binding = client.resolve_own_binding(&account).await
+            .map_err(|e| WristKeyError::Session(format!("msa resolve failed: {}", e)))?
+            .ok_or_else(|| WristKeyError::Session("msa server has no binding for this account; register on the watch first".into()))?;
+        session.set_lan_device_password(&binding, protect_password(password)?).await
     }
 
     #[cfg(test)]
