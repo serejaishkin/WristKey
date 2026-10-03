@@ -156,7 +156,7 @@ static HRESULT LsaInitString(PLSA_STRING destination, PCSTR source)
     return S_OK;
 }
 
-HRESULT RetrieveKerberosAuthPackage(ULONG* pulAuthPackage)
+HRESULT RetrieveNegotiateAuthPackage(ULONG* pulAuthPackage)
 {
     if (!pulAuthPackage) return E_POINTER;
     *pulAuthPackage = 0;
@@ -165,13 +165,13 @@ HRESULT RetrieveKerberosAuthPackage(ULONG* pulAuthPackage)
     NTSTATUS status = LsaConnectUntrusted(&hLsa);
     if (status != 0) return HRESULT_FROM_NT(status);
 
-    // The serialized buffer is a KERB_INTERACTIVE_UNLOCK_LOGON, so the LSA
-    // package that must consume it is Microsoft Kerberos (MICROSOFT_KERBEROS_NAME_A).
-    // Lookup by "Negotiate" (NEGOSSP_NAME_A as in the classic sample) is not
-    // reliable: on some systems LsaLookupAuthenticationPackage maps "Negotiate"
-    // to package id 0, which LogonUI rejects as "no authentication package".
+    // KERB_INTERACTIVE_UNLOCK_LOGON is the buffer format used by the Microsoft
+    // Credential Provider V2 sample, but the authentication package must be
+    // Negotiate so local accounts can be handled by MSV1_0 as well as domain
+    // accounts. Forcing Kerberos here makes a local-only PC try to contact a
+    // domain controller and produces ERROR_NO_LOGON_SERVERS (1311).
     LSA_STRING name{};
-    HRESULT hr = LsaInitString(&name, MICROSOFT_KERBEROS_NAME_A);
+    HRESULT hr = LsaInitString(&name, NEGOSSP_NAME_A);
     ULONG authPackage = 0;
     if (SUCCEEDED(hr))
     {
