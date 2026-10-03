@@ -662,7 +662,7 @@ static HRESULT PackUnlockCredential(
 
         if (SUCCEEDED(hr)) {
             ULONG authPackage = 0;
-            hr = RetrieveKerberosAuthPackage(&authPackage);
+            hr = RetrieveNegotiateAuthPackage(&authPackage);
             if (SUCCEEDED(hr)) {
                 out->ulAuthenticationPackage = authPackage;
                 out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
