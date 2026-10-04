@@ -36,10 +36,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Get script directory
+# Get script directory (script is at: repo/desktop/crates/credential-provider/)
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$RepoRoot = Join-Path (Join-Path $ScriptDir '..') '..'
-$RepoRoot = Join-Path $RepoRoot '..\..'
+$RepoRoot = Join-Path (Join-Path (Join-Path $ScriptDir '..') '..') '..'
 $ProjectDir = Join-Path $RepoRoot 'windows-credential-provider'
 $ProjectDir = Resolve-Path $ProjectDir
 
