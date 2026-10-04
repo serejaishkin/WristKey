@@ -190,7 +190,7 @@ namespace WristKeyCredentialProvider
     }
 
     [ComVisible(true)]
-    [Guid("A1B2C3D4-E5F6-7890-ABCD-EF1234567895")]
+    [Guid("7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1")]
     [ClassInterface(ClassInterfaceType.None)]
     [ProgId("WristKey.CredentialProvider")]
     public class WristKeyCredentialProvider : ICredentialProvider, ICredentialProviderSetUserArray
@@ -456,7 +456,7 @@ namespace WristKeyCredentialProvider
                 Marshal.Copy(serialized, 0, pSerialized, serialized.Length);
 
                 pcpcs.ulAuthenticationPackage = authPackage;
-                pcpcs.clsidCredentialProvider = new Guid("A1B2C3D4-E5F6-7890-ABCD-EF1234567895");
+                pcpcs.clsidCredentialProvider = new Guid("7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1");
                 pcpcs.rgbSerialization = pSerialized;
                 pcpcs.cbSerialization = (uint)serialized.Length;
                 pcpgsr = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE.CPGSR_RETURN_CREDENTIAL_FINISHED;
