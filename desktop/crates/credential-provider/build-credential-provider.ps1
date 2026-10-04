@@ -114,7 +114,25 @@ $MsBuildArgs = @(
 # Execute MSBuild
 $process = Start-Process -FilePath $MsBuildPath -ArgumentList $MsBuildArgs -Wait -PassThru -NoNewWindow
 if ($process.ExitCode -ne 0) {
+    $errorOutput = $process.ExitCode
     Write-Error "Build failed with exit code $($process.ExitCode)"
+    
+    # Check for common C++ tools missing error
+    if ($errorOutput -like "*Microsoft.Cpp.Default.props*") {
+        Write-Host ""
+        Write-Host "ERROR: Visual C++ Build Tools not found!" -ForegroundColor Red
+        Write-Host "The project requires 'Desktop development with C++' workload." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "To fix this, install one of the following:" -ForegroundColor Cyan
+        Write-Host "  1. Visual Studio 2022 Community (free) + 'Desktop development with C++' workload" -ForegroundColor Gray
+        Write-Host "     Download: https://visualstudio.microsoft.com/downloads/" -ForegroundColor Gray
+        Write-Host "  2. Visual Studio Build Tools 2022 (smaller, no IDE) + 'C++ build tools' workload" -ForegroundColor Gray
+        Write-Host "     Download: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "In Visual Studio Installer, make sure to select:" -ForegroundColor Cyan
+        Write-Host "  ☑ Desktop development with C++" -ForegroundColor Green
+        Write-Host "  (This includes MSBuild, VC++ compiler, Windows SDK, and Microsoft.Cpp.Default.props)" -ForegroundColor Gray
+    }
     exit $process.ExitCode
 }
 
