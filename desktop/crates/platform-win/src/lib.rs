@@ -5,7 +5,10 @@ use std::sync::Arc;
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
 };
-use windows::Win32::Foundation::{HLOCAL, LocalFree};
+use windows::Win32::Foundation::{HLOCAL, LocalFree, HKEY};
+use windows::Win32::System::Registry::{RegOpenKeyExW, RegCloseKey, RegQueryValueExW, HKEY_LOCAL_MACHINE, HKEY_CLASSES_ROOT, KEY_READ};
+use std::ffi::OsStr;
+use std::os::windows::ffi::OsStrExt;
 
 pub struct WindowsKeyProtector;
 
@@ -120,7 +123,28 @@ impl WindowsSecurity {
     pub fn start_pipe_server() {}
 
     pub fn is_credential_provider_registered() -> bool {
-        false
+        // Check both CLSID registration and Credential Provider registration
+        let clsid = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
+        
+        // Check CLSID in HKCR
+        let clsid_path = format!("CLSID\\{}", clsid);
+        if !registry_key_exists(HKEY_CLASSES_ROOT, &clsid_path) {
+            return false;
+        }
+        
+        // Check InprocServer32
+        let inproc_path = format!("{}\\InprocServer32", clsid_path);
+        if !registry_key_exists(HKEY_CLASSES_ROOT, &inproc_path) {
+            return false;
+        }
+        
+        // Check Credential Provider registration in HKLM
+        let cp_path = format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}", clsid);
+        if !registry_key_exists(HKEY_LOCAL_MACHINE, &cp_path) {
+            return false;
+        }
+        
+        true
     }
 
     pub fn storage_type_description() -> &'static str {
@@ -137,6 +161,20 @@ impl WindowsSecurity {
 
     pub fn unregister_credential_provider() -> std::result::Result<(), String> {
         Ok(())
+    }
+    
+    fn registry_key_exists(hkey: HKEY, path: &str) -> bool {
+        let wide_path: Vec<u16> = OsStr::new(path).encode_wide().chain(std::iter::once(0)).collect();
+        let mut key_handle = HKEY::default();
+        let result = unsafe {
+            RegOpenKeyExW(hkey, wide_path.as_ptr(), 0, KEY_READ, &mut key_handle)
+        };
+        if result.0 == 0 {
+            unsafe { RegCloseKey(key_handle); }
+            true
+        } else {
+            false
+        }
     }
 }
 

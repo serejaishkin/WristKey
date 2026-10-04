@@ -29,7 +29,7 @@ namespace WristKeyCredentialProvider
         [PreserveSig] int UnAdvise();
         [PreserveSig] int SetSelected(out int pbAutoLogon);
         [PreserveSig] int SetDeselected();
-        [PreserveSig] int GetFieldState(uint dwFieldId, out CREDENTIAL_PROVIDER_FIELD_STATE pcpfs, out CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE pcpfis);
+        [PreserveSig] int GetFieldState(uint dwFieldId, out CREDENTIAL_PROVIDER_FIELD_STATE pcpfs, out CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE cpfis);
         [PreserveSig] int GetStringValue(uint dwFieldId, out string ppsz);
         [PreserveSig] int GetBitmapValue(uint dwFieldId, out IntPtr phbmp);
         [PreserveSig] int GetCheckboxValue(uint dwFieldId, out int pbChecked, out string ppszLabel);
@@ -338,7 +338,7 @@ namespace WristKeyCredentialProvider
         {
             try
             {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
                     PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(5000);
@@ -346,9 +346,13 @@ namespace WristKeyCredentialProvider
                     {
                         var request = new JObject();
                         request["action"] = "unlock";
-                        request["user"] = Environment.UserName;
+                        string domain = Environment.UserDomainName;
+                        string username = Environment.UserName;
+                        request["user"] = string.IsNullOrEmpty(domain) || domain.Equals(username, StringComparison.OrdinalIgnoreCase) 
+                            ? username 
+                            : $"{domain}\\{username}";
                         // WriteLine добавляет \r\n — daemon читает через from_slice и падает.
-                        // Используем Write + \n без \r.
+                        // Используем Write + \n без \р.
                         string json = request.ToString(Newtonsoft.Json.Formatting.None);
                         writer.Write(json + "\n");
                         writer.Flush();
@@ -363,6 +367,9 @@ namespace WristKeyCredentialProvider
                             throw new Exception("Failed to parse daemon response");
                         if (response.status == "success")
                         {
+                            // Store username/domain for later use in serialization
+                            _cachedDomain = domain;
+                            _cachedUsername = username;
                             return response.password;
                         }
                         throw new Exception(response.message ?? "Unknown error from daemon");
@@ -374,12 +381,14 @@ namespace WristKeyCredentialProvider
                 // Fallback: try old pipe read for backward compatibility
                 try
                 {
-                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
                         PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                     {
                         client.Connect(2000);
                         using (StreamReader reader = new StreamReader(client, Encoding.UTF8))
                         {
+                            _cachedDomain = Environment.UserDomainName;
+                            _cachedUsername = Environment.UserName;
                             return reader.ReadLine();
                         }
                     }
@@ -388,6 +397,9 @@ namespace WristKeyCredentialProvider
                 throw new Exception("Failed to get password from daemon: " + ex.Message);
             }
         }
+
+        private string _cachedDomain = "";
+        private string _cachedUsername = "";
 
         private uint GetAuthenticationPackage()
         {
@@ -413,6 +425,10 @@ namespace WristKeyCredentialProvider
 
         private byte[] SerializeKerbInteractiveUnlockLogon(string username, string password, string domain)
         {
+            // Use cached values from GetPasswordFromDaemon if available
+            string actualDomain = string.IsNullOrEmpty(_cachedDomain) ? domain : _cachedDomain;
+            string actualUsername = string.IsNullOrEmpty(_cachedUsername) ? username : _cachedUsername;
+            
             NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON logon = new NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON
             {
                 Logon = new NativeMethods.KERB_INTERACTIVE_LOGON
@@ -421,21 +437,21 @@ namespace WristKeyCredentialProvider
                 }
             };
 
-            IntPtr pUserName = Marshal.StringToHGlobalUni(username);
-            IntPtr pDomain = Marshal.StringToHGlobalUni(domain);
+            IntPtr pUserName = Marshal.StringToHGlobalUni(actualUsername);
+            IntPtr pDomain = Marshal.StringToHGlobalUni(actualDomain);
             IntPtr pPassword = Marshal.StringToHGlobalUni(password);
 
             logon.Logon.UserName = new NativeMethods.UNICODE_STRING
             {
-                Length = (ushort)(username.Length * 2),
-                MaximumLength = (ushort)((username.Length + 1) * 2),
+                Length = (ushort)(actualUsername.Length * 2),
+                MaximumLength = (ushort)((actualUsername.Length + 1) * 2),
                 Buffer = pUserName
             };
 
             logon.Logon.Domain = new NativeMethods.UNICODE_STRING
             {
-                Length = (ushort)(domain.Length * 2),
-                MaximumLength = (ushort)((domain.Length + 1) * 2),
+                Length = (ushort)(actualDomain.Length * 2),
+                MaximumLength = (ushort)((actualDomain.Length + 1) * 2),
                 Buffer = pDomain
             };
 
@@ -452,6 +468,13 @@ namespace WristKeyCredentialProvider
 
             byte[] result = new byte[size];
             Marshal.Copy(pLogon, result, 0, size);
+            
+            // Free the unmanaged strings
+            Marshal.FreeHGlobal(pUserName);
+            Marshal.FreeHGlobal(pDomain);
+            Marshal.FreeHGlobal(pPassword);
+            Marshal.FreeHGlobal(pLogon);
+
             return result;
         }
     }
