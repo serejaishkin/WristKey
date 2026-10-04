@@ -292,6 +292,8 @@ namespace WristKeyCredentialProvider
         private static readonly Guid FieldTypeGuid = Guid.Empty;
         private ICredentialProviderCredentialEvents _events;
         private readonly string _userSid;
+        private string _cachedDomain = "";
+        private string _cachedUsername = "";
 
         public WristKeyCredential(string userSid)
         {
@@ -480,16 +482,21 @@ namespace WristKeyCredentialProvider
         {
             try
             {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
                     PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(5000);
                     using (StreamWriter writer = new StreamWriter(client, Encoding.UTF8, 1024, true) { AutoFlush = true })
                     {
                         // WriteLine добавляет \r\n — daemon читает через from_slice и падает.
-                        // Используем Write + \n без \r.
+                        // Используем Write + \n без \р.
+                        string domain = Environment.UserDomainName;
+                        string username = Environment.UserName;
+                        string user = string.IsNullOrEmpty(domain) || domain.Equals(username, StringComparison.OrdinalIgnoreCase) 
+                            ? username 
+                            : $"{domain}\\{username}";
                         string json = "{\"action\":\"unlock\",\"user\":\"" +
-                            Environment.UserName.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
+                            user.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
                         writer.Write(json + "\n");
                         writer.Flush();
                     }
@@ -503,6 +510,9 @@ namespace WristKeyCredentialProvider
                             throw new Exception("Failed to parse daemon response");
                         if (response.status == "success")
                         {
+                            // Store username/domain for later use in serialization
+                            _cachedDomain = domain;
+                            _cachedUsername = username;
                             return response.password;
                         }
                         throw new Exception(response.message ?? "Unknown error from daemon");
@@ -514,12 +524,14 @@ namespace WristKeyCredentialProvider
                 // Fallback: try old pipe read for backward compatibility
                 try
                 {
-                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", "WristKeyUnlock",
+                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
                         PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                     {
                         client.Connect(2000);
                         using (StreamReader reader = new StreamReader(client, Encoding.UTF8))
                         {
+                            _cachedDomain = Environment.UserDomainName;
+                            _cachedUsername = Environment.UserName;
                             return reader.ReadLine();
                         }
                     }
@@ -562,9 +574,13 @@ namespace WristKeyCredentialProvider
 
         private byte[] SerializeKerbInteractiveUnlockLogon(string username, string password, string domain)
         {
+            // Use cached values from GetPasswordFromDaemon if available
+            string actualDomain = string.IsNullOrEmpty(_cachedDomain) ? domain : _cachedDomain;
+            string actualUsername = string.IsNullOrEmpty(_cachedUsername) ? username : _cachedUsername;
+            
             int headerSize = Marshal.SizeOf(typeof(NativeMethods.KERB_INTERACTIVE_UNLOCK_LOGON));
-            byte[] userBytes = Encoding.Unicode.GetBytes(username + "\0");
-            byte[] domainBytes = Encoding.Unicode.GetBytes(domain + "\0");
+            byte[] userBytes = Encoding.Unicode.GetBytes(actualUsername + "\0");
+            byte[] domainBytes = Encoding.Unicode.GetBytes(actualDomain + "\0");
             byte[] passwordBytes = Encoding.Unicode.GetBytes(password + "\0");
             int userOffset = headerSize;
             int domainOffset = userOffset + userBytes.Length;
@@ -580,15 +596,15 @@ namespace WristKeyCredentialProvider
 
             logon.Logon.UserName = new NativeMethods.UNICODE_STRING
             {
-                Length = (ushort)(username.Length * 2),
-                MaximumLength = (ushort)((username.Length + 1) * 2),
+                Length = (ushort)(actualUsername.Length * 2),
+                MaximumLength = (ushort)((actualUsername.Length + 1) * 2),
                 Buffer = (IntPtr)userOffset
             };
 
             logon.Logon.Domain = new NativeMethods.UNICODE_STRING
             {
-                Length = (ushort)(domain.Length * 2),
-                MaximumLength = (ushort)((domain.Length + 1) * 2),
+                Length = (ushort)(actualDomain.Length * 2),
+                MaximumLength = (ushort)((actualDomain.Length + 1) * 2),
                 Buffer = (IntPtr)domainOffset
             };
 
