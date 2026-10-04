@@ -50,9 +50,9 @@ Write-Host "Platform: $Platform" -ForegroundColor Gray
 # Find MSBuild
 $MsBuildPath = ${env:MSBuild} # Check if MSBuild is in PATH
 if (-not $MsBuildPath) {
-    # Try common locations
+    # Try common locations - PRIORITIZE VS MSBuild over .NET Framework MSBuild
     $vsPaths = @(
-        # VS 2022
+        # VS 2022 (preferred - has C++ tools)
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
@@ -71,7 +71,7 @@ if (-not $MsBuildPath) {
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-        # .NET Framework MSBuild (fallback)
+        # .NET Framework MSBuild (fallback - may NOT have C++ tools!)
         "${env:windir}\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe",
         "${env:windir}\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe"
     )
@@ -82,6 +82,12 @@ if (-not $MsBuildPath) {
             break
         }
     }
+}
+
+# Warn if using .NET Framework MSBuild (likely missing C++ tools)
+if ($MsBuildPath -like "*Microsoft.NET*") {
+    Write-Warning "Using .NET Framework MSBuild - C++ build tools may not be available!"
+    Write-Warning "Install 'Desktop development with C++' workload in Visual Studio for C++ support."
 }
 
 if (-not $MsBuildPath) {
@@ -112,13 +118,15 @@ $MsBuildArgs = @(
 )
 
 # Execute MSBuild
-$process = Start-Process -FilePath $MsBuildPath -ArgumentList $MsBuildArgs -Wait -PassThru -NoNewWindow
+$process = Start-Process -FilePath $MsBuildPath -ArgumentList $MsBuildArgs -Wait -PassThru -NoNewWindow -RedirectStandardError (Join-Path $env:TEMP "msbuild_error_$PID.txt")
+$msbuildError = Get-Content (Join-Path $env:TEMP "msbuild_error_$PID.txt") -Raw -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $env:TEMP "msbuild_error_$PID.txt") -ErrorAction SilentlyContinue
+
 if ($process.ExitCode -ne 0) {
-    $errorOutput = $process.ExitCode
     Write-Error "Build failed with exit code $($process.ExitCode)"
     
-    # Check for common C++ tools missing error
-    if ($errorOutput -like "*Microsoft.Cpp.Default.props*") {
+    # Check for common C++ tools missing error (any language)
+    if ($msbuildError -like "*Microsoft.Cpp.Default.props*") {
         Write-Host ""
         Write-Host "ERROR: Visual C++ Build Tools not found!" -ForegroundColor Red
         Write-Host "The project requires 'Desktop development with C++' workload." -ForegroundColor Yellow
