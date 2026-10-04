@@ -129,7 +129,8 @@ if ($OutputPath) {
 
 # Also copy to standard install location if running as admin
 $InstallPath = "C:\Program Files\WristKey\WristKeyCredentialProvider.dll"
-if ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) {
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($IsAdmin) {
     $InstallDir = Split-Path -Parent $InstallPath
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
