@@ -38,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 
 # Get script directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$ProjectDir = Join-Path $ScriptDir '..' '..' 'windows-credential-provider'
+$ProjectDir = Join-Path (Join-Path $ScriptDir '..') '..\windows-credential-provider'
 $ProjectDir = Resolve-Path $ProjectDir
 
 Write-Host "Building WristKey Credential Provider..." -ForegroundColor Cyan
