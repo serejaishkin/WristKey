@@ -38,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 
 # Get script directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$RepoRoot = Join-Path (Join-Path $ScriptDir '..') '..'
+$RepoRoot = Join-Path (Join-Path (Join-Path $ScriptDir '..') '..') '..'
 $ProjectDir = Join-Path $RepoRoot 'windows-credential-provider'
 $ProjectDir = Resolve-Path $ProjectDir
 
