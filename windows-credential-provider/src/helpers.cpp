@@ -283,8 +283,43 @@ HRESULT SplitDomainAndUsername(
     const wchar_t* slash = wcschr(qualified, L'\\');
     if (!slash)
     {
-        // A bare username is valid for a local account. Use the conventional
-        // local-domain prefix so the Kerberos package receives an explicit identity.
+        // UPN form (user@host): LSA expects the full UPN in UserName
+        // and an empty LogonDomainName. Forcing domain "." here makes
+        // Negotiate route to Kerberos and fail with 1311.
+        if (wcschr(qualified, L'@') != nullptr)
+        {
+            HRESULT hr = CopyTaskString(L"", domain);
+            if (SUCCEEDED(hr)) hr = CopyTaskString(qualified, username);
+            if (FAILED(hr))
+            {
+                CoTaskMemFree(*domain);
+                CoTaskMemFree(*username);
+                *domain = nullptr;
+                *username = nullptr;
+            }
+            return hr;
+        }
+
+        // A bare username is a local account. LSA wants the machine name
+        // as the domain; "." is not reliably accepted by Negotiate/MSV1_0
+        // and can produce ERROR_NO_LOGON_SERVERS (1311).
+        wchar_t computer[MAX_COMPUTERNAME_LENGTH + 1]{};
+        DWORD size = ARRAYSIZE(computer);
+        if (GetComputerNameW(computer, &size) && computer[0] != L'\0')
+        {
+            HRESULT hr = CopyTaskString(computer, domain);
+            if (SUCCEEDED(hr)) hr = CopyTaskString(qualified, username);
+            if (FAILED(hr))
+            {
+                CoTaskMemFree(*domain);
+                CoTaskMemFree(*username);
+                *domain = nullptr;
+                *username = nullptr;
+            }
+            return hr;
+        }
+
+        // Fallback if the computer name cannot be queried.
         HRESULT hr = CopyTaskString(L".", domain);
         if (SUCCEEDED(hr)) hr = CopyTaskString(qualified, username);
         if (FAILED(hr))

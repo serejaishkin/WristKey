@@ -759,7 +759,7 @@ static std::wstring WinErrorText(DWORD error) {
     }
 
     std::wstring text(message, length);
-    while (!text.empty() && (text.back() == L'\\r' || text.back() == L'\\n' || text.back() == L' ')) {
+    while (!text.empty() && (text.back() == L'\r' || text.back() == L'\n' || text.back() == L' ')) {
         text.pop_back();
     }
     return L"Windows: " + text + L" (error " + std::to_wstring(error) + L").";
