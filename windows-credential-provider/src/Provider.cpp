@@ -196,30 +196,35 @@ HRESULT WristKeyProvider::CreateCredentials() {
     HRESULT hr = _userArray->GetCount(&userCount);
     if (FAILED(hr)) return hr;
 
-    for (DWORD i = 0; i < userCount; ++i) {
-        ICredentialProviderUser* user = nullptr;
-        hr = _userArray->GetAt(i, &user);
-        if (FAILED(hr) || !user) continue;
+    // WristKey provides a single unlock tile — we pick the currently-selected
+    // (or first) user and create exactly one credential for them. Creating one
+    // tile per user makes LogonUI show duplicate WristKey entries alongside
+    // every Windows account.
+    DWORD selectedIndex = 0;
+    if (userCount > 0) {
+        // Prefer the user that LogonUI marked as selected/active.
+        ICredentialProviderUser* selectedUser = nullptr;
+        if (SUCCEEDED(_userArray->GetAt(selectedIndex, &selectedUser)) && selectedUser) {
+            PWSTR username = nullptr;
+            PWSTR sid = nullptr;
 
-        PWSTR username = nullptr;
-        PWSTR sid = nullptr;
-
-        HRESULT userHr = user->GetStringValue(PKEY_Identity_QualifiedUserName, &username);
-        if (SUCCEEDED(userHr)) {
-            userHr = user->GetSid(&sid);
-        }
-
-        if (SUCCEEDED(userHr) && username && sid) {
-            auto* credential = new (std::nothrow) WristKeyProviderCredential(
-                this, _scenario, username, sid);
-            if (credential) {
-                _credentials.push_back(credential);
+            HRESULT userHr = selectedUser->GetStringValue(PKEY_Identity_QualifiedUserName, &username);
+            if (SUCCEEDED(userHr)) {
+                userHr = selectedUser->GetSid(&sid);
             }
-        }
 
-        CoTaskMemFree(username);
-        CoTaskMemFree(sid);
-        user->Release();
+            if (SUCCEEDED(userHr) && username && sid) {
+                auto* credential = new (std::nothrow) WristKeyProviderCredential(
+                    this, _scenario, username, sid);
+                if (credential) {
+                    _credentials.push_back(credential);
+                }
+            }
+
+            CoTaskMemFree(username);
+            CoTaskMemFree(sid);
+            selectedUser->Release();
+        }
     }
 
     return S_OK;
