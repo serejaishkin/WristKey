@@ -86,9 +86,11 @@ pub mod win_service {
         // Init logging to a file so the service is diagnosable.
         let log_dir = match std::env::var("WRISTKEY_DATA_DIR") {
             Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir).join("logs"),
-            _ => dirs::data_local_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("WristKey/logs"),
+            _ => {
+                let mut p = std::path::PathBuf::from(r"C:\ProgramData\WristKey");
+                p.push("logs");
+                p
+            }
         };
         std::fs::create_dir_all(&log_dir).ok();
         let _log_guard = init_service_logging(&log_dir);

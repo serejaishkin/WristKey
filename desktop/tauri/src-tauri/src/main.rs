@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 #[cfg(windows)]
 fn ensure_windows_service() -> Result<(), String> {
     match service::win_service::get_service_status() {
@@ -23,8 +25,6 @@ fn ensure_windows_service() -> Result<(), String> {
 }
 #[cfg(not(windows))]
 fn ensure_windows_service() -> Result<(), String> { Ok(()) }
-
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::Arc;
 use std::sync::Mutex;
