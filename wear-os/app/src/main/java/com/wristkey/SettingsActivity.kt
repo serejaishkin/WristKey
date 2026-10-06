@@ -2,6 +2,7 @@ package com.wristkey
 
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
@@ -569,6 +570,41 @@ fun TouchPointScreen(navController: androidx.navigation.NavHostController) {
     }
 }
 
+private fun getLocalNetworkPrefix(context: Context): String {
+    // 1) Wi-Fi manager (needs ACCESS_WIFI_STATE; connectionInfo may be 0/empty
+    // on newer Android without location grant — fall through then).
+    try {
+        @Suppress("DEPRECATION")
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        @Suppress("DEPRECATION")
+        val ip = wifiManager?.connectionInfo?.ipAddress ?: 0
+        if (ip != 0) {
+            val a = ip and 0xFF
+            val b = (ip shr 8) and 0xFF
+            val c = (ip shr 16) and 0xFF
+            if (a != 0 || b != 0 || c != 0) return "http://$a.$b.$c"
+        }
+    } catch (_: Exception) {
+    }
+    // 2) Any site-local IPv4 interface (works without Wi-Fi APIs).
+    try {
+        val ifaces = java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+        for (iface in ifaces) {
+            if (!iface.isUp || iface.isLoopback) continue
+            for (addr in java.util.Collections.list(iface.inetAddresses)) {
+                if (addr is java.net.Inet4Address && addr.isSiteLocalAddress) {
+                    val parts = addr.hostAddress?.split(".") ?: continue
+                    if (parts.size == 4) return "http://${parts[0]}.${parts[1]}.${parts[2]}"
+                }
+            }
+        }
+    } catch (_: Exception) {
+    }
+    return "http://192.168.1"
+}
+
+
+
 @Composable
 private fun LanTextField(
     value: String,
@@ -629,7 +665,14 @@ fun LanSetupScreen(
     val pairedPrefs = remember { context.getSharedPreferences(WristKeyBleService.PREFS_NAME, Context.MODE_PRIVATE) }
     val defaultPcName = pairedPrefs.getString(WristKeyBleService.PREFS_PAIRED_NAME, null)
 
-    var serverUrl by remember { mutableStateOf(settings.lanServerUrl) }
+    var serverUrl by remember {
+        mutableStateOf(
+            settings.lanServerUrl.ifBlank {
+                val prefix = getLocalNetworkPrefix(context)
+                "$prefix.10:8787"
+            }
+        )
+    }
     var token by remember { mutableStateOf(settings.lanToken) }
     var pcName by remember { mutableStateOf(settings.lanPcName.takeIf { it.isNotBlank() } ?: (defaultPcName ?: "")) }
     var msaAccount by remember { mutableStateOf(settings.lanMsaAccount) }

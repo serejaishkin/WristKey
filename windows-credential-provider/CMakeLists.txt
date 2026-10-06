@@ -111,6 +111,7 @@ target_compile_definitions(SerializationSmokeTest PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     _WIN32_WINNT=0x0A00
+    SECURITY_WIN32
 )
 target_link_libraries(SerializationSmokeTest PRIVATE
     ole32
