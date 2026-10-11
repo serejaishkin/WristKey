@@ -11,6 +11,7 @@ add_library(WristKeyCredentialProvider SHARED
     src/Credential.cpp
     src/exports.cpp
     src/helpers.cpp
+    src/ServiceInstall.cpp
 )
 
 target_compile_features(WristKeyCredentialProvider PRIVATE cxx_std_17)
@@ -37,6 +38,7 @@ target_link_libraries(WristKeyCredentialProvider PRIVATE
     credui
     secur32
     shlwapi
+    shell32
 )
 
 set_target_properties(WristKeyCredentialProvider PROPERTIES

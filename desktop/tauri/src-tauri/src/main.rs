@@ -190,19 +190,48 @@ fn msa_server_slot()->&'static std::sync::Mutex<Option<std::process::Child>>{MSA
 }
 
 #[cfg(target_os="windows")]
-#[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<(),String>{
+fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Some(resolved)=WindowsSecurity::resolve_credential_provider_dll(){candidates.push(resolved);}
     if let Ok(exe)=std::env::current_exe(){if let Some(d)=exe.parent(){candidates.push(d.join("WristKeyCredentialProvider.dll"));}}
     if let Ok(rd)=app.path().resource_dir(){candidates.push(rd.join("_up_").join("_up_").join("crates").join("credential-provider").join("bin").join("Release").join("net48").join("WristKeyCredentialProvider.dll"));}
     candidates.push(std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll"));
-    let dll=candidates.iter().find(|p|p.exists()).ok_or_else(||"Credential Provider DLL not found. Build it: dotnet build -c Release in desktop/crates/credential-provider".to_string())?;
+    candidates.into_iter().find(|p|p.exists())
+}
+// Install is one button in the app: if we're not elevated, relaunch
+// ourselves with a UAC prompt (`--register-cp`, handled in main() below)
+// instead of failing outright. The elevated child does the CLSID/registry
+// work, removes known duplicate tile registrations, points the Credential
+// Provider DLL at this exe via HKLM\Software\WristKey\ExePath, and the
+// DLL's own DllRegisterServer installs/starts the background service from
+// there -- so clicking this one button is the whole setup, no scripts.
+#[cfg(target_os="windows")]
+#[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<(),String>{
+    let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md).".to_string())?;
+    if !service::win_service::is_elevated() {
+        return if WindowsSecurity::relaunch_elevated(&["--register-cp"]) {
+            Err("Requesting administrator rights -- approve the UAC prompt. Setup (Credential Provider + background service) finishes automatically; check Sign-in options after it closes.".into())
+        } else {
+            Err("Administrator rights are required and the elevation prompt was cancelled or failed. Try again and approve the UAC prompt.".into())
+        };
+    }
     WindowsSecurity::register_credential_provider(dll.to_string_lossy().as_ref())
 }
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn register_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
 #[cfg(target_os="windows")]
-#[tauri::command] async fn unregister_credential_provider()->Result<(),String>{WindowsSecurity::unregister_credential_provider()}
+#[tauri::command] async fn unregister_credential_provider()->Result<(),String>{
+    if !service::win_service::is_elevated() {
+        return if WindowsSecurity::relaunch_elevated(&["--unregister-cp"]) {
+            Err("Requesting administrator rights -- approve the UAC prompt to finish removing WristKey.".into())
+        } else {
+            Err("Administrator rights are required and the elevation prompt was cancelled or failed.".into())
+        };
+    }
+    WindowsSecurity::unregister_credential_provider()?;
+    let _ = service::win_service::uninstall_service();
+    Ok(())
+}
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn unregister_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
 #[tauri::command] async fn update_config(state: State<'_, Arc<AppState>>,new_config:Config)->Result<(),String>{
@@ -276,6 +305,19 @@ async fn main() {
                     Err(e) => { println!("WristKey Credential Provider registration failed: {}", e); std::process::exit(1); }
                 },
                 None => { println!("WristKey Credential Provider DLL not found."); std::process::exit(2); }
+            }
+        }
+        // Elevated helper invocation for the "unregister" button in the app
+        // (see unregister_credential_provider's relaunch_elevated call):
+        // removes the COM/CLSID registration and the background service.
+        if args.iter().any(|a| a == "--unregister-cp") {
+            let cp_result = WindowsSecurity::unregister_credential_provider();
+            if let Err(e) = service::win_service::uninstall_service() {
+                println!("WristKey service removal: {}", e);
+            }
+            match cp_result {
+                Ok(()) => { println!("WristKey Credential Provider and service unregistered."); std::process::exit(0); }
+                Err(e) => { println!("WristKey Credential Provider unregistration failed: {}", e); std::process::exit(1); }
             }
         }
         if args.iter().any(|a| a == "--service") {

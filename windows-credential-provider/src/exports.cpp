@@ -1,6 +1,8 @@
 #include "Provider.h"
+#include "ServiceInstall.h"
 #include <shlwapi.h>
 #include <new>
+#include <string>
 
 static HMODULE g_module = nullptr;
 static LONG g_objects = 0;
@@ -64,12 +66,53 @@ static HRESULT WriteClsidKey(HKEY root, const wchar_t* subkey, const wchar_t* va
     return HRESULT_FROM_WIN32(rc);
 }
 
+// Registration entries left behind by provider implementations this project
+// has superseded. If any of these are still registered they show up as
+// EXTRA tiles on the sign-in screen next to WristKey's own tile and look
+// like "duplicates" -- this has bitten the project before (the legacy .NET
+// provider, and a Microsoft sample used as a one-off architecture control
+// test). Cleaning them up here, inside DllRegisterServer itself, means the
+// cleanup always happens on every install/update, regardless of which
+// script or installer called regsvr32.
+namespace {
+struct LegacyClsid { const wchar_t* clsid; const wchar_t* note; };
+constexpr LegacyClsid kLegacyClsids[] = {
+    // Old managed (.NET/C#) WristKey Credential Provider. CLR-hosted COM
+    // objects are unreliable inside LogonUI's secure desktop; this project
+    // moved to the native C++ provider in this same DLL.
+    { L"{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}", L"legacy managed provider" },
+    // Microsoft's own, unmodified SampleV2CredentialProvider, registered by
+    // test-microsoft-v2.ps1 as a control test ("does Windows accept this
+    // architecture at all"). Never meant to stay registered permanently.
+    { L"{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}", L"Microsoft sample control test" },
+};
+
+void RemoveClsidRegistration(const wchar_t* clsid) {
+    wchar_t key[MAX_PATH]{};
+    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
+    swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid);
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
+}
+
+void RemoveKnownDuplicateProviders() {
+    for (const auto& entry : kLegacyClsids) {
+        RemoveClsidRegistration(entry.clsid);
+    }
+}
+}  // namespace
+
 extern "C"
 HRESULT STDAPICALLTYPE DllRegisterServer() {
     wchar_t path[MAX_PATH]{};
     if (!GetModuleFileNameW(g_module, path, ARRAYSIZE(path))) return HRESULT_FROM_WIN32(GetLastError());
     wchar_t clsid[64]{};
     StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
+
+    // Do this first: if a stale provider is still registered under a
+    // different CLSID, remove it before adding our own tile, so there is
+    // never a moment where both are present together.
+    RemoveKnownDuplicateProviders();
 
     wchar_t key[MAX_PATH]{};
     swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid);
@@ -86,7 +129,22 @@ HRESULT STDAPICALLTYPE DllRegisterServer() {
         RegCloseKey(server);
     }
     swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
-    return WriteClsidKey(HKEY_LOCAL_MACHINE, key, L"WristKey Credential Provider");
+    hr = WriteClsidKey(HKEY_LOCAL_MACHINE, key, L"WristKey Credential Provider");
+    if (FAILED(hr)) return hr;
+
+    // The tile is useless without the daemon answering \\.\pipe\wristkey
+    // BEFORE anyone signs in. regsvr32 already runs elevated, so this is
+    // the one place that reliably has the rights to install/start the
+    // service -- it does not depend on the GUI app ever being launched
+    // (let alone launched elevated), and it does not depend on a separate
+    // install script remembering to do it. Best-effort: a failure here
+    // does not fail Credential Provider registration itself.
+    std::wstring exePath;
+    if (ResolveWristKeyExePath(g_module, exePath)) {
+        EnsureWristKeyServiceRunning(exePath);
+    }
+
+    return S_OK;
 }
 
 extern "C"
@@ -97,5 +155,7 @@ HRESULT STDAPICALLTYPE DllUnregisterServer() {
     swprintf_s(key, L"Software\\Classes\\CLSID\\%s\\InprocServer32", clsid); RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
     swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid); RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
     swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid); RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
+
+    RemoveWristKeyService();
     return S_OK;
 }

@@ -123,6 +123,11 @@ impl WindowsSecurity {
     const CP_CLSID: &'static str = "{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}";
     const CP_NAME: &'static str = "WristKey";
     const LEGACY_CP_CLSID: &'static str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
+    // Microsoft's own, unmodified SampleV2CredentialProvider. Registered by a
+    // past architecture control test (test-microsoft-v2.ps1) and never meant
+    // to stay registered; if it is, its "Sample Credential Provider" tile
+    // shows up next to WristKey's own tile and looks like a duplicate.
+    const SAMPLE_CONTROL_CLSID: &'static str = "{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}";
 
     pub fn is_credential_provider_registered() -> bool {
         use winreg::enums::HKEY_LOCAL_MACHINE;
@@ -239,14 +244,18 @@ impl WindowsSecurity {
                 Ok(()) => tracing::info!("Credential Provider auto-registered on startup"),
                 Err(e) => {
                     tracing::warn!("Automatic registration failed ({}); requesting elevation", e);
-                    Self::relaunch_elevated_for_registration();
+                    Self::relaunch_elevated(&["--register-cp"]);
                 }
             },
             None => tracing::warn!("Credential Provider DLL not found next to the executable"),
         }
     }
 
-    fn relaunch_elevated_for_registration() {
+    /// Relaunches this same executable elevated (UAC "runas") with the given
+    /// arguments, e.g. `&["--register-cp"]` or `&["--unregister-cp"]`.
+    /// Returns true if the elevated relaunch was accepted (not necessarily
+    /// finished yet -- the elevated child does the actual work and exits).
+    pub fn relaunch_elevated(args: &[&str]) -> bool {
         use std::os::windows::ffi::OsStrExt;
         use windows::core::PCWSTR;
         use windows::Win32::UI::Shell::ShellExecuteW;
@@ -255,8 +264,8 @@ impl WindowsSecurity {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(e) => {
-                tracing::warn!("Cannot resolve executable path for provider registration: {}", e);
-                return;
+                tracing::warn!("Cannot resolve executable path for elevation: {}", e);
+                return false;
             }
         };
         let to_wide = |s: &std::ffi::OsStr| -> Vec<u16> {
@@ -264,7 +273,7 @@ impl WindowsSecurity {
         };
         let verb = to_wide(std::ffi::OsStr::new("runas"));
         let file = to_wide(exe.as_os_str());
-        let params = to_wide(std::ffi::OsStr::new("--register-cp"));
+        let params = to_wide(std::ffi::OsStr::new(&args.join(" ")));
 
         let result = unsafe {
             ShellExecuteW(
@@ -278,11 +287,13 @@ impl WindowsSecurity {
         };
         if (result.0 as isize) <= 32 {
             tracing::warn!(
-                "Credential Provider elevation was cancelled or failed (code {})",
+                "Elevation was cancelled or failed (code {})",
                 result.0 as isize
             );
+            false
         } else {
-            tracing::info!("Requested elevated Credential Provider registration");
+            tracing::info!("Requested elevated relaunch: {:?}", args);
+            true
         }
     }
 
@@ -321,6 +332,37 @@ impl WindowsSecurity {
             Self::LEGACY_CP_CLSID
         ));
 
+        // Same cleanup for a leftover Microsoft sample control-test
+        // registration -- see SAMPLE_CONTROL_CLSID. Unregister its DLL
+        // through regsvr32 (not just a registry delete) so its own
+        // DllUnregisterServer runs too, then remove the file.
+        let sample_dll = system32.join("SampleV2CredentialProvider.dll");
+        if sample_dll.exists() {
+            let regsvr32_path = system32.join("regsvr32.exe");
+            let _ = std::process::Command::new(&regsvr32_path)
+                .args(["/u", "/s", sample_dll.to_string_lossy().as_ref()])
+                .output();
+            let _ = std::fs::remove_file(&sample_dll);
+        }
+        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::SAMPLE_CONTROL_CLSID));
+        delete_tree(&hklm, &format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::SAMPLE_CONTROL_CLSID
+        ));
+
+        // Tell the DLL's own DllRegisterServer where WristKey.exe lives, so
+        // it can install/start the background service itself (regsvr32 is
+        // already elevated at this point -- that's the one reliable place
+        // to do it, independent of whether the service was ever installed
+        // before, whether this app was ever run elevated, or whether anyone
+        // has signed in yet this boot).
+        if let Ok(exe) = std::env::current_exe() {
+            if let Ok((key, _)) = hklm.create_subkey_with_flags("SOFTWARE\\WristKey", KEY_WRITE) {
+                let exe_path: String = exe.to_string_lossy().into_owned();
+                let _ = key.set_value("ExePath", &exe_path);
+            }
+        }
+
         let regsvr32 = system32.join("regsvr32.exe");
         let output = std::process::Command::new(&regsvr32)
             .args(["/s", dest_dll.to_string_lossy().as_ref()])
@@ -358,6 +400,11 @@ impl WindowsSecurity {
         delete_tree(&hklm, &format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
             Self::LEGACY_CP_CLSID
+        ));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::SAMPLE_CONTROL_CLSID));
+        delete_tree(&hklm, &format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
+            Self::SAMPLE_CONTROL_CLSID
         ));
 
         let system32 = std::env::var("SystemRoot")
