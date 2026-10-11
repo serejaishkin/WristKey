@@ -151,7 +151,7 @@ impl WindowsSecurity {
 
     pub fn validate_current_user_password(password: &str) -> std::result::Result<(), String> {
         use windows::core::PCWSTR;
-        use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
         use windows::Win32::Security::{
             LogonUserW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
         };
