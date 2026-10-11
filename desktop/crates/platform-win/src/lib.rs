@@ -214,16 +214,29 @@ impl WindowsSecurity {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 candidates.push(dir.join("WristKeyCredentialProvider.dll"));
-                // Development layout: <repo>\desktop\target\release\wristkey-tauri.exe
-                candidates.push(
-                    dir.join("..")
-                        .join("..")
-                        .join("..")
+
+                // Development layout: walk up from the exe looking for a
+                // "windows-credential-provider" sibling directory, instead of
+                // assuming a fixed depth. The exe can land at different
+                // depths depending on how it was built --
+                // desktop\tauri\src-tauri\target\{release,debug}\...exe for
+                // `cargo build`/`cargo run`, or one level deeper under
+                // target\<triple>\release for a cross-compile -- and a fixed
+                // "..\..\.." badly undershot the actual repo-root distance,
+                // silently failing to find a dev-built DLL.
+                let mut probe = dir.to_path_buf();
+                for _ in 0..8 {
+                    let candidate = probe
                         .join("windows-credential-provider")
                         .join("build")
                         .join("Release")
-                        .join("WristKeyCredentialProvider.dll"),
-                );
+                        .join("WristKeyCredentialProvider.dll");
+                    candidates.push(candidate);
+                    match probe.parent() {
+                        Some(parent) => probe = parent.to_path_buf(),
+                        None => break,
+                    }
+                }
             }
         }
         candidates.push(std::path::PathBuf::from(
