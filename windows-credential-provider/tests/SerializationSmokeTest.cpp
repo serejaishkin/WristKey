@@ -486,9 +486,18 @@ int wmain(int argc, wchar_t** argv) {
         return 23;
     }
 
-    if (domain != L"." || username != L"WristKeyTestUser") {
+    // SplitDomainAndUsername uses the local machine name as the domain for
+    // a bare (non-UPN, non-DOMAIN\user) username -- "." is not reliably
+    // accepted by Negotiate/MSV1_0 and produces ERROR_NO_LOGON_SERVERS
+    // (1311) on some Windows builds. See helpers.cpp.
+    wchar_t computerName[MAX_COMPUTERNAME_LENGTH + 1]{};
+    DWORD computerNameSize = ARRAYSIZE(computerName);
+    GetComputerNameW(computerName, &computerNameSize);
+
+    if (domain != std::wstring(computerName) || username != L"WristKeyTestUser") {
         std::wcerr << L"Unexpected serialized identity: domain='" << domain
-                   << L"' username='" << username << L"'\n";
+                   << L"' username='" << username << L"' (expected domain='"
+                   << computerName << L"')\n";
         CoTaskMemFree(serialization.rgbSerialization);
         credential->Release();
         provider->Release();
