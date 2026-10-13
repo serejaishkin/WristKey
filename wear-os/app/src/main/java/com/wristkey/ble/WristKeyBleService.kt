@@ -8,11 +8,20 @@ import android.os.*
 import android.util.*
 import androidx.core.app.NotificationCompat
 import com.wristkey.R
+import com.wristkey.WristKeySettings
+import com.wristkey.net.LanClient
 import com.wristkey.security.KeyStoreManager
 import com.wristkey.sensors.MotionDetector
 import com.wristkey.ui.PairingActivity
 import com.wristkey.ui.TrainingActivity
 import com.wristkey.ui.UnlockActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -78,6 +87,18 @@ class WristKeyBleService : Service() {
     private val keyStoreManager = KeyStoreManager()
     private val motionDetector by lazy { MotionDetector(this) }
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    private val settings by lazy { WristKeySettings(this) }
+    // Live LAN/MSA unlock: a PC without Bluetooth asks the wristkey-msa
+    // server for a presence proof instead of handing the password over on a
+    // stale binding alone. Polled on a background coroutine, same
+    // motion-gate / explicit-confirmation split as the BLE challenge path.
+    private val lanScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var lanPollJob: kotlinx.coroutines.Job? = null
+    private var lastHandledLanNonce: String? = null
+    private data class PendingLanUnlock(val url: String, val token: String?, val wristkeyId: String, val nonceB64: String)
+    private var pendingLanUnlock: PendingLanUnlock? = null
+    private val lanChallengeTimeoutRunnable = object : Runnable { override fun run() { onLanChallengeConfirmationTimeout() } }
+    private var lanChallengeTimeoutScheduled = false
     private var pairedDeviceAddress: String? = null
     private var pairedDeviceName: String? = null
     private var currentPin = 0
@@ -119,6 +140,7 @@ class WristKeyBleService : Service() {
         if (isPaired()) startAdvertising()
         registerBluetoothStateReceiver(); registerUnlockReceiver(); registerForgetReceiver()
         motionDetector.start()
+        startLanUnlockPolling()
         debug("BLE service created; paired=${isPaired()} advertising=${isAdvertising()} pinPersisted=true pairingMode=${pairingMode.get()}")
     }
 
@@ -411,6 +433,103 @@ class WristKeyBleService : Service() {
     fun requestUserPresence(): Boolean { if (_userPresent.get()) return true; _userPresentCountdown.set(10); return false }
     fun setUserPresent(present: Boolean) { _userPresent.set(present) }
 
+    /** Starts the background poll loop; a no-op per tick until LAN mode is
+     *  configured and registered (checked fresh every tick, so turning LAN
+     *  mode on/off in Settings takes effect without restarting the service). */
+    private fun startLanUnlockPolling() {
+        lanPollJob = lanScope.launch {
+            while (isActive) {
+                try {
+                    pollLanUnlockOnce()
+                } catch (e: Exception) {
+                    Log.w(TAG, "LAN unlock poll iteration failed", e)
+                }
+                delay(2000)
+            }
+        }
+    }
+
+    private fun pollLanUnlockOnce() {
+        val url = settings.lanServerUrl
+        val wristkeyId = settings.lanWristkeyId
+        if (url.isBlank() || wristkeyId.isNullOrBlank()) { lastHandledLanNonce = null; return }
+        val token = settings.lanToken.takeIf { it.isNotBlank() }
+        val nonceB64 = LanClient.pollPendingUnlock(url, token, wristkeyId)
+        if (nonceB64 == null) { lastHandledLanNonce = null; return }
+        // Same nonce as last tick: either already answered (in flight) or
+        // already showing its confirmation notification -- don't re-trigger.
+        if (nonceB64 == lastHandledLanNonce) return
+        lastHandledLanNonce = nonceB64
+        if (motionDetector.hasRecentMotion()) {
+            debug("LAN unlock: signing with recent wrist motion")
+            submitLanAnswer(PendingLanUnlock(url, token, wristkeyId, nonceB64), approved = true)
+            _userPresent.set(true)
+        } else {
+            requestExplicitLanConfirmation(url, token, wristkeyId, nonceB64)
+        }
+    }
+
+    /** Mirrors requestExplicitChallengeConfirmation for the LAN path: no
+     *  recent wrist motion, so ask on-watch instead of silently signing. */
+    private fun requestExplicitLanConfirmation(url: String, token: String?, wristkeyId: String, nonceB64: String) {
+        pendingLanUnlock = PendingLanUnlock(url, token, wristkeyId, nonceB64)
+        _userPresentCountdown.set(10)
+        val notifier = getSystemService(NotificationManager::class.java)
+        val pcName = settings.lanPcName.ifBlank { getString(R.string.default_pc_name) }
+        val bodyIntent = Intent(this, UnlockActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra("user", pcName)
+            putExtra(EXTRA_CHALLENGE_CONFIRM, true)
+        }
+        val approveIntent = Intent(UnlockActivity.ACTION_UNLOCK).apply { setPackage(packageName); putExtra(UnlockActivity.EXTRA_APPROVED, true) }
+        val refuseIntent = Intent(UnlockActivity.ACTION_UNLOCK).apply { setPackage(packageName); putExtra(UnlockActivity.EXTRA_APPROVED, false) }
+        val notification = NotificationCompat.Builder(this, CHALLENGE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle(getString(R.string.confirm_unlock_notification_title))
+            .setContentText(pcName)
+            .setContentIntent(PendingIntent.getActivity(this, 0, bodyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .addAction(0, getString(R.string.btn_confirm), PendingIntent.getBroadcast(this, 1, approveIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .addAction(0, getString(R.string.btn_cancel), PendingIntent.getBroadcast(this, 2, refuseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setLocalOnly(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(CHALLENGE_CONFIRM_TIMEOUT_MS)
+            .build()
+        if (!lanChallengeTimeoutScheduled) {
+            lanChallengeTimeoutScheduled = true
+            mainHandler.postDelayed(lanChallengeTimeoutRunnable, CHALLENGE_CONFIRM_TIMEOUT_MS)
+        }
+        notifier.notify(CHALLENGE_NOTIFICATION_ID, notification)
+        debug("LAN unlock: no recent wrist motion -- confirmation notification shown")
+    }
+
+    /** Same fail-fast reasoning as onChallengeConfirmationTimeout: an
+     *  explicit refusal lets the waiting PC's poll fail immediately instead
+     *  of running out its own timeout. */
+    private fun onLanChallengeConfirmationTimeout() {
+        lanChallengeTimeoutScheduled = false
+        val pending = pendingLanUnlock ?: return
+        pendingLanUnlock = null
+        debug("LAN unlock confirmation timed out -- explicit refusal sent")
+        try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}
+        submitLanAnswer(pending, approved = false)
+    }
+
+    private fun submitLanAnswer(pending: PendingLanUnlock, approved: Boolean) {
+        lanScope.launch {
+            try {
+                LanClient.submitUnlockResponse(
+                    baseUrl = pending.url, token = pending.token, wristkeyId = pending.wristkeyId,
+                    nonceB64 = pending.nonceB64, userPresent = approved,
+                    sign = keyStoreManager::signChallenge
+                )
+                debug("LAN unlock response submitted (user_present=$approved)")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to submit LAN unlock response", e)
+            }
+        }
+    }
+
     private fun handleTrainingCommand(data: ByteArray?) {
         if (data == null) return
         try {
@@ -458,12 +577,20 @@ class WristKeyBleService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val approved = intent?.getBooleanExtra("approved", false) == true
             val challenge = pendingChallenge
+            val lan = pendingLanUnlock
             if (challenge != null) {
-                // Decision for the challenge-confirmation flow.
+                // Decision for the BLE challenge-confirmation flow.
                 pendingChallenge = null
                 if (challengeTimeoutScheduled) { challengeTimeoutScheduled = false; mainHandler.removeCallbacks(challengeTimeoutRunnable) }
                 try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}
                 if (approved) answerChallenge(challenge) else refuseChallenge()
+            } else if (lan != null) {
+                // Decision for the LAN/MSA live-unlock confirmation flow.
+                pendingLanUnlock = null
+                if (lanChallengeTimeoutScheduled) { lanChallengeTimeoutScheduled = false; mainHandler.removeCallbacks(lanChallengeTimeoutRunnable) }
+                try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}
+                submitLanAnswer(lan, approved)
+                if (approved) _userPresent.set(true)
             } else if (approved) {
                 sendUnlockResponse(getPairingKey(), null)
             } else {
@@ -481,5 +608,5 @@ class WristKeyBleService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(forgetReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(forgetReceiver, filter)
     }
     private val forgetReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { if (intent?.action == ACTION_FORGET_DEVICE) { debug("Forget requested from settings UI"); forgetDevice() } } }
-    override fun onDestroy() { mainHandler.removeCallbacks(challengeTimeoutRunnable); try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}; stopAdvertising(); stopGattServer(); motionDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
+    override fun onDestroy() { mainHandler.removeCallbacks(challengeTimeoutRunnable); mainHandler.removeCallbacks(lanChallengeTimeoutRunnable); lanPollJob?.cancel(); lanScope.cancel(); try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}; stopAdvertising(); stopGattServer(); motionDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
 }

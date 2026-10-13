@@ -15,6 +15,11 @@ import java.net.URL
 object LanClient {
     private const val TAG = "LanClient"
     private const val REGISTER_DOMAIN = "wristkey-msa/register/v1"
+    // MUST match UNLOCK_DOMAIN in server/crates/msa/src/lib.rs and
+    // desktop/crates/core/src/msa.rs exactly -- domain-separated from
+    // REGISTER_DOMAIN so a registration signature can never pass as a live
+    // unlock confirmation or vice versa.
+    const val UNLOCK_DOMAIN = "wristkey-msa/unlock/v1"
     private const val TIMEOUT_MS = 6000
 
     class LanError(message: String, val statusCode: Int = -1) : Exception(message)
@@ -65,6 +70,48 @@ object LanClient {
         } finally {
             conn.disconnect()
         }
+    }
+
+    /**
+     * Poll for a live unlock request a PC is waiting on. Returns the nonce
+     * (base64) to sign, or null when nothing is pending right now -- that is
+     * the normal, expected case between unlock attempts, not an error.
+     */
+    fun pollPendingUnlock(baseUrl: String, token: String?, wristkeyId: String): String? {
+        return try {
+            val conn = open(baseUrl, token, "/api/v1/unlock/$wristkeyId/pending")
+            try {
+                if (conn.responseCode != 200) null else JSONObject(read(conn.inputStream)).getString("nonce_b64")
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "LAN unlock poll failed", e)
+            null
+        }
+    }
+
+    /**
+     * Sign and submit the watch's answer to a live unlock nonce. `sign` must
+     * return raw R || S (64 bytes) over UNLOCK_DOMAIN || nonce, matching what
+     * the PC independently re-verifies against this watch's public key.
+     */
+    fun submitUnlockResponse(
+        baseUrl: String,
+        token: String?,
+        wristkeyId: String,
+        nonceB64: String,
+        userPresent: Boolean,
+        sign: (ByteArray) -> ByteArray
+    ) {
+        val nonce = Base64.decode(nonceB64, Base64.DEFAULT)
+        val message = UNLOCK_DOMAIN.toByteArray(Charsets.UTF_8) + nonce
+        val signature = sign(message)
+        val body = JSONObject()
+            .put("nonce_b64", nonceB64)
+            .put("signature_b64", Base64.encodeToString(signature, Base64.NO_WRAP))
+            .put("user_present", userPresent)
+        post(baseUrl, token, "/api/v1/unlock/$wristkeyId/response", body)
     }
 
     /** Returns the registered binding, or null when not found / unreachable. */
