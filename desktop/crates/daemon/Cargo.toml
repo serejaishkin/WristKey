@@ -36,3 +36,11 @@ rand = { workspace = true }
 tray-icon = { version = "0.19", optional = true }
 winit = { version = "0.30", optional = true }
 eframe = "0.28"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+]

@@ -348,10 +348,25 @@ impl SessionManager {
         info!("unlock verification started for {}", device_id); Ok(challenge)
     }
     pub async fn verify_unlock(&self, response: &Response) -> Result<()> {
-        let (device_id, challenge) = match self.state.read().await.clone() {
-            SessionState::Verifying { device_id, challenge, .. } => (device_id, challenge),
+        let (device_id, challenge, started_at) = match self.state.read().await.clone() {
+            SessionState::Verifying { device_id, challenge, started_at } => (device_id, challenge, started_at),
             other => return Err(WristKeyError::Session(format!("expected Verifying, got {:?}", other))),
         };
+        // Enforce challenge_timeout_sec: a stale response to a challenge
+        // issued long ago must not be accepted, or a signed answer that
+        // arrives late (e.g. replayed, or produced while the watch was out
+        // of range and only just reconnected) could unlock the session on
+        // a leftover challenge no one meant to still be live. Checked
+        // against both when the challenge was handed out (started_at) and
+        // when the response itself claims to have been produced
+        // (response.timestamp), so a response can't out-run either clock.
+        let config = self.load_config().await?;
+        let timeout = chrono::Duration::seconds(config.challenge_timeout_sec as i64);
+        let now = Utc::now();
+        if now.signed_duration_since(started_at) > timeout || now.signed_duration_since(response.timestamp) > timeout {
+            *self.state.write().await = SessionState::Disconnected;
+            return Err(WristKeyError::Protocol("unlock challenge expired".into()));
+        }
         let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         self.crypto.verify(&device.public_key, &challenge.to_bytes(), &response.signature).await?;
         if !response.user_present { return Err(WristKeyError::Protocol("user presence required".into())); }

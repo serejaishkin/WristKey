@@ -341,12 +341,76 @@ mod pipe_server {
         String::from_utf8(plain).map_err(|_| WristKeyError::Storage("stored password is not valid UTF-8".into()))
     }
 
+    /// Build a SECURITY_ATTRIBUTES whose descriptor grants full access only
+    /// to SYSTEM and local Administrators (SDDL `SY`/`BA`). Without this, a
+    /// pipe created with no explicit descriptor inherits a default DACL that
+    /// any authenticated local user can open -- and since the daemon now
+    /// runs as a LocalSystem service, that would let any local process send
+    /// `{"action":"unlock"}` and receive the real Windows password back
+    /// whenever the paired watch happens to be in range, entirely bypassing
+    /// the lock screen. Restricting to SYSTEM/Administrators keeps the pipe
+    /// reachable only by LogonUI (SYSTEM) and the service itself.
+    ///
+    /// Returns the attributes struct together with the raw descriptor
+    /// pointer, which the caller must free with `LocalFree` once the pipe
+    /// instance has been created (Windows copies the descriptor into the
+    /// kernel object at creation time, so it need not outlive the call).
+    unsafe fn restricted_security_attributes() -> std::io::Result<(windows::Win32::Security::SECURITY_ATTRIBUTES, windows::Win32::Foundation::HLOCAL)> {
+        use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+        use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SDDL_REVISION_1};
+        use windows::core::PCWSTR;
+
+        // D: (DACL) -- Allow (A) Generic-All (GA) to SYSTEM (SY) and to the
+        // built-in Administrators alias (BA). No other SID is granted
+        // access, so ordinary interactive/standard users are refused.
+        let sddl: Vec<u16> = "D:(A;;GA;;;SY)(A;;GA;;;BA)\0".encode_utf16().collect();
+        let mut psd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            PCWSTR(sddl.as_ptr()),
+            SDDL_REVISION_1,
+            &mut psd,
+            None,
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("ConvertStringSecurityDescriptorToSecurityDescriptorW failed: {e}")))?;
+
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: psd.0,
+            bInheritHandle: false.into(),
+        };
+        Ok((sa, windows::Win32::Foundation::HLOCAL(psd.0)))
+    }
+
+    /// Create one named-pipe instance locked down to SYSTEM/Administrators.
+    /// Falls back to an unrestricted instance only if building the security
+    /// descriptor itself fails (logged loudly, since that should never
+    /// happen in practice and silently degrading here would reopen the
+    /// exposure this function exists to close).
+    fn create_locked_down_pipe() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+        unsafe {
+            match restricted_security_attributes() {
+                Ok((mut sa, hlocal)) => {
+                    let result = ServerOptions::new().create_with_security_attributes_raw(
+                        r"\\.\pipe\wristkey",
+                        &mut sa as *mut _ as *mut std::ffi::c_void,
+                    );
+                    let _ = windows::Win32::Foundation::LocalFree(hlocal);
+                    result
+                }
+                Err(e) => {
+                    warn!("failed to build restricted pipe ACL, falling back to default (INSECURE): {}", e);
+                    ServerOptions::new().create(r"\\.\pipe\wristkey")
+                }
+            }
+        }
+    }
+
     pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
         loop {
             // A named-pipe instance serves exactly one client. Create a fresh
             // instance for every connection and hand the connected instance to a
             // per-connection task, so the daemon keeps accepting clients.
-            let server = match ServerOptions::new().create(r"\\.\pipe\wristkey") {
+            let server = match create_locked_down_pipe() {
                 Ok(server) => server,
                 Err(e) => {
                     warn!("pipe server create failed: {}", e);
