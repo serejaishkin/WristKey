@@ -23,6 +23,38 @@ pub struct MsaAccountBindings {
     pub bindings: Vec<MsaBinding>,
 }
 
+/// Domain-separated signing prefix for a live unlock confirmation, as
+/// opposed to a one-time registration. MUST match `UNLOCK_DOMAIN` in
+/// `server/crates/msa/src/lib.rs` and whatever the watch app signs with --
+/// changing one side without the other breaks every LAN unlock.
+pub const UNLOCK_DOMAIN: &[u8] = b"wristkey-msa/unlock/v1";
+
+pub fn unlock_message(nonce: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(UNLOCK_DOMAIN.len() + nonce.len());
+    msg.extend_from_slice(UNLOCK_DOMAIN);
+    msg.extend_from_slice(nonce);
+    msg
+}
+
+/// Response of `POST /api/v1/unlock/{wristkey_id}/challenge`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UnlockChallenge {
+    pub nonce_b64: String,
+    pub ttl_secs: u64,
+}
+
+/// Response of `GET /api/v1/unlock/{wristkey_id}/result`: the watch's
+/// verified (by the server) answer to a specific nonce. The caller must
+/// still independently re-verify the signature against the binding's own
+/// `watch_pubkey_b64` before trusting it -- this is a relay, not an
+/// attestation the PC should take on faith.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UnlockResult {
+    pub nonce_b64: String,
+    pub signature_b64: String,
+    pub user_present: bool,
+}
+
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum MsaError {
     #[error("msa server url is not configured")]
@@ -137,6 +169,60 @@ impl MsaClient {
             .await
             .map_err(|e| MsaError::Malformed(e.to_string()))?;
         Ok(Some(binding))
+    }
+
+    /// Ask the server to hand the watch a fresh live-presence nonce to sign.
+    pub async fn request_unlock_challenge(&self, wristkey_id: &str) -> Result<UnlockChallenge, MsaError> {
+        let encoded = percent_encode_segment(wristkey_id);
+        let resp = self
+            .request(reqwest::Method::POST, &format!("/api/v1/unlock/{encoded}/challenge"))
+            .send()
+            .await
+            .map_err(|e| MsaError::Request(e.to_string()))?;
+        match resp.status() {
+            s if s.is_success() => {}
+            s if s == reqwest::StatusCode::UNAUTHORIZED => {
+                return Err(MsaError::Unauthorized("Bearer token missing or wrong".into()))
+            }
+            s if s == reqwest::StatusCode::NOT_FOUND => {
+                return Err(MsaError::Request("server does not recognize this wristkey_id".into()))
+            }
+            s => return Err(MsaError::Request(format!("unlock challenge -> {s}"))),
+        }
+        resp.json().await.map_err(|e| MsaError::Malformed(e.to_string()))
+    }
+
+    /// Poll for the watch's answer to `nonce_b64` until it arrives or
+    /// `timeout` elapses. Returns `Ok(None)` on a plain timeout (the watch
+    /// may be unreachable, offline, or simply not updated to support live
+    /// confirmation yet) rather than an error, since that is an expected,
+    /// recoverable outcome the caller should turn into its own message.
+    pub async fn poll_unlock_result(&self, wristkey_id: &str, nonce_b64: &str, timeout: std::time::Duration) -> Result<Option<UnlockResult>, MsaError> {
+        let encoded_id = percent_encode_segment(wristkey_id);
+        let encoded_nonce = percent_encode_segment(nonce_b64);
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let resp = self
+                .request(reqwest::Method::GET, &format!("/api/v1/unlock/{encoded_id}/result?nonce_b64={encoded_nonce}"))
+                .send()
+                .await
+                .map_err(|e| MsaError::Request(e.to_string()))?;
+            match resp.status() {
+                s if s.is_success() => {
+                    let result: UnlockResult = resp.json().await.map_err(|e| MsaError::Malformed(e.to_string()))?;
+                    return Ok(Some(result));
+                }
+                reqwest::StatusCode::NOT_FOUND => {} // no answer yet; keep polling
+                reqwest::StatusCode::UNAUTHORIZED => {
+                    return Err(MsaError::Unauthorized("Bearer token missing or wrong".into()))
+                }
+                s => return Err(MsaError::Request(format!("unlock result -> {s}"))),
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(None);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
     }
 }
 

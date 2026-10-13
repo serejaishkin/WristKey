@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use wristkey_core::{
     SessionManager, PlatformSecurity, Response,
-    Result, WristKeyError, RssiSmoother,
+    Result, WristKeyError, RssiSmoother, CryptoEngine,
 };
 use wristkey_core::MsaClient;
 use wristkey_ble::{BleAdapter, Connection, PeripheralInfo};
@@ -597,12 +597,21 @@ mod pipe_server {
         unprotect_password(&encrypted_password)
     }
 
-    /// Unlock for a PC without Bluetooth: resolve the binding by MSA account and
-    /// hand over the stored Windows password.
+    /// Unlock for a PC without Bluetooth: resolve the binding by MSA account,
+    /// then require the watch to prove it is live and present right now
+    /// before handing over the stored Windows password.
     ///
-    /// This does NOT prove the watch is currently present — it only proves the
-    /// watch registered with this server at some point. Treat it as the LAN
-    /// equivalent of a paired device.
+    /// Earlier versions handed the password over as soon as a binding was
+    /// found, which only proved the watch had registered with the server at
+    /// *some* point in the past -- not that it was present, or even still
+    /// owned by the same person, at unlock time. This now mirrors the BLE
+    /// path: the server relays a fresh nonce to the watch, the watch signs
+    /// it (gated by the same on-watch presence confirmation the BLE flow
+    /// uses), and the signature is verified here, locally, against the
+    /// binding's own public key -- not just trusted because the server says
+    /// it checked. A watch app that hasn't been updated to answer
+    /// `/unlock/.../pending` will simply time out here (fail closed) rather
+    /// than silently unlock.
     async fn unlock_via_lan(session: &Arc<SessionManager>, config: &wristkey_core::Config) -> Result<String> {
         let (server_url, token, account) = msa_settings(&serde_json::json!({}), config);
         if server_url.is_empty() {
@@ -615,11 +624,38 @@ mod pipe_server {
         let binding = client.resolve_own_binding(&account).await
             .map_err(|e| WristKeyError::Session(format!("msa resolve failed: {}", e)))?
             .ok_or_else(|| WristKeyError::Session("msa server has no binding for this account; register on the watch first".into()))?;
-        info!("LAN unlock using binding {} ({})", binding.wristkey_id, binding.msa_account);
+        info!("LAN unlock: requesting live presence confirmation from {} ({})", binding.wristkey_id, binding.msa_account);
+
+        let challenge = client.request_unlock_challenge(&binding.wristkey_id).await
+            .map_err(|e| WristKeyError::Session(format!("msa unlock challenge failed: {}", e)))?;
+        let wait = Duration::from_secs(config.challenge_timeout_sec.max(5));
+        let result = client.poll_unlock_result(&binding.wristkey_id, &challenge.nonce_b64, wait).await
+            .map_err(|e| WristKeyError::Session(format!("msa unlock poll failed: {}", e)))?
+            .ok_or_else(|| WristKeyError::Session(
+                "watch did not confirm presence in time (make sure it's reachable and its app supports live LAN unlock)".into()
+            ))?;
+        if !result.user_present {
+            return Err(WristKeyError::Protocol("user presence required".into()));
+        }
+        let pubkey = base64_decode(&binding.watch_pubkey_b64)
+            .ok_or_else(|| WristKeyError::Session("binding has an invalid public key".into()))?;
+        let signature = base64_decode(&result.signature_b64)
+            .ok_or_else(|| WristKeyError::Session("unlock result has an invalid signature encoding".into()))?;
+        let nonce = base64_decode(&challenge.nonce_b64)
+            .ok_or_else(|| WristKeyError::Session("unlock challenge has an invalid nonce encoding".into()))?;
+        wristkey_core::EcdsaP256Crypto
+            .verify(&pubkey, &wristkey_core::msa::unlock_message(&nonce), &signature)
+            .await?;
+        info!("LAN unlock verified for {}", binding.wristkey_id);
 
         let encrypted = session.get_lan_device_password(&binding).await?
             .ok_or_else(|| WristKeyError::Session("windows password not configured; use set_password first".into()))?;
         unprotect_password(&encrypted)
+    }
+
+    fn base64_decode(s: &str) -> Option<Vec<u8>> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        STANDARD.decode(s).ok()
     }
 
     async fn set_stored_password_lan(session: Arc<SessionManager>, request: &serde_json::Value, config: &wristkey_core::Config) -> Result<()> {

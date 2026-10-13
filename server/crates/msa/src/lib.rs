@@ -21,6 +21,22 @@ pub const HEXCH: &[u8; 16] = b"0123456789abcdef";
 pub const REGISTER_DOMAIN: &[u8] = b"wristkey-msa/register/v1";
 pub const CHALLENGE_TTL: Duration = Duration::from_secs(300);
 
+/// Domain-separated from `REGISTER_DOMAIN` so a registration signature can
+/// never be replayed as a live unlock confirmation or vice versa. Must match
+/// the constant the watch app and the desktop `MsaClient` sign/verify with.
+pub const UNLOCK_DOMAIN: &[u8] = b"wristkey-msa/unlock/v1";
+/// Short-lived: this proves the watch is live and in reach of the server
+/// *right now*, unlike `CHALLENGE_TTL` which only needs to survive a single
+/// human-paced registration round trip.
+pub const UNLOCK_CHALLENGE_TTL: Duration = Duration::from_secs(30);
+
+pub fn unlock_message(nonce: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(UNLOCK_DOMAIN.len() + nonce.len());
+    msg.extend_from_slice(UNLOCK_DOMAIN);
+    msg.extend_from_slice(nonce);
+    msg
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WatchBinding {
     pub wristkey_id: String,
@@ -30,10 +46,28 @@ pub struct WatchBinding {
     pub linked_at: String,
 }
 
+#[derive(Clone, Debug)]
+struct PendingUnlock {
+    nonce_b64: String,
+    issued_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct UnlockResult {
+    nonce_b64: String,
+    signature_b64: String,
+    user_present: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ServerState {
     bindings: Arc<std::sync::RwLock<HashMap<String, WatchBinding>>>,
     challenges: Arc<std::sync::RwLock<HashMap<String, Instant>>>,
+    /// At most one pending unlock challenge per watch at a time, keyed by
+    /// `wristkey_id`. Issuing a new one replaces any unanswered previous one.
+    pending_unlocks: Arc<std::sync::RwLock<HashMap<String, PendingUnlock>>>,
+    /// Verified, not-yet-collected unlock confirmations, keyed by `wristkey_id`.
+    unlock_results: Arc<std::sync::RwLock<HashMap<String, UnlockResult>>>,
 }
 
 impl ServerState {
@@ -87,6 +121,74 @@ impl ServerState {
             Some(_) => B64.decode(nonce_b64).map_err(|e| format!("bad nonce b64: {e}")),
         }
     }
+
+    /// Issue a fresh live-unlock challenge for an already-registered watch.
+    /// Replaces any previous unanswered challenge and clears any stale
+    /// result, so only the most recently issued challenge can ever be
+    /// answered -- a slow response to an earlier request can't be mistaken
+    /// for a response to this one.
+    pub fn issue_unlock_challenge(&self, wristkey_id: &str) -> Option<(String, u64)> {
+        self.lookup(wristkey_id)?;
+        let mut b = [0u8; 16];
+        OsRng.fill_bytes(&mut b);
+        let nonce_b64 = B64.encode(b);
+        self.pending_unlocks.write().expect("wristkey-msa pending-unlock lock")
+            .insert(wristkey_id.to_string(), PendingUnlock { nonce_b64: nonce_b64.clone(), issued_at: Instant::now() });
+        self.unlock_results.write().expect("wristkey-msa unlock-result lock").remove(wristkey_id);
+        Some((nonce_b64, UNLOCK_CHALLENGE_TTL.as_secs()))
+    }
+
+    /// What the watch polls: the live nonce it needs to sign, if one is
+    /// still outstanding and not expired.
+    pub fn peek_pending_unlock(&self, wristkey_id: &str) -> Option<String> {
+        let pu = self.pending_unlocks.read().ok()?;
+        let pending = pu.get(wristkey_id)?;
+        if Instant::now().duration_since(pending.issued_at) >= UNLOCK_CHALLENGE_TTL {
+            return None;
+        }
+        Some(pending.nonce_b64.clone())
+    }
+
+    /// Verify the watch's signed answer to its own pending challenge and
+    /// record the result. Verified here (so a forged or stale answer is
+    /// rejected before ever reaching a PC) and independently re-verified by
+    /// the requesting PC once it collects the result -- this server is
+    /// relaying a signature it cannot forge, not a trusted attestor.
+    pub fn submit_unlock_response(&self, wristkey_id: &str, nonce_b64: &str, signature_b64: &str, user_present: bool) -> Result<(), String> {
+        let binding = self.lookup(wristkey_id).ok_or_else(|| "unknown wristkey_id".to_string())?;
+        let pending = {
+            let pu = self.pending_unlocks.read().map_err(|_| "pending-unlock lock poisoned".to_string())?;
+            pu.get(wristkey_id).cloned().ok_or_else(|| "no pending unlock challenge for this watch".to_string())?
+        };
+        if Instant::now().duration_since(pending.issued_at) >= UNLOCK_CHALLENGE_TTL {
+            return Err("unlock challenge expired".into());
+        }
+        if pending.nonce_b64 != nonce_b64 {
+            return Err("nonce does not match the current pending challenge".into());
+        }
+        let vk = decode_pub(&binding.watch_pubkey_b64)?;
+        let nonce = B64.decode(nonce_b64).map_err(|e| format!("bad nonce b64: {e}"))?;
+        let sig_bytes = B64.decode(signature_b64).map_err(|e| format!("bad signature b64: {e}"))?;
+        let sig = Signature::from_slice(&sig_bytes).map_err(|e| format!("bad signature: {e}"))?;
+        vk.verify(&unlock_message(&nonce), &sig).map_err(|_| "signature verification failed".to_string())?;
+
+        // Single-use: a consumed challenge can't be answered twice.
+        self.pending_unlocks.write().map_err(|_| "pending-unlock lock poisoned".to_string())?.remove(wristkey_id);
+        self.unlock_results.write().map_err(|_| "unlock-result lock poisoned".to_string())?
+            .insert(wristkey_id.to_string(), UnlockResult { nonce_b64: nonce_b64.to_string(), signature_b64: signature_b64.to_string(), user_present });
+        Ok(())
+    }
+
+    /// What the PC polls: the verified result for the specific nonce it
+    /// requested, consumed on read so it can't be replayed to a second poller.
+    pub fn take_unlock_result(&self, wristkey_id: &str, nonce_b64: &str) -> Option<(String, bool)> {
+        let mut ur = self.unlock_results.write().ok()?;
+        if ur.get(wristkey_id)?.nonce_b64 != nonce_b64 {
+            return None;
+        }
+        let result = ur.remove(wristkey_id)?;
+        Some((result.signature_b64, result.user_present))
+    }
 }
 
 #[derive(Deserialize)]
@@ -117,6 +219,31 @@ pub struct StatusResp {
 pub struct AccountBindingsResp {
     pub msa_account: String,
     pub bindings: Vec<StatusResp>,
+}
+
+#[derive(Serialize)]
+pub struct UnlockChallengeResp {
+    pub nonce_b64: String,
+    pub ttl_secs: u64,
+}
+
+#[derive(Serialize)]
+pub struct UnlockPendingResp {
+    pub nonce_b64: String,
+}
+
+#[derive(Deserialize)]
+pub struct UnlockResponseReq {
+    pub nonce_b64: String,
+    pub signature_b64: String,
+    pub user_present: bool,
+}
+
+#[derive(Serialize)]
+pub struct UnlockResultResp {
+    pub nonce_b64: String,
+    pub signature_b64: String,
+    pub user_present: bool,
 }
 
 pub fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
@@ -205,6 +332,39 @@ async fn status(State(s): State<Arc<ServerState>>, axum::extract::Path(id): axum
 async fn account_bindings(State(s): State<Arc<ServerState>>, axum::extract::Path(account): axum::extract::Path<String>) -> Json<AccountBindingsResp> {
     let bindings: Vec<StatusResp> = s.lookup_by_account(&account).into_iter().map(status_resp).collect();
     Json(AccountBindingsResp { msa_account: account, bindings })
+}
+
+/// A PC without Bluetooth calls this to start a live presence check: "is the
+/// watch actually here right now", not just "did it ever register".
+async fn unlock_challenge(State(s): State<Arc<ServerState>>, axum::extract::Path(wristkey_id): axum::extract::Path<String>) -> Result<Json<UnlockChallengeResp>, HandlerErr> {
+    s.issue_unlock_challenge(&wristkey_id)
+        .map(|(nonce_b64, ttl_secs)| Json(UnlockChallengeResp { nonce_b64, ttl_secs }))
+        .ok_or((StatusCode::NOT_FOUND, "no such binding".into()))
+}
+
+/// The watch app polls this to learn whether a PC is waiting on it.
+async fn unlock_pending(State(s): State<Arc<ServerState>>, axum::extract::Path(wristkey_id): axum::extract::Path<String>) -> Result<Json<UnlockPendingResp>, HandlerErr> {
+    s.peek_pending_unlock(&wristkey_id)
+        .map(|nonce_b64| Json(UnlockPendingResp { nonce_b64 }))
+        .ok_or((StatusCode::NOT_FOUND, "no pending unlock challenge".into()))
+}
+
+/// The watch app posts its signed answer here, after the on-watch
+/// user-presence confirmation the same as the BLE path requires.
+async fn unlock_response(State(s): State<Arc<ServerState>>, axum::extract::Path(wristkey_id): axum::extract::Path<String>, Json(req): Json<UnlockResponseReq>) -> Result<StatusCode, HandlerErr> {
+    s.submit_unlock_response(&wristkey_id, &req.nonce_b64, &req.signature_b64, req.user_present)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e))
+}
+
+/// The waiting PC polls this for the verified result of the nonce it
+/// requested; it independently re-verifies the signature itself rather than
+/// trusting this 200 OK alone.
+async fn unlock_result(State(s): State<Arc<ServerState>>, axum::extract::Path(wristkey_id): axum::extract::Path<String>, axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>) -> Result<Json<UnlockResultResp>, HandlerErr> {
+    let nonce_b64 = params.get("nonce_b64").cloned().ok_or((StatusCode::BAD_REQUEST, "missing nonce_b64 query param".into()))?;
+    s.take_unlock_result(&wristkey_id, &nonce_b64)
+        .map(|(signature_b64, user_present)| Json(UnlockResultResp { nonce_b64: nonce_b64.clone(), signature_b64, user_present }))
+        .ok_or((StatusCode::NOT_FOUND, "no unlock response yet".into()))
 }
 
 static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
@@ -313,6 +473,10 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/v1/register", post(register))
         .route("/api/v1/status/{wristkey_id}", get(status))
         .route("/api/v1/account/{msa_account}/bindings", get(account_bindings))
+        .route("/api/v1/unlock/{wristkey_id}/challenge", post(unlock_challenge))
+        .route("/api/v1/unlock/{wristkey_id}/pending", get(unlock_pending))
+        .route("/api/v1/unlock/{wristkey_id}/response", post(unlock_response))
+        .route("/api/v1/unlock/{wristkey_id}/result", get(unlock_result))
         .layer(axum::middleware::from_fn(bearer_auth));
     Router::new()
         .route("/api/v1/health", get(health))
@@ -439,6 +603,92 @@ mod tests {
 
         assert!(state.lookup_by_account("other@outlook.com").is_empty(), "account isolation");
         assert!(state.lookup_by_account("").is_empty());
+    }
+
+    fn registered_watch(state: &ServerState, byte: u8) -> (SigningKey, WatchBinding) {
+        let sk = test_key(byte);
+        let nonce = state.issue_challenge();
+        let binding = do_register(state, signed_register(&sk, &nonce)).expect("register ok");
+        (sk, binding)
+    }
+
+    #[test]
+    fn unlock_round_trip_succeeds_with_valid_signature() {
+        let state = ServerState::new();
+        let (sk, binding) = registered_watch(&state, 11);
+
+        let (nonce_b64, ttl) = state.issue_unlock_challenge(&binding.wristkey_id).expect("issue ok");
+        assert_eq!(ttl, UNLOCK_CHALLENGE_TTL.as_secs());
+        assert_eq!(state.peek_pending_unlock(&binding.wristkey_id).as_deref(), Some(nonce_b64.as_str()));
+
+        let nonce = B64.decode(&nonce_b64).unwrap();
+        let sig: EcdsaSignature = sk.sign(&unlock_message(&nonce));
+        let sig_b64 = B64.encode(sig.to_bytes());
+        state.submit_unlock_response(&binding.wristkey_id, &nonce_b64, &sig_b64, true).expect("submit ok");
+
+        // Consumed: a second poll for the same challenge finds nothing pending.
+        assert!(state.peek_pending_unlock(&binding.wristkey_id).is_none());
+
+        let (returned_sig_b64, user_present) = state.take_unlock_result(&binding.wristkey_id, &nonce_b64).expect("result present");
+        assert_eq!(returned_sig_b64, sig_b64);
+        assert!(user_present);
+
+        // Single-use: the result can't be collected twice.
+        assert!(state.take_unlock_result(&binding.wristkey_id, &nonce_b64).is_none());
+    }
+
+    #[test]
+    fn unlock_rejects_wrong_key_signature() {
+        let state = ServerState::new();
+        let (_sk, binding) = registered_watch(&state, 11);
+        let impostor = test_key(12);
+
+        let (nonce_b64, _) = state.issue_unlock_challenge(&binding.wristkey_id).unwrap();
+        let nonce = B64.decode(&nonce_b64).unwrap();
+        let sig: EcdsaSignature = impostor.sign(&unlock_message(&nonce));
+        let sig_b64 = B64.encode(sig.to_bytes());
+
+        let err = state.submit_unlock_response(&binding.wristkey_id, &nonce_b64, &sig_b64, true).unwrap_err();
+        assert!(err.contains("signature verification failed"), "unexpected error: {err}");
+        assert!(state.take_unlock_result(&binding.wristkey_id, &nonce_b64).is_none());
+    }
+
+    #[test]
+    fn unlock_rejects_stale_nonce_from_a_replaced_challenge() {
+        let state = ServerState::new();
+        let (sk, binding) = registered_watch(&state, 11);
+
+        let (old_nonce_b64, _) = state.issue_unlock_challenge(&binding.wristkey_id).unwrap();
+        // A PC retries and asks for a fresh challenge before the watch answers.
+        let (new_nonce_b64, _) = state.issue_unlock_challenge(&binding.wristkey_id).unwrap();
+        assert_ne!(old_nonce_b64, new_nonce_b64);
+
+        let old_nonce = B64.decode(&old_nonce_b64).unwrap();
+        let sig: EcdsaSignature = sk.sign(&unlock_message(&old_nonce));
+        let sig_b64 = B64.encode(sig.to_bytes());
+
+        let err = state.submit_unlock_response(&binding.wristkey_id, &old_nonce_b64, &sig_b64, true).unwrap_err();
+        assert!(err.contains("does not match"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn unlock_response_cannot_be_replayed_as_a_registration() {
+        // The register and unlock domains must not collide: a signature
+        // valid for one must never verify under the other's message.
+        let state = ServerState::new();
+        let (sk, binding) = registered_watch(&state, 11);
+        let (nonce_b64, _) = state.issue_unlock_challenge(&binding.wristkey_id).unwrap();
+        let nonce = B64.decode(&nonce_b64).unwrap();
+
+        let unlock_sig: EcdsaSignature = sk.sign(&unlock_message(&nonce));
+        let register_sig: EcdsaSignature = sk.sign(&register_message(&nonce));
+        assert_ne!(unlock_sig.to_bytes(), register_sig.to_bytes());
+    }
+
+    #[test]
+    fn unlock_challenge_requires_a_known_binding() {
+        let state = ServerState::new();
+        assert!(state.issue_unlock_challenge("wk-does-not-exist").is_none());
     }
 
     #[test]
