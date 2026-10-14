@@ -187,6 +187,13 @@ pub struct PairedDevice {
     pub baseline_rssi: i16,
     pub address: String,
     pub windows_password: Option<Vec<u8>>,
+    /// Qualified Windows account this device's stored password unlocks
+    /// (`DOMAIN\user` or `COMPUTERNAME\user`), e.g. as reported by
+    /// `USERDOMAIN`/`USERNAME` on the machine where it was set. `None` means
+    /// "unknown" -- the credential provider falls back to its old
+    /// first-user-in-the-array behavior, which is only ever wrong on a
+    /// multi-account sign-in screen.
+    pub windows_username: Option<String>,
 }
 
 pub const PC_TOUCH_TOLERANCE: f64 = 0.18;
@@ -337,7 +344,7 @@ impl SessionManager {
         let challenge = match state { SessionState::Pairing { challenge, .. } => challenge, other => return Err(WristKeyError::Session(format!("expected Pairing, got {:?}", other))) };
         self.crypto.verify(&public_key, &challenge.to_bytes(), &response.signature).await?;
         if !response.user_present { return Err(WristKeyError::Protocol("user presence required".into())); }
-        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address, windows_password: None };
+        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address, windows_password: None, windows_username: None };
         self.storage.save_device(&device).await?;
         *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
         info!("pairing completed for {}", device.id); Ok(device)
@@ -378,6 +385,24 @@ impl SessionManager {
         device.windows_password = Some(encrypted); self.storage.save_device(&device).await?;
         info!("stored encrypted password for device {}", device_id); Ok(())
     }
+    /// Record which Windows account this device's stored password belongs
+    /// to, so the credential provider can pick the right tile on a
+    /// multi-account sign-in screen instead of guessing at index 0. A blank
+    /// username clears it back to "unknown".
+    pub async fn set_device_username(&self, device_id: Uuid, username: &str) -> Result<()> {
+        let mut device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
+        device.windows_username = if username.trim().is_empty() { None } else { Some(username.trim().to_string()) };
+        self.storage.save_device(&device).await?;
+        info!("stored windows_username for device {}", device_id); Ok(())
+    }
+    /// Fast, local-only lookup for the credential provider: which Windows
+    /// account (if known) the first paired device's stored password belongs
+    /// to. Deliberately does not touch BLE or the MSA server -- this must
+    /// answer in milliseconds, called while LogonUI is still building its
+    /// tile list, long before the user has even looked at the screen.
+    pub async fn primary_device_username(&self) -> Result<Option<String>> {
+        Ok(self.storage.list_devices().await?.into_iter().next().and_then(|d| d.windows_username))
+    }
     pub async fn get_device_password(&self, device_id: Uuid) -> Result<Option<Vec<u8>>> {
         let device = self.storage.load_device(device_id).await?.ok_or_else(|| WristKeyError::Storage("device not found".into()))?;
         Ok(device.windows_password.clone())
@@ -407,6 +432,7 @@ impl SessionManager {
             baseline_rssi: -55,
             address: String::new(),
             windows_password: None,
+            windows_username: None,
         });
         // Refresh what the server knows, but never drop a stored password.
         device.name = binding.pc_name.clone();
@@ -643,4 +669,34 @@ impl RssiSmoother {
     pub fn new(_baseline: i16) -> Self { Self }
     pub fn update(&mut self, _rssi: i16) -> (bool, bool) { (true, true) }
     pub fn current_rssi(&self) -> Option<i16> { None }
+}
+
+#[cfg(test)]
+mod windows_username_tests {
+    use super::*;
+
+    fn session() -> SessionManager {
+        SessionManager::new(Arc::new(EcdsaP256Crypto), Arc::new(MemoryStorage::new()))
+    }
+
+    #[tokio::test]
+    async fn primary_device_username_is_none_until_set() {
+        let s = session();
+        let challenge = s.begin_pairing().await.unwrap();
+        use p256::ecdsa::{SigningKey, Signature, signature::Signer};
+        let sk = SigningKey::random(&mut rand::thread_rng());
+        let pubkey = sk.verifying_key().to_encoded_point(false).as_bytes().to_vec();
+        let sig: Signature = sk.sign(&challenge.to_bytes());
+        let response = Response { signature: sig.to_bytes().to_vec(), user_present: true, timestamp: Utc::now() };
+        let device = s.complete_pairing("Watch".into(), pubkey, None, &response, -50, "AA:BB".into()).await.unwrap();
+
+        assert_eq!(s.primary_device_username().await.unwrap(), None);
+
+        s.set_device_username(device.id, "DESKTOP-ABC\\sergej").await.unwrap();
+        assert_eq!(s.primary_device_username().await.unwrap(), Some("DESKTOP-ABC\\sergej".to_string()));
+
+        // Blank clears it back to unknown rather than storing an empty string.
+        s.set_device_username(device.id, "   ").await.unwrap();
+        assert_eq!(s.primary_device_username().await.unwrap(), None);
+    }
 }

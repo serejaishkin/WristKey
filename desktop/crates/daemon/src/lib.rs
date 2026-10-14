@@ -529,12 +529,37 @@ mod pipe_server {
                     // Paired watch first; a PC with no Bluetooth uses the LAN binding.
                     let result = match set_stored_password(session.clone(), password).await {
                         Ok(()) => Ok(()),
-                        Err(e) => set_stored_password_lan(session, &request, &config).await.map_err(|_| e),
+                        Err(e) => set_stored_password_lan(session.clone(), &request, &config).await.map_err(|_| e),
                     };
+                    // Best-effort: the Tauri app sends the interactive user's
+                    // own account (it runs as them, unlike this service), so
+                    // the credential provider can later pick the matching
+                    // tile instead of guessing at index 0. Never let a
+                    // missing/failed username write fail the password save.
+                    if result.is_ok() {
+                        if let Some(username) = request.get("username").and_then(|v| v.as_str()) {
+                            if !username.trim().is_empty() {
+                                if let Some(device) = session.list_paired_devices().await.ok().and_then(|d| d.into_iter().next()) {
+                                    let _ = session.set_device_username(device.id, username).await;
+                                }
+                            }
+                        }
+                    }
                     match result {
                         Ok(()) => serde_json::json!({"status":"success"}),
                         Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
                     }
+                }
+            }
+            // Fast, local-only lookup for the credential provider: which
+            // Windows account the stored password belongs to, so it can pick
+            // the right tile on a multi-account sign-in screen. Must never
+            // touch BLE or the network -- CreateCredentials calls this while
+            // LogonUI is still building its tile list.
+            "get_username" => {
+                match session.primary_device_username().await {
+                    Ok(username) => serde_json::json!({"status":"success","username": username.unwrap_or_default()}),
+                    Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
                 }
             }
             "clear_password" => match clear_stored_password(session).await {

@@ -6,11 +6,19 @@
 #include <cctype>
 #include <string>
 #include <vector>
+#include <wchar.h>
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "credui.lib")
 #pragma comment(lib, "secur32.lib")
 #pragma comment(lib, "shlwapi.lib")
+
+// Implemented near RequestUnlockFromDaemon (after its JSON/encoding
+// helpers); forward-declared here so CreateCredentials, which comes first
+// in the file, can call it. Fast, local-only query -- never touches BLE --
+// so CreateCredentials can afford to wait on it synchronously while
+// LogonUI is still building its tile list.
+static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername);
 
 static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     if (!dst) return E_POINTER;
@@ -196,13 +204,41 @@ HRESULT WristKeyProvider::CreateCredentials() {
     HRESULT hr = _userArray->GetCount(&userCount);
     if (FAILED(hr)) return hr;
 
-    // WristKey provides a single unlock tile — we pick the currently-selected
-    // (or first) user and create exactly one credential for them. Creating one
-    // tile per user makes LogonUI show duplicate WristKey entries alongside
-    // every Windows account.
+    // WristKey provides a single unlock tile — we pick one user and create
+    // exactly one credential for them. Creating one tile per user makes
+    // LogonUI show duplicate WristKey entries alongside every Windows
+    // account.
+    //
+    // CPUS_UNLOCK_WORKSTATION always hands us exactly one user (the session
+    // owner), so index 0 is never wrong there. CPUS_LOGON, on a
+    // multi-account machine, can hand us several -- ask the daemon which
+    // Windows account the stored password actually belongs to and match it
+    // by name, instead of always grabbing whichever account happens to be
+    // first. A daemon that's unreachable, or has no username on file (a
+    // password saved before this existed, or a fresh LAN-only setup),
+    // leaves selectedIndex at 0 -- the exact old behavior, never worse.
     DWORD selectedIndex = 0;
+    if (userCount > 1) {
+        std::wstring expectedUsername;
+        if (QueryExpectedUsernameFromDaemon(expectedUsername) && !expectedUsername.empty()) {
+            for (DWORD i = 0; i < userCount; ++i) {
+                ICredentialProviderUser* candidate = nullptr;
+                if (FAILED(_userArray->GetAt(i, &candidate)) || !candidate) continue;
+                PWSTR candidateName = nullptr;
+                const bool matched = SUCCEEDED(candidate->GetStringValue(PKEY_Identity_QualifiedUserName, &candidateName))
+                    && candidateName
+                    && _wcsicmp(candidateName, expectedUsername.c_str()) == 0;
+                CoTaskMemFree(candidateName);
+                candidate->Release();
+                if (matched) {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+
     if (userCount > 0) {
-        // Prefer the user that LogonUI marked as selected/active.
         ICredentialProviderUser* selectedUser = nullptr;
         if (SUCCEEDED(_userArray->GetAt(selectedIndex, &selectedUser)) && selectedUser) {
             PWSTR username = nullptr;
@@ -550,7 +586,20 @@ static bool ExtractJsonStringValue(const std::string& text, const std::string& k
 // Connects to the WristKey daemon pipe, runs the BLE challenge against the
 // watch, and on success receives the DPAPI-decrypted Windows password.
 // On failure fills `outError` with a user-readable reason.
-static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& outError) {
+//
+// `events`/`credential` are optional (may both be null): when given, the
+// Status tile field is updated with a countdown roughly once a second while
+// this function waits on the daemon's reply. This call happens entirely on
+// the thread that invoked GetSerialization -- the same thread that owns
+// these COM objects -- so it is a same-thread reentrant call into LogonUI,
+// not a cross-thread one. No background thread is used here specifically
+// to avoid the unverified COM-apartment-threading risk a worker thread
+// would carry; same-thread SetFieldString calls during a blocking
+// credential-provider operation are the documented pattern other providers
+// (e.g. smart-card PIN waits) use for progress text.
+static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& outError,
+                                     ICredentialProviderCredentialEvents* events = nullptr,
+                                     ICredentialProviderCredential* credential = nullptr) {
     const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
 
     if (!WaitNamedPipeW(pipeName, 2000)) {
@@ -578,8 +627,11 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
 
     std::string response;
     char buffer[512];
-    const DWORD deadline = GetTickCount() + 15000;
+    const DWORD startTick = GetTickCount();
+    const DWORD totalWaitMs = 15000;
+    const DWORD deadline = startTick + totalWaitMs;
     bool timedOut = false;
+    DWORD lastStatusUpdateTick = 0;
 
     for (;;) {
         DWORD available = 0;
@@ -588,6 +640,23 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
                 timedOut = true;
                 break;
             }
+
+            // Best-effort progress countdown on the tile. Never lets a
+            // failure here interrupt the actual unlock wait -- the return
+            // value of SetFieldString is intentionally ignored.
+            if (events && credential) {
+                const DWORD now = GetTickCount();
+                if (now - lastStatusUpdateTick >= 1000) {
+                    lastStatusUpdateTick = now;
+                    const DWORD elapsedMs = now - startTick;
+                    const DWORD remainingSeconds =
+                        elapsedMs < totalWaitMs ? (totalWaitMs - elapsedMs + 999) / 1000 : 0;
+                    const std::wstring statusText =
+                        L"Confirm on your watch… (" + std::to_wstring(remainingSeconds) + L"s)";
+                    events->SetFieldString(credential, WristKeyFields::Status, statusText.c_str());
+                }
+            }
+
             Sleep(100);
             continue;
         }
@@ -601,6 +670,13 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
     }
 
     CloseHandle(pipe);
+
+    if (events && credential) {
+        // Clear the countdown once we have an answer (success, failure, or
+        // timeout) -- GetSerialization's own status text / error handling
+        // takes over immediately after this function returns.
+        events->SetFieldString(credential, WristKeyFields::Status, L"Confirm on your watch");
+    }
 
     if (timedOut && response.empty()) {
         outError = L"WristKey: daemon did not answer.";
@@ -628,6 +704,73 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
 
     outPassword = Utf8ToWide(password);
     return true;
+}
+
+// Local-only lookup, never touches BLE: asks the daemon which Windows
+// account (if any) the stored password is known to belong to, so
+// CreateCredentials can pick the matching tile on a multi-account sign-in
+// screen. Short timeouts throughout -- this must not make LogonUI feel like
+// it's hanging while it's still just building its tile list. Any failure
+// (daemon not running, no answer, unset username) returns false/empty, and
+// the caller is expected to fall back to its old index-0 behavior rather
+// than block or fail credential creation.
+static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername) {
+    outUsername.clear();
+    const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
+
+    if (!WaitNamedPipeW(pipeName, 500)) {
+        return false;
+    }
+
+    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    DWORD mode = PIPE_READMODE_BYTE;
+    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+
+    static const char request[] = "{\"action\":\"get_username\"}\n";
+    DWORD written = 0;
+    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
+        CloseHandle(pipe);
+        return false;
+    }
+
+    std::string response;
+    char buffer[512];
+    const DWORD deadline = GetTickCount() + 1000;
+    bool timedOut = false;
+
+    for (;;) {
+        DWORD available = 0;
+        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
+            if (GetTickCount() > deadline) { timedOut = true; break; }
+            Sleep(25);
+            continue;
+        }
+
+        DWORD read = 0;
+        if (!ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) || read == 0) break;
+        buffer[read] = '\0';
+        response.append(buffer, read);
+        if (response.find('\n') != std::string::npos) break;
+        if (GetTickCount() > deadline) { timedOut = true; break; }
+    }
+
+    CloseHandle(pipe);
+
+    if (timedOut && response.empty()) return false;
+
+    std::string status;
+    if (!ExtractJsonStringValue(response, "status", status) || status != "success") return false;
+
+    std::string username;
+    if (!ExtractJsonStringValue(response, "username", username) || username.empty()) return false;
+
+    outUsername = Utf8ToWide(username);
+    return !outUsername.empty();
 }
 
 static HRESULT PackUnlockCredential(
@@ -705,7 +848,8 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
 
     std::wstring password;
     std::wstring daemonError;
-    if (!RequestUnlockFromDaemon(password, daemonError)) {
+    if (!RequestUnlockFromDaemon(password, daemonError, _events,
+                                  static_cast<ICredentialProviderCredential*>(this))) {
         CopyString((daemonError.empty()
                         ? L"WristKey: confirm the unlock on your watch."
                         : daemonError.c_str()),

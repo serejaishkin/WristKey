@@ -80,7 +80,21 @@ fn create_platform_adapter(session: Arc<SessionManager>) -> Arc<dyn PlatformSecu
     let devices=state.session.list_paired_devices().await.map_err(|e|e.to_string())?;
     let device=devices.first().ok_or("No paired device found. Pair a watch first.")?;
     let encrypted=WindowsKeyProtector.protect(password.as_bytes());
-    state.session.set_device_password(device.id,encrypted).await.map_err(|e|e.to_string())
+    state.session.set_device_password(device.id,encrypted).await.map_err(|e|e.to_string())?;
+    // Best-effort: this app runs as the interactive user (unlike the
+    // service), so USERDOMAIN\USERNAME here is exactly the account the
+    // password just validated against. Recording it lets the credential
+    // provider pick the matching tile on a multi-account sign-in screen
+    // instead of always guessing at the first one in the list. A failure
+    // here must never fail the password save -- the provider just falls
+    // back to its old behavior.
+    if let (Ok(domain), Ok(user)) = (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
+        if !domain.is_empty() && !user.is_empty() {
+            let qualified = format!("{}\\{}", domain, user);
+            let _ = state.session.set_device_username(device.id, &qualified).await;
+        }
+    }
+    Ok(())
 }
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn set_windows_password(_state: State<'_, Arc<AppState>>,_password:String)->Result<(),String>{Err("Windows password storage is only available on Windows".into())}
