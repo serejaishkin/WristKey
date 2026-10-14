@@ -129,6 +129,9 @@ impl Daemon {
     /// receives a closed signal (i.e. the sender was dropped / aborted).
     pub async fn run(&self, mut shutdown_rx: watch::Receiver<()>) -> Result<()> {
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
+        // Collapse any duplicate records of the same watch left behind by
+        // earlier re-pairs, so unlock always uses the record with the live key.
+        if let Err(e) = self.session.dedupe_devices().await { warn!("duplicate cleanup failed: {}", e); }
         let mut ticker = interval(Duration::from_secs(2));
 
         #[cfg(windows)]

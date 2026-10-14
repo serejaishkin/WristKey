@@ -344,10 +344,69 @@ impl SessionManager {
         let challenge = match state { SessionState::Pairing { challenge, .. } => challenge, other => return Err(WristKeyError::Session(format!("expected Pairing, got {:?}", other))) };
         self.crypto.verify(&public_key, &challenge.to_bytes(), &response.signature).await?;
         if !response.user_present { return Err(WristKeyError::Protocol("user presence required".into())); }
-        let device = PairedDevice { id: Uuid::new_v4(), name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address, windows_password: None, windows_username: None };
+        // One physical watch = one record. Re-pairing the same watch (same BLE
+        // id, same address, or same public key) must replace its record, not
+        // add a second one: everything downstream uses the first record, so a
+        // leftover duplicate holding the OLD public key breaks every unlock.
+        // The old record's id, stored password and username are carried over.
+        let existing: Vec<PairedDevice> = self.storage.list_devices().await?.into_iter()
+            .filter(|d| Self::same_watch(d, &public_key, device_id.as_deref(), &address))
+            .collect();
+        let keep = existing.first().cloned();
+        for dup in existing.iter().skip(1) { self.storage.delete_device(dup.id).await?; }
+        let device = PairedDevice {
+            id: keep.as_ref().map(|d| d.id).unwrap_or_else(Uuid::new_v4),
+            name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address,
+            windows_password: keep.as_ref().and_then(|d| d.windows_password.clone()),
+            windows_username: keep.as_ref().and_then(|d| d.windows_username.clone()),
+        };
         self.storage.save_device(&device).await?;
         *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
         info!("pairing completed for {}", device.id); Ok(device)
+    }
+    fn same_watch(d: &PairedDevice, public_key: &[u8], device_id: Option<&[u8]>, address: &str) -> bool {
+        // LAN (MSA) records have an empty address and a UUID-derived device_id
+        // and are a different thing from a BLE-paired watch: never merge them.
+        if d.address.is_empty() { return false; }
+        (!address.is_empty() && d.address == address)
+            || (device_id.is_some() && d.device_id.as_deref() == device_id)
+            || (!public_key.is_empty() && d.public_key == public_key)
+    }
+    /// Collapse duplicate BLE records of the same watch into the newest one,
+    /// keeping any stored password/username/touch data found on any of them.
+    /// Returns how many records were removed. Safe to run on every start.
+    pub async fn dedupe_devices(&self) -> Result<usize> {
+        let mut devices = self.storage.list_devices().await?;
+        devices.sort_by_key(|d| std::cmp::Reverse(d.paired_at));
+        let mut removed = 0usize;
+        let mut i = 0;
+        while i < devices.len() {
+            let keep = devices[i].clone();
+            let mut merged = keep.clone();
+            let mut j = i + 1;
+            while j < devices.len() {
+                if !keep.address.is_empty()
+                    && Self::same_watch(&devices[j], &keep.public_key, keep.device_id.as_deref(), &keep.address)
+                {
+                    let dup = devices.remove(j);
+                    if merged.windows_password.is_none() { merged.windows_password = dup.windows_password.clone(); }
+                    if merged.windows_username.is_none() { merged.windows_username = dup.windows_username.clone(); }
+                    if let Ok(Some(tp)) = self.storage.load_touch_point(&dup.id.to_string()).await {
+                        if self.storage.load_touch_point(&keep.id.to_string()).await?.is_none() {
+                            self.storage.save_touch_point(&keep.id.to_string(), &tp).await?;
+                        }
+                    }
+                    self.storage.delete_device(dup.id).await?;
+                    removed += 1;
+                } else { j += 1; }
+            }
+            if merged.windows_password != keep.windows_password || merged.windows_username != keep.windows_username {
+                self.storage.save_device(&merged).await?;
+            }
+            i += 1;
+        }
+        if removed > 0 { info!("removed {} duplicate paired device record(s)", removed); }
+        Ok(removed)
     }
     pub async fn begin_unlock(&self, device_id: Uuid) -> Result<Challenge> {
         let challenge = Challenge::generate();
@@ -698,5 +757,63 @@ mod windows_username_tests {
         // Blank clears it back to unknown rather than storing an empty string.
         s.set_device_username(device.id, "   ").await.unwrap();
         assert_eq!(s.primary_device_username().await.unwrap(), None);
+    }
+
+    async fn pair(s: &SessionManager, ble_id: &str, address: &str) -> PairedDevice {
+        use p256::ecdsa::{SigningKey, Signature, signature::Signer};
+        let challenge = s.begin_pairing().await.unwrap();
+        let sk = SigningKey::random(&mut rand::thread_rng());
+        let pubkey = sk.verifying_key().to_encoded_point(false).as_bytes().to_vec();
+        let sig: Signature = sk.sign(&challenge.to_bytes());
+        let response = Response { signature: sig.to_bytes().to_vec(), user_present: true, timestamp: Utc::now() };
+        s.complete_pairing("Watch".into(), pubkey, Some(ble_id.as_bytes().to_vec()), &response, -50, address.into()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn repairing_the_same_watch_replaces_the_record_and_keeps_the_password() {
+        let s = session();
+        let first = pair(&s, "watch-1", "AA:BB").await;
+        s.set_device_password(first.id, vec![1, 2, 3]).await.unwrap();
+        s.set_device_username(first.id, "PC\\me").await.unwrap();
+
+        let second = pair(&s, "watch-1", "AA:BB").await; // new key, same watch
+
+        let all = s.list_paired_devices().await.unwrap();
+        assert_eq!(all.len(), 1, "re-pair must not create a duplicate");
+        assert_eq!(all[0].id, first.id);
+        assert_eq!(all[0].public_key, second.public_key, "record must carry the NEW key");
+        assert_eq!(all[0].windows_password, Some(vec![1, 2, 3]));
+        assert_eq!(all[0].windows_username.as_deref(), Some("PC\\me"));
+    }
+
+    #[tokio::test]
+    async fn different_watches_stay_separate() {
+        let s = session();
+        pair(&s, "watch-1", "AA:BB").await;
+        pair(&s, "watch-2", "CC:DD").await;
+        assert_eq!(s.list_paired_devices().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn dedupe_collapses_old_duplicates_keeping_newest_and_the_password() {
+        let st: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
+        let s = SessionManager::new(Arc::new(EcdsaP256Crypto), st.clone());
+        let mk = |pk: u8, age_min: i64, pw: Option<Vec<u8>>| PairedDevice {
+            id: Uuid::new_v4(), name: "Watch".into(), public_key: vec![pk; 65],
+            device_id: Some(b"watch-1".to_vec()), paired_at: Utc::now() - chrono::Duration::minutes(age_min),
+            baseline_rssi: -50, address: "AA:BB".into(), windows_password: pw, windows_username: None,
+        };
+        let old = mk(1, 60, Some(vec![9, 9]));
+        let newest = mk(2, 0, None);
+        st.save_device(&old).await.unwrap();
+        st.save_device(&newest).await.unwrap();
+
+        assert_eq!(s.dedupe_devices().await.unwrap(), 1);
+        let all = s.list_paired_devices().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, newest.id);
+        assert_eq!(all[0].public_key, vec![2; 65]);
+        assert_eq!(all[0].windows_password, Some(vec![9, 9]));
+        assert_eq!(s.dedupe_devices().await.unwrap(), 0, "idempotent");
     }
 }
