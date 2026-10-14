@@ -4,6 +4,25 @@ pub mod conn_mgr;
 pub use conn_mgr::ConnectionManager;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// When the paired watch was last seen in range (BLE link up AND smoothed
+/// RSSI above the unlock threshold). Written by the proximity loop, read by
+/// the pipe's `proximity` action so the credential provider can start the
+/// unlock on its own. Purely a hint: it never authenticates anything -- the
+/// watch must still sign a fresh challenge.
+static LAST_IN_RANGE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+const PRESENCE_FRESH_SECS: u64 = 8;
+
+fn set_in_range(in_range: bool) {
+    if let Ok(mut g) = LAST_IN_RANGE.lock() {
+        if in_range { *g = Some(std::time::Instant::now()); } else { *g = None; }
+    }
+}
+
+fn watch_in_range() -> bool {
+    LAST_IN_RANGE.lock().ok().and_then(|g| *g)
+        .map_or(false, |t| t.elapsed() < Duration::from_secs(PRESENCE_FRESH_SECS))
+}
 use tokio::sync::{Mutex, watch};
 use tokio::time::{interval, timeout, sleep};
 use tracing::{info, warn, debug};
@@ -259,6 +278,7 @@ impl Daemon {
             Ok(c) => c,
             Err(e) => {
                 debug!("proximity connection unavailable: {}", e);
+                set_in_range(false);
                 let should_lock = self.debounce.lock().await.tick(true);
                 return if should_lock { Ok(ProximityAction::Lock) } else { Ok(ProximityAction::None) };
             }
@@ -268,6 +288,7 @@ impl Daemon {
             Ok(v) => v,
             Err(e) => {
                 debug!("RSSI read failed: {}", e);
+                set_in_range(false);
                 let should_lock = self.debounce.lock().await.tick(true);
                 return if should_lock { Ok(ProximityAction::Lock) } else { Ok(ProximityAction::None) };
             }
@@ -283,6 +304,9 @@ impl Daemon {
         let filtered = smoother.current_rssi();
         debug!("proximity {} raw_rssi={} filtered_rssi={:?} baseline={} unlock_candidate={} changed={}", device.name, rssi, filtered, baseline, should_unlock, changed);
         drop(smoother);
+
+        let offset = self.session.load_config().await.map(|c| c.rssi_threshold_offset_dbm).unwrap_or(15);
+        set_in_range(filtered.map_or(false, |f| f >= baseline - offset));
 
         if should_unlock {
             self.debounce.lock().await.reset();
@@ -564,6 +588,14 @@ mod pipe_server {
                     Ok(username) => serde_json::json!({"status":"success","username": username.unwrap_or_default()}),
                     Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
                 }
+            }
+            // Is the watch in range right now (and is auto-unlock enabled)?
+            // Cheap, local, no BLE I/O of its own: the credential provider
+            // uses it to start the unlock without a tile click. A hint only --
+            // the watch still has to sign a fresh challenge.
+            "proximity" => {
+                let enabled = session.load_config().await.map(|c| c.auto_unlock).unwrap_or(false);
+                serde_json::json!({"status":"success","present": enabled && watch_in_range()})
             }
             "clear_password" => match clear_stored_password(session).await {
                 Ok(()) => serde_json::json!({"status":"success"}),

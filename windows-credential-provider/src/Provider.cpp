@@ -20,6 +20,12 @@
 // LogonUI is still building its tile list.
 static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername);
 
+// Apple-Watch-style auto-unlock hint: true only if the daemon says the paired
+// watch is in range right now and auto-unlock is enabled. Local, fast, never
+// authenticates anything -- GetSerialization still makes the watch sign a
+// fresh challenge. Any failure means false (= normal click-the-tile behavior).
+static bool QueryWatchPresentFromDaemon();
+
 static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     if (!dst) return E_POINTER;
     *dst = nullptr;
@@ -280,6 +286,21 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialCount(DWORD* count, DWO
     }
 
     *count = static_cast<DWORD>(_credentials.size());
+
+    // Auto-unlock: if the watch is in range, tell LogonUI to submit our tile
+    // by itself (GetSerialization then runs the normal BLE challenge and the
+    // watch still has to sign it). Rate-limited so a refused/failed attempt
+    // can never turn into a submit loop: at most one automatic attempt per
+    // 30 s, and never when the daemon is unreachable.
+    if (!_credentials.empty()) {
+        const DWORD now = GetTickCount();
+        const bool cooledDown = _lastAutoLogonTick == 0 || (now - _lastAutoLogonTick) > 30000;
+        if (cooledDown && QueryWatchPresentFromDaemon()) {
+            _lastAutoLogonTick = now ? now : 1;
+            *def = 0;
+            *autoLogon = TRUE;
+        }
+    }
     return S_OK;
 }
 
@@ -771,6 +792,47 @@ static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername) {
 
     outUsername = Utf8ToWide(username);
     return !outUsername.empty();
+}
+
+static bool QueryWatchPresentFromDaemon() {
+    const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
+
+    if (!WaitNamedPipeW(pipeName, 300)) return false;
+
+    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) return false;
+
+    DWORD mode = PIPE_READMODE_BYTE;
+    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+
+    static const char request[] = "{\"action\":\"proximity\"}\n";
+    DWORD written = 0;
+    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
+        CloseHandle(pipe);
+        return false;
+    }
+
+    std::string response;
+    char buffer[256];
+    const DWORD deadline = GetTickCount() + 700;
+    for (;;) {
+        DWORD available = 0;
+        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
+            if (GetTickCount() > deadline) break;
+            Sleep(20);
+            continue;
+        }
+        DWORD read = 0;
+        if (!ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) || read == 0) break;
+        response.append(buffer, read);
+        if (response.find('\n') != std::string::npos) break;
+        if (GetTickCount() > deadline) break;
+    }
+    CloseHandle(pipe);
+
+    return response.find("\"status\":\"success\"") != std::string::npos
+        && response.find("\"present\":true") != std::string::npos;
 }
 
 static HRESULT PackUnlockCredential(

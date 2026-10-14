@@ -96,6 +96,7 @@ private:
     ICredentialProviderUserArray* _userArray = nullptr;
     ICredentialProviderEvents* _events = nullptr;
     UINT_PTR _adviseContext = 0;
+    DWORD _lastAutoLogonTick = 0;  // GetTickCount() of the last automatic submit; 0 = never
 };
 
 namespace WristKeyFields {
