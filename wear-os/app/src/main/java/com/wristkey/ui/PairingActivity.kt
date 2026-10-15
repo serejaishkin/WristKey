@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,20 +65,25 @@ class PairingActivity : ComponentActivity() {
         bound = bindService(serviceIntent, connection, BIND_AUTO_CREATE)
 
         setContent {
-            var ready by mutableStateOf(false)
-            var error by mutableStateOf<String?>(null)
+            var ready by remember { mutableStateOf(false) }
+            var error by remember { mutableStateOf<String?>(null) }
 
+            // Keep watching for the PC's challenge for as long as this screen
+            // is open. The PC connects first and only then discovers GATT
+            // services, writes its name and the challenge -- on Windows that
+            // can take well over 10 s, so a fixed polling window left
+            // "Allow" greyed out for good and the PC timed out waiting. This
+            // also re-disables the button if the PC drops mid-pairing.
             LaunchedEffect(Unit) {
-                repeat(100) {
+                while (true) {
                     val pending = service?.hasPendingPairing() == true
-                    val challengeSize = service?.getCurrentChallengeSize() ?: 0
-                    if (pending != ready) Log.i(TAG, "PairingActivity state: pending=$pending challengeSize=$challengeSize")
-                    ready = pending
-                    if (ready) return@LaunchedEffect
-                    delay(100)
+                    if (pending != ready) {
+                        Log.i(TAG, "PairingActivity state: pending=$pending challengeSize=${service?.getCurrentChallengeSize() ?: 0}")
+                        ready = pending
+                        if (pending) error = null
+                    }
+                    delay(150)
                 }
-                ready = service?.hasPendingPairing() == true
-                Log.i(TAG, "PairingActivity wait finished: ready=$ready challengeSize=${service?.getCurrentChallengeSize() ?: 0}")
             }
 
             MaterialTheme {
