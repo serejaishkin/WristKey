@@ -383,8 +383,8 @@ mod pipe_server {
     /// instance has been created (Windows copies the descriptor into the
     /// kernel object at creation time, so it need not outlive the call).
     unsafe fn restricted_security_attributes() -> std::io::Result<(windows::Win32::Security::SECURITY_ATTRIBUTES, windows::Win32::Foundation::HLOCAL)> {
-        use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-        use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SDDL_REVISION_1};
+        use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+        use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
         use windows::core::PCWSTR;
 
         // D: (DACL) -- Allow (A) Generic-All (GA) to SYSTEM (SY) and to the
