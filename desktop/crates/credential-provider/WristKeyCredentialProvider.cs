@@ -515,7 +515,7 @@ namespace WristKeyCredentialProvider
                     client.Connect(300);
                     using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
                     {
-                        writer.Write("{\\"action\\":\\"proximity\\"}\\n");
+                        writer.Write("{\"action\":\"proximity\"}\n");
                         writer.Flush();
                     }
 
