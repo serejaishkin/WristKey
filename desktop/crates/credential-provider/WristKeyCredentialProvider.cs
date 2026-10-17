@@ -554,7 +554,7 @@ namespace WristKeyCredentialProvider
                     PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(5000);
-                    using (StreamWriter writer = new StreamWriter(client, Encoding.UTF8, 1024, true) { AutoFlush = true })
+                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
                     {
                         // WriteLine добавляет \r\n — daemon читает через from_slice и падает.
                         // Используем Write + \n без \р.
