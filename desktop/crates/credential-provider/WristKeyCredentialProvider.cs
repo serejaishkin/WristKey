@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Json;
 using System.Security.Principal;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace WristKeyCredentialProvider
 {
@@ -189,6 +190,13 @@ namespace WristKeyCredentialProvider
         public string message { get; set; }
     }
 
+    public class ProximityResponse
+    {
+        public string status { get; set; }
+        public bool present { get; set; }
+        public string message { get; set; }
+    }
+
     [ComVisible(true)]
     [Guid("7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1")]
     [ClassInterface(ClassInterfaceType.None)]
@@ -197,6 +205,7 @@ namespace WristKeyCredentialProvider
     {
         private ICredentialProviderEvents _events;
         private WristKeyCredential _credential;
+        private CREDENTIAL_PROVIDER_USAGE_SCENARIO _scenario;
 
         public int SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, uint dwFlags)
         {
@@ -204,6 +213,7 @@ namespace WristKeyCredentialProvider
                 cpus == CREDENTIAL_PROVIDER_USAGE_SCENARIO.CPUS_UNLOCK_WORKSTATION)
             {
                 _credential = null;
+                _scenario = cpus;
                 return HRESULT.S_OK;
             }
             return HRESULT.E_NOTIMPL;
@@ -249,7 +259,65 @@ namespace WristKeyCredentialProvider
             pdwCount = _credential == null ? 0u : 1u;
             pdwDefault = unchecked((uint)-1);
             pbAutoLogonWithDefault = 0;
+
+            // Automatic submission is only permitted on the workstation
+            // unlock screen. Initial sign-in must remain an explicit action.
+            if (_credential != null &&
+                _scenario == CREDENTIAL_PROVIDER_USAGE_SCENARIO.CPUS_UNLOCK_WORKSTATION &&
+                IsWatchNearby())
+            {
+                pdwDefault = 0;
+                pbAutoLogonWithDefault = 1;
+            }
+
             return HRESULT.S_OK;
+        }
+
+        /// <summary>
+        /// Reads the daemon's cached proximity hint. This is not authentication:
+        /// GetSerialization still requires a fresh signed challenge from the watch.
+        /// Fail closed if the daemon is unavailable or the pipe query times out.
+        /// </summary>
+        private static bool IsWatchNearby()
+        {
+            try
+            {
+                using (NamedPipeClientStream client = new NamedPipeClientStream(
+                    ".", "wristkey", PipeDirection.InOut, PipeOptions.None,
+                    TokenImpersonationLevel.Impersonation))
+                {
+                    client.Connect(300);
+
+                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
+                    {
+                        writer.Write("{\"action\":\"proximity\"}\n");
+                        writer.Flush();
+                    }
+
+                    using (StreamReader reader = new StreamReader(client, Encoding.UTF8, false, 1024, true))
+                    {
+                        Task<string> responseTask = reader.ReadLineAsync();
+                        if (!responseTask.Wait(300))
+                            return false;
+                        string responseJson = responseTask.Result;
+                        if (string.IsNullOrWhiteSpace(responseJson))
+                            return false;
+
+                        var serializer = new DataContractJsonSerializer(typeof(ProximityResponse));
+                        using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(responseJson)))
+                        {
+                            ProximityResponse response = serializer.ReadObject(stream) as ProximityResponse;
+                            return response != null &&
+                                string.Equals(response.status, "success", StringComparison.OrdinalIgnoreCase) &&
+                                response.present;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public int GetCredentialAt(uint dwIndex, out ICredentialProviderCredential ppcpc)
@@ -482,11 +550,11 @@ namespace WristKeyCredentialProvider
         {
             try
             {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
+                using (NamedPipeClientStream client = new NamedPipeClientStream(".", "wristkey",
                     PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(5000);
-                    using (StreamWriter writer = new StreamWriter(client, Encoding.UTF8, 1024, true) { AutoFlush = true })
+                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
                     {
                         // WriteLine добавляет \r\n — daemon читает через from_slice и падает.
                         // Используем Write + \n без \р.
@@ -524,7 +592,7 @@ namespace WristKeyCredentialProvider
                 // Fallback: try old pipe read for backward compatibility
                 try
                 {
-                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
+                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", "wristkey",
                         PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                     {
                         client.Connect(2000);

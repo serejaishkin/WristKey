@@ -594,7 +594,7 @@ mod pipe_server {
             // uses it to start the unlock without a tile click. A hint only --
             // the watch still has to sign a fresh challenge.
             "proximity" => {
-                let enabled = session.load_config().await.map(|c| c.auto_unlock).unwrap_or(false);
+                let enabled = session.load_config().await.map(|c| c.auto_unlock && c.auto_unlock_on_resume).unwrap_or(false);
                 serde_json::json!({"status":"success","present": enabled && watch_in_range()})
             }
             "clear_password" => match clear_stored_password(session).await {
