@@ -161,7 +161,7 @@ struct PipeServerResult {
     std::atomic<bool> ready{false};
     std::atomic<bool> connected{false};
     std::atomic<bool> validRequest{false};
-    DWORD error = ERROR_SUCCESS;
+    std::atomic<DWORD> error{ERROR_SUCCESS};
 };
 
 static void RunTestPipeServer(PipeServerResult* result) {
@@ -370,8 +370,8 @@ int wmain(int argc, wchar_t** argv) {
 
     while (!pipeResult.ready.load()) Sleep(10);
 
-    if (pipeResult.error != ERROR_SUCCESS) {
-        std::wcerr << L"Test named pipe setup failed: " << pipeResult.error << L"\n";
+    if (pipeResult.error.load() != ERROR_SUCCESS) {
+        std::wcerr << L"Test named pipe setup failed: " << pipeResult.error.load() << L"\n";
         pipeThread.join();
         credential->Release();
         provider->Release();
