@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Json;
 using System.Security.Principal;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace WristKeyCredentialProvider
 {
@@ -282,22 +283,23 @@ namespace WristKeyCredentialProvider
             try
             {
                 using (NamedPipeClientStream client = new NamedPipeClientStream(
-                    ".", @"\\.\pipe\wristkey", PipeDirection.InOut, PipeOptions.None,
+                    ".", "wristkey", PipeDirection.InOut, PipeOptions.None,
                     TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(300);
-                    client.ReadTimeout = 300;
-                    client.WriteTimeout = 300;
 
                     using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
                     {
-                                                writer.Write("{\"action\":\"proximity\"}\n");
+                        writer.Write("{\"action\":\"proximity\"}\n");
                         writer.Flush();
                     }
 
                     using (StreamReader reader = new StreamReader(client, Encoding.UTF8, false, 1024, true))
                     {
-                        string responseJson = reader.ReadLine();
+                        Task<string> responseTask = reader.ReadLineAsync();
+                        if (!responseTask.Wait(300))
+                            return false;
+                        string responseJson = responseTask.Result;
                         if (string.IsNullOrWhiteSpace(responseJson))
                             return false;
 
@@ -548,7 +550,7 @@ namespace WristKeyCredentialProvider
         {
             try
             {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\wristkey",
+                using (NamedPipeClientStream client = new NamedPipeClientStream(".", "wristkey",
                     PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(5000);
@@ -590,7 +592,7 @@ namespace WristKeyCredentialProvider
                 // Fallback: try old pipe read for backward compatibility
                 try
                 {
-                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\wristkey",
+                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", "wristkey",
                         PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                     {
                         client.Connect(2000);
