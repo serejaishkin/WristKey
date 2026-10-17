@@ -272,6 +272,52 @@ namespace WristKeyCredentialProvider
             return HRESULT.S_OK;
         }
 
+        /// <summary>
+        /// Reads the daemon's cached proximity hint. This is not authentication:
+        /// GetSerialization still requires a fresh signed challenge from the watch.
+        /// Fail closed if the daemon is unavailable or the pipe query times out.
+        /// </summary>
+        private static bool IsWatchNearby()
+        {
+            try
+            {
+                using (NamedPipeClientStream client = new NamedPipeClientStream(
+                    ".", @"\\.\pipe\wristkey", PipeDirection.InOut, PipeOptions.None,
+                    TokenImpersonationLevel.Impersonation))
+                {
+                    client.Connect(300);
+                    client.ReadTimeout = 300;
+                    client.WriteTimeout = 300;
+
+                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
+                    {
+                                                writer.Write("{\"action\":\"proximity\"}\n");
+                        writer.Flush();
+                    }
+
+                    using (StreamReader reader = new StreamReader(client, Encoding.UTF8, false, 1024, true))
+                    {
+                        string responseJson = reader.ReadLine();
+                        if (string.IsNullOrWhiteSpace(responseJson))
+                            return false;
+
+                        var serializer = new DataContractJsonSerializer(typeof(ProximityResponse));
+                        using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(responseJson)))
+                        {
+                            ProximityResponse response = serializer.ReadObject(stream) as ProximityResponse;
+                            return response != null &&
+                                string.Equals(response.status, "success", StringComparison.OrdinalIgnoreCase) &&
+                                response.present;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public int GetCredentialAt(uint dwIndex, out ICredentialProviderCredential ppcpc)
         {
             if (dwIndex == 0 && _credential != null)
@@ -496,46 +542,6 @@ namespace WristKeyCredentialProvider
             ppszOptionalStatusText = null;
             pcpsiOptionalStatusIcon = 0;
             return HRESULT.S_OK;
-        }
-
-        /// <summary>
-        /// Reads the daemon's cached proximity hint. This is not authentication:
-        /// GetSerialization still requests a fresh challenge and verifies the
-        /// watch's signed response before returning the Windows password.
-        /// Fail closed if the daemon is unavailable or the pipe query times out.
-        /// </summary>
-        private bool IsWatchNearby()
-        {
-            try
-            {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(
-                    ".", @"\\.\pipe\wristkey", PipeDirection.InOut, PipeOptions.None,
-                    TokenImpersonationLevel.Impersonation))
-                {
-                    client.Connect(300);
-                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
-                    {
-                        writer.Write("{\"action\":\"proximity\"}\n");
-                        writer.Flush();
-                    }
-
-                    using (StreamReader reader = new StreamReader(client, Encoding.UTF8, false, 1024, true))
-                    {
-                        string responseJson = reader.ReadLine();
-                        if (string.IsNullOrWhiteSpace(responseJson))
-                            return false;
-
-                        ProximityResponse response = DeserializeJson<ProximityResponse>(responseJson);
-                        return response != null &&
-                            string.Equals(response.status, "success", StringComparison.OrdinalIgnoreCase) &&
-                            response.present;
-                    }
-                }
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         private string GetPasswordFromDaemon()
