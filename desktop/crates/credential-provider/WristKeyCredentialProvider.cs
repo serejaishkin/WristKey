@@ -189,6 +189,13 @@ namespace WristKeyCredentialProvider
         public string message { get; set; }
     }
 
+    public class ProximityResponse
+    {
+        public string status { get; set; }
+        public bool present { get; set; }
+        public string message { get; set; }
+    }
+
     [ComVisible(true)]
     [Guid("7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1")]
     [ClassInterface(ClassInterfaceType.None)]
@@ -197,6 +204,7 @@ namespace WristKeyCredentialProvider
     {
         private ICredentialProviderEvents _events;
         private WristKeyCredential _credential;
+        private CREDENTIAL_PROVIDER_USAGE_SCENARIO _scenario;
 
         public int SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, uint dwFlags)
         {
@@ -204,6 +212,7 @@ namespace WristKeyCredentialProvider
                 cpus == CREDENTIAL_PROVIDER_USAGE_SCENARIO.CPUS_UNLOCK_WORKSTATION)
             {
                 _credential = null;
+                _scenario = cpus;
                 return HRESULT.S_OK;
             }
             return HRESULT.E_NOTIMPL;
@@ -249,6 +258,17 @@ namespace WristKeyCredentialProvider
             pdwCount = _credential == null ? 0u : 1u;
             pdwDefault = unchecked((uint)-1);
             pbAutoLogonWithDefault = 0;
+
+            // Automatic submission is only permitted on the workstation
+            // unlock screen. Initial sign-in must remain an explicit action.
+            if (_credential != null &&
+                _scenario == CREDENTIAL_PROVIDER_USAGE_SCENARIO.CPUS_UNLOCK_WORKSTATION &&
+                IsWatchNearby())
+            {
+                pdwDefault = 0;
+                pbAutoLogonWithDefault = 1;
+            }
+
             return HRESULT.S_OK;
         }
 
@@ -478,11 +498,51 @@ namespace WristKeyCredentialProvider
             return HRESULT.S_OK;
         }
 
+        /// <summary>
+        /// Reads the daemon's cached proximity hint. This is not authentication:
+        /// GetSerialization still requests a fresh challenge and verifies the
+        /// watch's signed response before returning the Windows password.
+        /// Fail closed if the daemon is unavailable or the pipe query times out.
+        /// </summary>
+        private bool IsWatchNearby()
+        {
+            try
+            {
+                using (NamedPipeClientStream client = new NamedPipeClientStream(
+                    ".", @"\\.\pipe\wristkey", PipeDirection.InOut, PipeOptions.None,
+                    TokenImpersonationLevel.Impersonation))
+                {
+                    client.Connect(300);
+                    using (StreamWriter writer = new StreamWriter(client, new UTF8Encoding(false), 1024, true) { AutoFlush = true })
+                    {
+                        writer.Write("{\\"action\\":\\"proximity\\"}\\n");
+                        writer.Flush();
+                    }
+
+                    using (StreamReader reader = new StreamReader(client, Encoding.UTF8, false, 1024, true))
+                    {
+                        string responseJson = reader.ReadLine();
+                        if (string.IsNullOrWhiteSpace(responseJson))
+                            return false;
+
+                        ProximityResponse response = DeserializeJson<ProximityResponse>(responseJson);
+                        return response != null &&
+                            string.Equals(response.status, "success", StringComparison.OrdinalIgnoreCase) &&
+                            response.present;
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private string GetPasswordFromDaemon()
         {
             try
             {
-                using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
+                using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\wristkey",
                     PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                 {
                     client.Connect(5000);
@@ -524,7 +584,7 @@ namespace WristKeyCredentialProvider
                 // Fallback: try old pipe read for backward compatibility
                 try
                 {
-                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\WristKeyUnlock",
+                    using (NamedPipeClientStream client = new NamedPipeClientStream(".", @"\\.\pipe\wristkey",
                         PipeDirection.In, PipeOptions.None, TokenImpersonationLevel.Impersonation))
                     {
                         client.Connect(2000);
