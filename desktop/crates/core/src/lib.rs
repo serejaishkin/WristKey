@@ -224,6 +224,8 @@ pub struct Config {
     /// lock screen starts the unlock on its own (no tile click). The watch
     /// still has to sign the challenge itself; set false to require a click.
     pub auto_unlock: bool,
+    /// Automatically submit the WristKey credential on workstation resume when the daemon reports fresh watch proximity.
+    pub auto_unlock_on_resume: bool,
 }
 
 impl Default for Config {
@@ -231,7 +233,7 @@ impl Default for Config {
         Self { auto_lock_timeout_sec: 30, rssi_threshold_offset_dbm: 15, challenge_timeout_sec: 10,
             log_to_file: true, log_to_console: true, log_level: "info".into(),
             msa_server_url: String::new(), msa_token: String::new(), msa_account: String::new(),
-            auto_unlock: true }
+            auto_unlock: true, auto_unlock_on_resume: true }
     }
 }
 
