@@ -12,6 +12,7 @@ add_library(WristKeyCredentialProvider SHARED
     src/exports.cpp
     src/helpers.cpp
     src/ServiceInstall.cpp
+    WristKeyCredentialProvider.def
 )
 
 target_compile_features(WristKeyCredentialProvider PRIVATE cxx_std_17)
@@ -44,7 +45,6 @@ target_link_libraries(WristKeyCredentialProvider PRIVATE
 set_target_properties(WristKeyCredentialProvider PROPERTIES
     OUTPUT_NAME "WristKeyCredentialProvider"
     WINDOWS_EXPORT_ALL_SYMBOLS OFF
-    LINK_FLAGS "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/WristKeyCredentialProvider.def"
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
