@@ -27,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File .\windows-credential-provider\install.p
   -DllPath "$PWD\windows-credential-provider\build\Release\WristKeyCredentialProvider.dll"
 ```
 
-Then **sign out/in or reboot Windows**. Open **Sign-in options** on the Windows lock screen. WristKey supports the normal **logon** and **workstation unlock** scenarios as its own credential tile; Windows' built-in password/PIN providers remain separate.
+Then **sign out/in or reboot Windows**. Open **Sign-in options** on the Windows lock screen. WristKey supports only **workstation unlock** for an already signed-in session; it is not shown in the initial Windows sign-in account list.
 
 The installer also removes the legacy managed-provider registration so the two implementations cannot compete for the same login UI.
 
@@ -51,4 +51,4 @@ The native provider is registered through its exported `DllRegisterServer`; Wind
 
 ## Scenario safety
 
-The native provider intentionally returns `E_NOTIMPL` for `CPUS_CREDUI` and `CPUS_CHANGE_PASSWORD`, so account-management dialogs and password-change UI do not host the LogonUI provider. A local smoke test covers `CPUS_LOGON`, `CPUS_UNLOCK_WORKSTATION`, `CPUS_CREDUI`, and `CPUS_CHANGE_PASSWORD` without installing the provider.
+The native provider intentionally returns `E_NOTIMPL` for `CPUS_LOGON`, `CPUS_CREDUI`, and `CPUS_CHANGE_PASSWORD`, so it cannot add tiles to the initial account list or appear in account-management and password-change UI. A local smoke test covers all four scenarios without installing the provider.

@@ -15,13 +15,6 @@
 #pragma comment(lib, "secur32.lib")
 #pragma comment(lib, "shlwapi.lib")
 
-// Implemented near RequestUnlockFromDaemon (after its JSON/encoding
-// helpers); forward-declared here so CreateCredentials, which comes first
-// in the file, can call it. Fast, local-only query -- never touches BLE --
-// so CreateCredentials can afford to wait on it synchronously while
-// LogonUI is still building its tile list.
-static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername);
-
 // Apple-Watch-style auto-unlock hint: true only if the daemon says the paired
 // watch is in range right now and auto-unlock is enabled. Local, fast, never
 // authenticates anything -- GetSerialization still makes the watch sign a
@@ -87,21 +80,17 @@ ULONG STDMETHODCALLTYPE WristKeyProvider::Release() {
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD) {
     switch (cpus) {
-    case CPUS_LOGON:
     case CPUS_UNLOCK_WORKSTATION:
         StopPresenceMonitor();
-        // Normal sign-in and workstation unlock are the two LogonUI scenarios
-        // supported by the native V2 provider. Windows keeps its built-in
-        // password/PIN providers registered separately; WristKey only adds
-        // its own credential tile.
         _scenario = cpus;
         _recreateCredentials = true;
         return S_OK;
 
+    case CPUS_LOGON:
     case CPUS_CHANGE_PASSWORD:
     case CPUS_CREDUI:
-        // Do not participate in password-change or generic Credential UI flows.
-        // Returning E_NOTIMPL makes LogonUI/CredUI ignore this provider there.
+        // WristKey only unlocks an existing session; it never adds a tile to
+        // the initial Windows sign-in account list.
         return E_NOTIMPL;
 
     default:
@@ -282,7 +271,7 @@ void WristKeyProvider::StopPresenceMonitor() {
 HRESULT WristKeyProvider::CreateCredentials() {
     ReleaseCredentials();
 
-    if ((_scenario != CPUS_LOGON && _scenario != CPUS_UNLOCK_WORKSTATION) || !_userArray) {
+    if (_scenario != CPUS_UNLOCK_WORKSTATION || !_userArray) {
         return S_OK;
     }
 
@@ -295,38 +284,9 @@ HRESULT WristKeyProvider::CreateCredentials() {
     // LogonUI show duplicate WristKey entries alongside every Windows
     // account.
     //
-    // CPUS_UNLOCK_WORKSTATION always hands us exactly one user (the session
-    // owner), so index 0 is never wrong there. CPUS_LOGON, on a
-    // multi-account machine, can hand us several -- ask the daemon which
-    // Windows account the stored password actually belongs to and match it
-    // by name, instead of always grabbing whichever account happens to be
-    // first. A daemon that's unreachable, or has no username on file (a
-    // password saved before this existed, or a fresh LAN-only setup),
-    // leaves selectedIndex at 0 -- the exact old behavior, never worse.
-    DWORD selectedIndex = 0;
-    if (userCount > 1) {
-        std::wstring expectedUsername;
-        if (QueryExpectedUsernameFromDaemon(expectedUsername) && !expectedUsername.empty()) {
-            for (DWORD i = 0; i < userCount; ++i) {
-                ICredentialProviderUser* candidate = nullptr;
-                if (FAILED(_userArray->GetAt(i, &candidate)) || !candidate) continue;
-                PWSTR candidateName = nullptr;
-                const bool matched = SUCCEEDED(candidate->GetStringValue(PKEY_Identity_QualifiedUserName, &candidateName))
-                    && candidateName
-                    && _wcsicmp(candidateName, expectedUsername.c_str()) == 0;
-                CoTaskMemFree(candidateName);
-                candidate->Release();
-                if (matched) {
-                    selectedIndex = i;
-                    break;
-                }
-            }
-        }
-    }
-
     if (userCount > 0) {
         ICredentialProviderUser* selectedUser = nullptr;
-        if (SUCCEEDED(_userArray->GetAt(selectedIndex, &selectedUser)) && selectedUser) {
+        if (SUCCEEDED(_userArray->GetAt(0, &selectedUser)) && selectedUser) {
             PWSTR username = nullptr;
             PWSTR sid = nullptr;
 
@@ -805,73 +765,6 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
 
     outPassword = Utf8ToWide(password);
     return true;
-}
-
-// Local-only lookup, never touches BLE: asks the daemon which Windows
-// account (if any) the stored password is known to belong to, so
-// CreateCredentials can pick the matching tile on a multi-account sign-in
-// screen. Short timeouts throughout -- this must not make LogonUI feel like
-// it's hanging while it's still just building its tile list. Any failure
-// (daemon not running, no answer, unset username) returns false/empty, and
-// the caller is expected to fall back to its old index-0 behavior rather
-// than block or fail credential creation.
-static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername) {
-    outUsername.clear();
-    const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
-
-    if (!WaitNamedPipeW(pipeName, 500)) {
-        return false;
-    }
-
-    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-
-    DWORD mode = PIPE_READMODE_BYTE;
-    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
-
-    static const char request[] = "{\"action\":\"get_username\"}\n";
-    DWORD written = 0;
-    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
-        CloseHandle(pipe);
-        return false;
-    }
-
-    std::string response;
-    char buffer[512];
-    const DWORD deadline = GetTickCount() + 1000;
-    bool timedOut = false;
-
-    for (;;) {
-        DWORD available = 0;
-        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
-            if (GetTickCount() > deadline) { timedOut = true; break; }
-            Sleep(25);
-            continue;
-        }
-
-        DWORD read = 0;
-        if (!ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) || read == 0) break;
-        buffer[read] = '\0';
-        response.append(buffer, read);
-        if (response.find('\n') != std::string::npos) break;
-        if (GetTickCount() > deadline) { timedOut = true; break; }
-    }
-
-    CloseHandle(pipe);
-
-    if (timedOut && response.empty()) return false;
-
-    std::string status;
-    if (!ExtractJsonStringValue(response, "status", status) || status != "success") return false;
-
-    std::string username;
-    if (!ExtractJsonStringValue(response, "username", username) || username.empty()) return false;
-
-    outUsername = Utf8ToWide(username);
-    return !outUsername.empty();
 }
 
 static bool QueryWatchPresentFromDaemon() {

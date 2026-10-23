@@ -65,8 +65,8 @@ target_compile_definitions(ProviderSmokeTest PRIVATE
 )
 target_link_libraries(ProviderSmokeTest PRIVATE ole32 oleaut32 user32)
 
-# Safe scenario smoke test. Verifies normal logon/unlock support and explicit
-# opt-out from generic Credential UI/password-change flows.
+# Safe scenario smoke test. Verifies unlock-only support and explicit opt-out
+# from initial logon, generic Credential UI, and password-change flows.
 add_executable(ScenarioSafetySmokeTest tests/ScenarioSafetySmokeTest.cpp)
 target_compile_features(ScenarioSafetySmokeTest PRIVATE cxx_std_17)
 target_compile_definitions(ScenarioSafetySmokeTest PRIVATE

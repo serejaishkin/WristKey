@@ -59,9 +59,8 @@ int wmain(int argc, wchar_t** argv) {
         return 6;
     }
 
-    // Normal sign-in: WristKey supports CPUS_LOGON and adds only its own tile.
-    // Built-in Windows password/PIN providers remain separate.
-    if (Check(provider->SetUsageScenario(CPUS_LOGON, 0), S_OK,
+    // Never add WristKey to the initial Windows sign-in account list.
+    if (Check(provider->SetUsageScenario(CPUS_LOGON, 0), E_NOTIMPL,
               L"CPUS_LOGON")) {
         provider->Release();
         cleanup();
@@ -76,14 +75,13 @@ int wmain(int argc, wchar_t** argv) {
         return 8;
     }
 
-    // With no user array yet, the supported logon scenario must enumerate no
-    // credentials rather than manufacturing a tile.
+    // With no user array, the unlock scenario must enumerate no credentials.
     DWORD count = 99;
     DWORD defaultIndex = 99;
     BOOL autoLogon = TRUE;
     hr = provider->GetCredentialCount(&count, &defaultIndex, &autoLogon);
     if (FAILED(hr) || count != 0 || defaultIndex != CREDENTIAL_PROVIDER_NO_DEFAULT || autoLogon) {
-        std::wcerr << L"CPUS_LOGON without a user array must enumerate zero credentials.\n";
+        std::wcerr << L"CPUS_UNLOCK_WORKSTATION without a user array must enumerate zero credentials.\n";
         provider->Release();
         cleanup();
         return 9;

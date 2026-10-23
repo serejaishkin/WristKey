@@ -56,8 +56,8 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     hr = provider->SetUsageScenario(CPUS_LOGON, 0);
-    if (FAILED(hr)) {
-        int code = Fail(L"SetUsageScenario(CPUS_LOGON) failed:", hr, 7);
+    if (hr != E_NOTIMPL) {
+        int code = Fail(L"SetUsageScenario(CPUS_LOGON) should be rejected:", hr, 7);
         provider->Release();
         cleanup();
         return code;
