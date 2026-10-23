@@ -31,6 +31,8 @@ Then **sign out/in or reboot Windows**. Open **Sign-in options** on the Windows 
 
 The installer also removes the legacy managed-provider registration so the two implementations cannot compete for the same login UI.
 
+Automatic unlock is limited to an already-locked Windows session. If the paired watch becomes nearby while the unlock screen is open, the provider refreshes its tile list and requests a normal WristKey challenge; the watch must still authenticate that challenge. The provider does not automatically sign in to Windows after boot.
+
 ## Uninstall
 
 ```powershell

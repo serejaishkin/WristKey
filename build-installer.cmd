@@ -10,5 +10,6 @@ set "PATH=%VS%\bin\Hostx64\x64;%PATH%"
 rem Bypass cc-rs vswhere detection (picks broken VS18 otherwise)
 set "CC_x86_64_pc_windows_msvc=%VS%\bin\Hostx64\x64\cl.exe"
 set "CXX_x86_64_pc_windows_msvc=%VS%\bin\Hostx64\x64\cl.exe"
-cd /d D:\GitHub\WristKey\desktop
+cd /d "%~dp0desktop\tauri"
+if errorlevel 1 exit /b %errorlevel%
 cargo tauri build %*

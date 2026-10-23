@@ -43,6 +43,9 @@ captures/
 *.rpm
 *.msi
 *.dmg
+windows-credential-provider/build-vs/
+windows-credential-provider/build-msvc/
+windows-credential-provider/build-vs2022/
 
 # Secrets (NEVER commit!)
 *.pem

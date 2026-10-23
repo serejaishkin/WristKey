@@ -4,7 +4,9 @@
 #include <credentialprovider.h>
 #include <propkey.h>
 #include <cctype>
+#include <new>
 #include <string>
+#include <system_error>
 #include <vector>
 #include <wchar.h>
 
@@ -45,6 +47,7 @@ static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
 WristKeyProvider::WristKeyProvider() = default;
 
 WristKeyProvider::~WristKeyProvider() {
+    StopPresenceMonitor();
     ReleaseCredentials();
     if (_userArray) {
         _userArray->Release();
@@ -86,6 +89,7 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUsageScenario(CREDENTIAL_PROVIDER
     switch (cpus) {
     case CPUS_LOGON:
     case CPUS_UNLOCK_WORKSTATION:
+        StopPresenceMonitor();
         // Normal sign-in and workstation unlock are the two LogonUI scenarios
         // supported by the native V2 provider. Windows keeps its built-in
         // password/PIN providers registered separately; WristKey only adds
@@ -110,14 +114,83 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetSerialization(const CREDENTIAL_PR
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::Advise(ICredentialProviderEvents* pcpe, UINT_PTR context) {
+    StopPresenceMonitor();
     if (_events) _events->Release();
     _events = pcpe;
     _adviseContext = context;
-    if (_events) _events->AddRef();
+    if (!_events) return S_OK;
+    _events->AddRef();
+
+    if (_scenario == CPUS_UNLOCK_WORKSTATION) {
+        IStream* eventStream = nullptr;
+        HRESULT hr = CoMarshalInterThreadInterfaceInStream(
+            IID_ICredentialProviderEvents, _events, &eventStream);
+        if (FAILED(hr)) {
+            _events->Release();
+            _events = nullptr;
+            return hr;
+        }
+
+        const unsigned long generation = _presenceMonitorGeneration.fetch_add(1) + 1;
+        AddRef();
+        try {
+            _presenceMonitor = std::thread([this, eventStream, context, generation]() {
+                const HRESULT initResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                if (FAILED(initResult)) {
+                    eventStream->Release();
+                    Release();
+                    return;
+                }
+
+                ICredentialProviderEvents* events = nullptr;
+                const HRESULT unmarshalResult = CoGetInterfaceAndReleaseStream(
+                    eventStream, IID_ICredentialProviderEvents,
+                    reinterpret_cast<void**>(&events));
+                if (SUCCEEDED(unmarshalResult) && events) {
+                    bool wasPresent = false;
+                    while (_presenceMonitorGeneration.load() == generation) {
+                        Sleep(1000);
+                        if (_presenceMonitorGeneration.load() != generation) break;
+
+                        const bool present = QueryWatchPresentFromDaemon();
+                        if (present && !wasPresent
+                            && _presenceMonitorGeneration.load() == generation) {
+                            const HRESULT refreshResult = events->CredentialsChanged(context);
+                            if (FAILED(refreshResult)) {
+                                OutputDebugStringW(L"WristKey: LogonUI credential refresh failed.\n");
+                            }
+                        }
+                        wasPresent = present;
+                    }
+                    events->Release();
+                } else {
+                    OutputDebugStringW(L"WristKey: could not marshal LogonUI credential events.\n");
+                }
+
+                CoUninitialize();
+                Release();
+            });
+        } catch (const std::system_error& error) {
+            eventStream->Release();
+            StopPresenceMonitor();
+            Release();
+            _events->Release();
+            _events = nullptr;
+            return HRESULT_FROM_WIN32(static_cast<DWORD>(error.code().value()));
+        } catch (const std::bad_alloc&) {
+            eventStream->Release();
+            StopPresenceMonitor();
+            Release();
+            _events->Release();
+            _events = nullptr;
+            return E_OUTOFMEMORY;
+        }
+    }
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::UnAdvise() {
+    StopPresenceMonitor();
     if (_events) {
         _events->Release();
         _events = nullptr;
@@ -197,6 +270,13 @@ void WristKeyProvider::ReleaseCredentials() {
         if (credential) credential->Release();
     }
     _credentials.clear();
+}
+
+void WristKeyProvider::StopPresenceMonitor() {
+    _presenceMonitorGeneration.fetch_add(1);
+    if (_presenceMonitor.joinable()) {
+        _presenceMonitor.detach();
+    }
 }
 
 HRESULT WristKeyProvider::CreateCredentials() {
@@ -292,7 +372,7 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialCount(DWORD* count, DWO
     // watch still has to sign it). Rate-limited so a refused/failed attempt
     // can never turn into a submit loop: at most one automatic attempt per
     // 30 s, and never when the daemon is unreachable.
-    if (!_credentials.empty()) {
+    if (!_credentials.empty() && _scenario == CPUS_UNLOCK_WORKSTATION) {
         const DWORD now = GetTickCount();
         const bool cooledDown = _lastAutoLogonTick == 0 || (now - _lastAutoLogonTick) > 30000;
         if (cooledDown && QueryWatchPresentFromDaemon()) {

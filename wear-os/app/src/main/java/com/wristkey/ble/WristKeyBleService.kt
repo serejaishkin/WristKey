@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import com.wristkey.R
 import com.wristkey.WristKeySettings
 import com.wristkey.net.LanClient
+import com.wristkey.security.AutoUnlockPresencePolicy
 import com.wristkey.security.KeyStoreManager
 import com.wristkey.sensors.MotionDetector
 import com.wristkey.ui.PairingActivity
@@ -328,19 +329,22 @@ class WristKeyBleService : Service() {
     }
 
     /**
-     * Silent reconnect auth: the paired PC writes a challenge and expects
-     * signature || user_present back over RESPONSE_CHAR. Sign ONLY for the
-     * persisted peer and ONLY when wrist motion was seen recently -- this is
-     * both the identity check (paired address) and the anti-relay gate.
-     * Without recent motion, fall back to an explicit on-watch confirmation
-     * instead of staying silent (silence left the PC on a 10 s timeout).
+     * The paired PC's fresh challenge is signed automatically only while the
+     * secure watch is unlocked (or, without a secure lock screen, after recent
+     * wrist motion). Otherwise require an explicit on-watch confirmation.
      */
     private fun respondToPairedChallenge(device: BluetoothDevice?, challenge: ByteArray?): Boolean {
         if (challenge == null || device == null) return false
         if (!isPaired()) return false
-        if (motionDetector.hasRecentMotion()) {
+        val keyguard = getSystemService(android.app.KeyguardManager::class.java)
+        if (AutoUnlockPresencePolicy.canAutomaticallyApprove(
+                isDeviceSecure = keyguard.isKeyguardSecure,
+                isDeviceLocked = keyguard.isDeviceLocked,
+                hasRecentMotion = motionDetector.hasRecentMotion()
+            )
+        ) {
             val answered = answerChallenge(challenge)
-            if (answered) debug("Paired challenge signed for ${device.address} (recent wrist motion)")
+            if (answered) debug("Paired challenge signed automatically (watch presence verified)")
             return answered
         }
         return requestExplicitChallengeConfirmation(challenge)
@@ -398,7 +402,7 @@ class WristKeyBleService : Service() {
             mainHandler.postDelayed(challengeTimeoutRunnable, CHALLENGE_CONFIRM_TIMEOUT_MS)
         }
         notifier.notify(CHALLENGE_NOTIFICATION_ID, notification)
-        debug("No recent wrist motion -- challenge confirmation notification shown")
+        debug("Watch presence not verified -- challenge confirmation notification shown")
         return true
     }
 
@@ -460,8 +464,14 @@ class WristKeyBleService : Service() {
         // already showing its confirmation notification -- don't re-trigger.
         if (nonceB64 == lastHandledLanNonce) return
         lastHandledLanNonce = nonceB64
-        if (motionDetector.hasRecentMotion()) {
-            debug("LAN unlock: signing with recent wrist motion")
+        val keyguard = getSystemService(android.app.KeyguardManager::class.java)
+        if (AutoUnlockPresencePolicy.canAutomaticallyApprove(
+                isDeviceSecure = keyguard.isKeyguardSecure,
+                isDeviceLocked = keyguard.isDeviceLocked,
+                hasRecentMotion = motionDetector.hasRecentMotion()
+            )
+        ) {
+            debug("LAN unlock: signing with verified watch presence")
             submitLanAnswer(PendingLanUnlock(url, token, wristkeyId, nonceB64), approved = true)
             _userPresent.set(true)
         } else {
@@ -469,8 +479,7 @@ class WristKeyBleService : Service() {
         }
     }
 
-    /** Mirrors requestExplicitChallengeConfirmation for the LAN path: no
-     *  recent wrist motion, so ask on-watch instead of silently signing. */
+    /** Mirrors the BLE confirmation path when watch presence is not verified. */
     private fun requestExplicitLanConfirmation(url: String, token: String?, wristkeyId: String, nonceB64: String) {
         pendingLanUnlock = PendingLanUnlock(url, token, wristkeyId, nonceB64)
         _userPresentCountdown.set(10)

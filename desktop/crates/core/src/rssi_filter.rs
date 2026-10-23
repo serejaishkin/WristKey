@@ -108,4 +108,12 @@ mod tests {
         assert_eq!(h.update(-65), (false, true));
         assert_eq!(h.update(-61), (false, false));
     }
+
+    #[test]
+    fn rssi_smoother_tracks_near_and_away_transitions() {
+        let mut smoother = RssiSmoother::with_params(-65, 3, 1.0, 0.1);
+
+        assert_eq!(smoother.update(-55), (true, true));
+        assert_eq!(smoother.update(-69), (false, true));
+    }
 }

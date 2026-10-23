@@ -3,7 +3,9 @@
 #include <windows.h>
 #include <guiddef.h>
 #include <credentialprovider.h>
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef GUID_NULL
@@ -88,6 +90,7 @@ public:
 private:
     void ReleaseCredentials();
     HRESULT CreateCredentials();
+    void StopPresenceMonitor();
 
     LONG _ref = 1;
     CREDENTIAL_PROVIDER_USAGE_SCENARIO _scenario = CPUS_INVALID;
@@ -97,6 +100,8 @@ private:
     ICredentialProviderEvents* _events = nullptr;
     UINT_PTR _adviseContext = 0;
     DWORD _lastAutoLogonTick = 0;  // GetTickCount() of the last automatic submit; 0 = never
+    std::atomic<unsigned long> _presenceMonitorGeneration{0};
+    std::thread _presenceMonitor;
 };
 
 namespace WristKeyFields {

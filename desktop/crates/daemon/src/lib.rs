@@ -116,12 +116,30 @@ impl DebounceCounter {
     pub fn reset(&mut self) { self.count = 0; }
 }
 
+#[cfg(test)]
+mod proximity_tests {
+    use super::*;
+
+    #[test]
+    fn sustained_weak_signal_triggers_lock_but_a_good_sample_resets_it() {
+        let mut debounce = DebounceCounter::new(3);
+
+        assert!(!debounce.tick(true));
+        assert!(!debounce.tick(true));
+        assert!(!debounce.tick(false));
+        assert!(!debounce.tick(true));
+        assert!(!debounce.tick(true));
+        assert!(debounce.tick(true));
+    }
+}
+
 pub struct Daemon {
     session: Arc<SessionManager>,
     ble: Arc<dyn BleAdapter>,
     platform: Arc<dyn PlatformSecurity>,
     conn_mgr: Arc<ConnectionManager>,
     smoother: Mutex<RssiSmoother>,
+    smoother_threshold: Mutex<Option<i16>>,
     debounce: Mutex<DebounceCounter>,
     last_unlock: Mutex<Option<std::time::Instant>>,
 }
@@ -139,6 +157,7 @@ impl Daemon {
             platform,
             conn_mgr,
             smoother: Mutex::new(RssiSmoother::new(-60i16)),
+            smoother_threshold: Mutex::new(None),
             debounce: Mutex::new(DebounceCounter::new(3)),
             last_unlock: Mutex::new(None),
         }
@@ -279,6 +298,7 @@ impl Daemon {
             Err(e) => {
                 debug!("proximity connection unavailable: {}", e);
                 set_in_range(false);
+                self.smoother.lock().await.reset();
                 let should_lock = self.debounce.lock().await.tick(true);
                 return if should_lock { Ok(ProximityAction::Lock) } else { Ok(ProximityAction::None) };
             }
@@ -289,35 +309,39 @@ impl Daemon {
             Err(e) => {
                 debug!("RSSI read failed: {}", e);
                 set_in_range(false);
+                self.smoother.lock().await.reset();
                 let should_lock = self.debounce.lock().await.tick(true);
                 return if should_lock { Ok(ProximityAction::Lock) } else { Ok(ProximityAction::None) };
             }
         };
 
         let baseline = device.baseline_rssi;
+        let config = self.session.load_config().await?;
+        let threshold = baseline.saturating_sub(config.rssi_threshold_offset_dbm.max(0));
         let mut smoother = self.smoother.lock().await;
-        let current = smoother.current_rssi();
-        if current.is_none() {
-            *smoother = RssiSmoother::new(baseline);
+        let mut active_threshold = self.smoother_threshold.lock().await;
+        if *active_threshold != Some(threshold) {
+            *smoother = RssiSmoother::new(threshold);
+            *active_threshold = Some(threshold);
         }
         let (should_unlock, changed) = smoother.update(rssi);
         let filtered = smoother.current_rssi();
         debug!("proximity {} raw_rssi={} filtered_rssi={:?} baseline={} unlock_candidate={} changed={}", device.name, rssi, filtered, baseline, should_unlock, changed);
+        drop(active_threshold);
         drop(smoother);
 
-        let offset = self.session.load_config().await.map(|c| c.rssi_threshold_offset_dbm).unwrap_or(15);
-        set_in_range(filtered.map_or(false, |f| f >= baseline - offset));
+        set_in_range(filtered.map_or(false, |f| f >= threshold));
 
         if should_unlock {
             self.debounce.lock().await.reset();
-            return Ok(ProximityAction::Unlock);
+            return Ok(if config.auto_unlock { ProximityAction::Unlock } else { ProximityAction::None });
         }
 
-        // A valid RSSI sample means the paired Watch is physically visible to
-        // the connected BLE link. It must NOT by itself authenticate/unlock.
-        // Existing crypto unlock flow remains the final authentication step.
-        self.debounce.lock().await.reset();
-        Ok(ProximityAction::None)
+        // RSSI never authenticates an unlock; it only decides when to start
+        // the signed challenge and when a sustained loss of proximity should
+        // lock the workstation.
+        let should_lock = self.debounce.lock().await.tick(true);
+        Ok(if should_lock { ProximityAction::Lock } else { ProximityAction::None })
     }
 
     async fn unlock_with_crypto(&self, service_uuid: &Uuid, devices: &[wristkey_core::PairedDevice]) -> Result<()> {

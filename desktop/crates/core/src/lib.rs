@@ -13,6 +13,9 @@ use uuid::Uuid;
 mod sqlite_storage;
 pub use sqlite_storage::SqliteStorage;
 
+pub mod rssi_filter;
+pub use rssi_filter::RssiSmoother;
+
 pub mod msa;
 pub use msa::{MsaAccountBindings, MsaBinding, MsaClient, MsaError};
 
@@ -728,13 +731,6 @@ pub struct PeripheralInfo {
     pub rssi: Option<i16>,
     pub service_uuids: Vec<Uuid>,
     pub raw_manufacturer_data: Option<Vec<u8>>,
-}
-
-pub struct RssiSmoother;
-impl RssiSmoother {
-    pub fn new(_baseline: i16) -> Self { Self }
-    pub fn update(&mut self, _rssi: i16) -> (bool, bool) { (true, true) }
-    pub fn current_rssi(&self) -> Option<i16> { None }
 }
 
 #[cfg(test)]
