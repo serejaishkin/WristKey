@@ -75,10 +75,10 @@ class WristKeyBleService : Service() {
     private var pairingKeyCharacteristic: BluetoothGattCharacteristic? = null
     private var pcNameCharacteristic: BluetoothGattCharacteristic? = null
     private var trainingControlCharacteristic: BluetoothGattCharacteristic? = null
-    private var connectedDevice: BluetoothDevice? = null
-    private var pairingDeviceAddress: String? = null
-    private var requestingPcName: String? = null
-    private var currentChallenge: ByteArray? = null
+    @Volatile private var connectedDevice: BluetoothDevice? = null
+    @Volatile private var pairingDeviceAddress: String? = null
+    @Volatile private var requestingPcName: String? = null
+    @Volatile private var currentChallenge: ByteArray? = null
     // Challenge awaiting explicit user confirmation on the watch (motion gate).
     private var pendingChallenge: ByteArray? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -100,8 +100,8 @@ class WristKeyBleService : Service() {
     private var pendingLanUnlock: PendingLanUnlock? = null
     private val lanChallengeTimeoutRunnable = object : Runnable { override fun run() { onLanChallengeConfirmationTimeout() } }
     private var lanChallengeTimeoutScheduled = false
-    private var pairedDeviceAddress: String? = null
-    private var pairedDeviceName: String? = null
+    @Volatile private var pairedDeviceAddress: String? = null
+    @Volatile private var pairedDeviceName: String? = null
     private var currentPin = 0
     private var lastRssi = 0
     private var previousRssi: Int? = null
@@ -173,7 +173,7 @@ class WristKeyBleService : Service() {
     fun getPairedDeviceName() = pairedDeviceName
     fun getPairingDeviceAddress() = pairingDeviceAddress ?: "--"
     fun getCurrentChallengeSize() = currentChallenge?.size ?: 0
-    fun hasPendingPairing() = pairingDeviceAddress != null && currentChallenge != null
+    fun hasPendingPairing() = pairingDeviceAddress != null && currentChallenge?.isNotEmpty() == true
     fun getLastRssi() = lastRssi
     fun getProximityState() = proximityState.name
     fun getFilteredRssi(): Double? = proximityTracker.snapshot().filteredRssi
@@ -279,13 +279,13 @@ class WristKeyBleService : Service() {
                     connectedDevice = device; pairingDeviceAddress = device.address
                     knownDeviceConnected = isPaired()
                     debug("PC connected address=${device.address} paired=$knownDeviceConnected pairingMode=${pairingMode.get()}")
-                    if (!knownDeviceConnected && pairingMode.get()) { _pairingRequested.set(true); showPairingActivity() }
+                    if (!knownDeviceConnected && pairingMode.get()) { currentChallenge = null; requestingPcName = null; _pairingRequested.set(true); showPairingActivity() }
                     else if (knownDeviceConnected) { _pairingRequested.set(false); currentChallenge = null; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device reconnected; pairing UI suppressed") }
                     else { _pairingRequested.set(false); debug("Unknown device ignored outside new pairing mode") }
                 }
                 BluetoothGatt.STATE_DISCONNECTED -> {
                     if (device == connectedDevice) { connectedDevice = null; knownDeviceConnected = false; proximityTracker.reset(); proximityState = ProximityRssiTracker.State.UNKNOWN; previousRssi = null; debug("Known device disconnected; proximity reset, pairing retained") }
-                    if (pairingDeviceAddress == device.address) pairingDeviceAddress = null
+                    if (pairingDeviceAddress == device.address) { pairingDeviceAddress = null; currentChallenge = null }
                     _pairingRequested.set(false)
                     // Legacy AdvertiseCallback advertising stops when a central
                     // connects and usually does NOT resume after it disconnects
@@ -307,7 +307,7 @@ class WristKeyBleService : Service() {
         }
         override fun onCharacteristicWriteRequest(device: BluetoothDevice?, requestId: Int, characteristic: BluetoothGattCharacteristic?, preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?) {
             when (characteristic?.uuid) {
-                CHALLENGE_CHAR_UUID -> { currentChallenge = value; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; responseCharacteristic?.value = ByteArray(0); when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed or confirmation UI shown" else "not answered (not paired / UI failed)"}") } else -> debug("Challenge ignored outside new pairing mode") } }
+                CHALLENGE_CHAR_UUID -> { currentChallenge = value?.takeIf { it.isNotEmpty() }; pairingDeviceAddress = device?.address ?: pairingDeviceAddress; connectedDevice = device ?: connectedDevice; responseCharacteristic?.value = ByteArray(0); when { !isPaired() && pairingMode.get() -> { _pairingRequested.set(true); debug("Pairing challenge received from PC (bytes=${value?.size ?: 0})"); showPairingActivity() } isPaired() -> { val answered = respondToPairedChallenge(device, value); debug("Challenge from paired PC: ${if (answered) "signed or confirmation UI shown" else "not answered (not paired / UI failed)"}") } else -> debug("Challenge ignored outside new pairing mode") } }
                 CONFIG_CHAR_UUID -> debug("Config write bytes=${value?.size ?: 0}")
                 UNLOCK_REQUEST_UUID -> handleUnlockRequest(value)
                 PAIRING_KEY_CHAR_UUID -> value?.let { setPairingKey(it) }

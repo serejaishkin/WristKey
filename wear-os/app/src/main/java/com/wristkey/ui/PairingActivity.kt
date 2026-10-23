@@ -39,13 +39,13 @@ import kotlinx.coroutines.delay
 class PairingActivity : ComponentActivity() {
     companion object { private const val TAG = "WristKeyBLE" }
 
-    private var service: WristKeyBleService? = null
+    @Volatile private var service: WristKeyBleService? = null
     private var bound = false
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? WristKeyBleService.LocalBinder)?.getService()
-            Log.i(TAG, "PairingActivity: service connected")
+            Log.i(TAG, "PairingActivity: service connected; pending=${service?.hasPendingPairing()}")
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.i(TAG, "PairingActivity: service disconnected")
