@@ -232,7 +232,7 @@ impl Daemon {
 
     async fn authenticate_device(&self, service_uuid: &Uuid, devices: &[wristkey_core::PairedDevice]) -> Result<()> {
         let device = devices.first().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
-        let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: None,
+        let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: device.pairing_pin.clone(),
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
             service_uuids: vec![*service_uuid], raw_manufacturer_data: None };
         let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
@@ -269,7 +269,7 @@ impl Daemon {
     async fn check_proximity(&self, service_uuid: &Uuid, devices: &[wristkey_core::PairedDevice], _is_locked: bool) -> Result<ProximityAction> {
         let device = devices.first().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
         let info = PeripheralInfo {
-            id: device.address.clone(), name: Some(device.name.clone()), pin: None,
+            id: device.address.clone(), name: Some(device.name.clone()), pin: device.pairing_pin.clone(),
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
             service_uuids: vec![*service_uuid], raw_manufacturer_data: None,
         };
@@ -333,8 +333,25 @@ impl Daemon {
     }
 
     async fn unlock_with_crypto(&self, service_uuid: &Uuid, devices: &[wristkey_core::PairedDevice]) -> Result<()> {
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            match self.try_unlock_once(service_uuid, devices).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    last_error = Some(e.clone());
+                    if attempt < 3 {
+                        warn!("unlock attempt {}/3 failed: {}, retrying in 2s", attempt, e);
+                        sleep(Duration::from_secs(2)).await;
+                    }
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| WristKeyError::Ble("unlock failed after 3 attempts".into())))
+    }
+
+    async fn try_unlock_once(&self, service_uuid: &Uuid, devices: &[wristkey_core::PairedDevice]) -> Result<()> {
         let device = devices.first().ok_or_else(|| WristKeyError::Session("no paired devices".into()))?;
-        let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: None,
+        let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: device.pairing_pin.clone(),
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
             service_uuids: vec![*service_uuid], raw_manufacturer_data: None };
         let conn = self.conn_mgr.get_or_connect(&self.ble, &info).await?;
@@ -653,7 +670,25 @@ mod pipe_server {
         let encrypted_password = device.windows_password.clone()
             .ok_or_else(|| WristKeyError::Session("windows password not configured; use set_password first".into()))?;
         let service_uuid = Uuid::parse_str(SERVICE_UUID).unwrap();
-        let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: None,
+
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            match try_do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), &device, service_uuid).await {
+                Ok(password) => return Ok(password),
+                Err(e) => {
+                    last_error = Some(e.clone());
+                    if attempt < 3 {
+                        warn!("do_ble_unlock attempt {}/3 failed: {}, retrying in 2s", attempt, e);
+                        sleep(Duration::from_secs(2)).await;
+                    }
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| WristKeyError::Ble("do_ble_unlock failed after 3 attempts".into())))
+    }
+
+    async fn try_do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, device: &wristkey_core::PairedDevice, service_uuid: Uuid) -> Result<String> {
+        let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: device.pairing_pin.clone(),
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
             service_uuids: vec![service_uuid], raw_manufacturer_data: None };
         let conn = conn_mgr.get_or_connect(&ble, &info).await?;
@@ -666,7 +701,9 @@ mod pipe_server {
         session.verify_unlock(&response).await?;
         // The watch confirmed presence; only now decrypt and hand over the
         // stored Windows password to the credential provider.
-        unprotect_password(&encrypted_password)
+        let encrypted = device.windows_password.clone()
+            .ok_or_else(|| WristKeyError::Session("windows password not configured".into()))?;
+        unprotect_password(&encrypted)
     }
 
     /// Unlock for a PC without Bluetooth: resolve the binding by MSA account,

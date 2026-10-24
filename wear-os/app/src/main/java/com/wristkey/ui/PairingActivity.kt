@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import android.view.WindowManager
+import android.app.AlertDialog
+import android.widget.EditText
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -105,9 +107,23 @@ class PairingActivity : ComponentActivity() {
                     Button(
                         onClick = {
                             Log.i(TAG, "ALLOW pressed: challengeSize=${service?.getCurrentChallengeSize() ?: 0}")
-                            val ok = service?.confirmPairing() == true
-                            Log.i(TAG, "confirmPairing result=$ok")
-                            if (ok) finish() else error = getString(R.string.pair_no_challenge)
+                            // Ask the user to enter the 4-digit PIN shown on the
+                            // PC's WristKey app before signing the challenge.
+                            val input = EditText(this@PairingActivity)
+                            input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_UNSIGNED)
+                            input.setMaxWidth(120.dp.toInt())
+                            AlertDialog.Builder(this@PairingActivity)
+                                .setTitle(stringResource(R.string.title_pair_pin))
+                                .setMessage(stringResource(R.string.pair_enter_pin))
+                                .setView(input)
+                                .setPositiveButton(stringResource(R.string.btn_allow)) { _, _ ->
+                                    val entered = input.text.toString()
+                                    val ok = service?.confirmPairing(entered.takeIf { it.isNotEmpty() }) == true
+                                    Log.i(TAG, "confirmPairing result=$ok")
+                                    if (ok) finish() else error = getString(R.string.pair_no_challenge)
+                                }
+                                .setNegativeButton(stringResource(R.string.btn_cancel)) { _, _ -> }
+                                .show()
                         },
                         enabled = ready,
                         modifier = Modifier.fillMaxWidth(0.9f).height(42.dp)

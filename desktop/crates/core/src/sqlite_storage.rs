@@ -40,6 +40,12 @@ impl SqliteStorage {
                 return Err(WristKeyError::Storage(format!("sqlite migrate windows_username: {}", e)));
             }
         }
+        if let Err(e) = conn.execute("ALTER TABLE devices ADD COLUMN pairing_pin TEXT", []) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column name") {
+                return Err(WristKeyError::Storage(format!("sqlite migrate pairing_pin: {}", e)));
+            }
+        }
         conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('main', ?1)",
             params![&serde_json::to_vec(&Config::default()).unwrap()],
         ).map_err(|e| WristKeyError::Storage(format!("sqlite init insert: {}", e)))?;
@@ -69,6 +75,7 @@ impl SqliteStorage {
             paired_at: row.get(4)?, baseline_rssi: row.get(5)?, address: row.get(6)?,
             windows_password: row.get(7)?,
             windows_username: row.get(8)?,
+            pairing_pin: row.get(9)?,
         })
     }
 }
@@ -80,9 +87,9 @@ impl Storage for SqliteStorage {
         tokio::task::spawn_blocking(move || {
             let binding = conn.blocking_lock();
             let mut stmt = binding.prepare_cached(
-                "INSERT OR REPLACE INTO devices (id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password, windows_username) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                "INSERT OR REPLACE INTO devices (id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password, windows_username, pairing_pin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
-            stmt.execute(params![device.id.to_string(), device.name, device.public_key, device.device_id, device.paired_at.to_rfc3339(), device.baseline_rssi, device.address, device.windows_password, device.windows_username])
+            stmt.execute(params![device.id.to_string(), device.name, device.public_key, device.device_id, device.paired_at.to_rfc3339(), device.baseline_rssi, device.address, device.windows_password, device.windows_username, device.pairing_pin])
                 .map_err(|e| WristKeyError::Storage(format!("sqlite insert device: {}", e)))?;
             info!("persisted device {} to sqlite", device.id); Ok(())
         }).await.map_err(|e| WristKeyError::Storage(format!("spawn_blocking: {}", e)))?

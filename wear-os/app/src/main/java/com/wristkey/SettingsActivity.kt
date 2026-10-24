@@ -674,11 +674,25 @@ fun LanSetupScreen(
         )
     }
     var token by remember { mutableStateOf(settings.lanToken) }
+    // Auto-generate a bearer token on first open so the user never has to
+    // type one by hand.
+    LaunchedEffect(Unit) {
+        if (token.isBlank()) {
+            val newToken = java.util.UUID.randomUUID().toString().replace("-", "").take(32)
+            token = newToken
+            settings.lanToken = newToken
+        }
+    }
     var pcName by remember { mutableStateOf(settings.lanPcName.takeIf { it.isNotBlank() } ?: (defaultPcName ?: "")) }
     var msaAccount by remember { mutableStateOf(settings.lanMsaAccount) }
     var registeredId by remember { mutableStateOf(settings.lanWristkeyId) }
     var statusText by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+
+    // Hint the user to start the MSA server on the PC if not linked yet.
+    val lanHint = if (registeredId == null) {
+        stringResource(R.string.lan_server_not_running)
+    } else null
 
     fun persistFields() {
         settings.lanServerUrl = serverUrl
@@ -755,6 +769,18 @@ fun LanSetupScreen(
                         style = MaterialTheme.typography.caption2,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colors.secondary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            lanHint?.let { message ->
+                item {
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }

@@ -203,19 +203,19 @@ impl BleAdapter for BtleplugAdapter {
                 let is_samsung = props.manufacturer_data.contains_key(&SAMSUNG_MANUF_ID);
                 let is_watch = is_likely_watch(&props.local_name, &props.services);
                 let device_key = peripheral.address().to_string();
+                let pin = if is_wristkey_manufacturer && manufacturer_data.len() >= 6 {
+                    String::from_utf8(manufacturer_data[2..6].to_vec()).ok()
+                } else { None };
 
-                info!("BLE device update: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={}",
+                info!("BLE device update: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={} pin={:?}",
                     peripheral.address(), props.local_name, props.rssi, is_wristkey_service,
-                    is_wristkey_manufacturer, is_samsung, is_watch);
+                    is_wristkey_manufacturer, is_samsung, is_watch, pin);
 
                 // Discovery is intentionally broad. The actual WristKey GATT
                 // service is verified during connect/pairing, so showing a real
                 // BLE peripheral here is safe and makes Windows discovery usable.
                 if !sent_devices.contains(&device_key) || is_wristkey_service || is_wristkey_manufacturer || is_watch || is_samsung {
                     sent_devices.insert(device_key.clone());
-                    let pin = if is_wristkey_manufacturer && manufacturer_data.len() >= 6 {
-                        String::from_utf8(manufacturer_data[2..6].to_vec()).ok()
-                    } else { None };
                     let device_id = if manufacturer_data.len() > 6 {
                         Some(hex::encode(&manufacturer_data[manufacturer_data.len() - 4..]))
                     } else { None };

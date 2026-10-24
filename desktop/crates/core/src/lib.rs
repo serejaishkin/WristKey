@@ -189,6 +189,10 @@ pub struct PairedDevice {
     pub baseline_rssi: i16,
     pub address: String,
     pub windows_password: Option<Vec<u8>>,
+    /// 4-digit pairing PIN advertised by the watch during pairing. Stored so
+    /// the PC can show it to the user and verify the watch is really the one
+    /// being paired (anti-relay: a rogue PC cannot guess the PIN).
+    pub pairing_pin: Option<String>,
     /// Qualified Windows account this device's stored password unlocks
     /// (`DOMAIN\user` or `COMPUTERNAME\user`), e.g. as reported by
     /// `USERDOMAIN`/`USERNAME` on the machine where it was set. `None` means
@@ -368,6 +372,7 @@ impl SessionManager {
             name: device_name, public_key, device_id, paired_at: Utc::now(), baseline_rssi, address,
             windows_password: keep.as_ref().and_then(|d| d.windows_password.clone()),
             windows_username: keep.as_ref().and_then(|d| d.windows_username.clone()),
+            pairing_pin: keep.as_ref().and_then(|d| d.pairing_pin.clone()),
         };
         self.storage.save_device(&device).await?;
         *self.state.write().await = SessionState::Authenticated { device_id: device.id, last_rssi: baseline_rssi, last_seen: Utc::now() };
@@ -501,6 +506,7 @@ impl SessionManager {
             address: String::new(),
             windows_password: None,
             windows_username: None,
+            pairing_pin: None,
         });
         // Refresh what the server knows, but never drop a stored password.
         device.name = binding.pc_name.clone();
@@ -805,6 +811,7 @@ mod windows_username_tests {
             id: Uuid::new_v4(), name: "Watch".into(), public_key: vec![pk; 65],
             device_id: Some(b"watch-1".to_vec()), paired_at: Utc::now() - chrono::Duration::minutes(age_min),
             baseline_rssi: -50, address: "AA:BB".into(), windows_password: pw, windows_username: None,
+            pairing_pin: None,
         };
         let old = mk(1, 60, Some(vec![9, 9]));
         let newest = mk(2, 0, None);

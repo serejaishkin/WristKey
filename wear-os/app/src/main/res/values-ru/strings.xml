@@ -155,4 +155,5 @@
     <string name="lan_status_linked">Привязан: %1$s</string>
     <string name="lan_err">Ошибка: %1$s</string>
     <string name="lan_missing">Заполните адрес, имя ПК и аккаунт</string>
+    <string name="lan_server_not_running">Сначала запустите MSA-сервер на этом ПК, затем привяжите часы.</string>
 </resources>

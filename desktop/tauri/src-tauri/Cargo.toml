@@ -23,6 +23,8 @@ chrono = { version = "0.4", features = ["serde"] }
 wristkey-core = { path = "../../crates/core" }
 wristkey-ble = { path = "../../crates/ble" }
 wristkey-daemon = { path = "../../crates/daemon" }
+hex = "0.4"
+rand = { version = "0.8", features = ["getrandom"] }
 
 [target.'cfg(windows)'.dependencies]
 wristkey-platform-win = { path = "../../crates/platform-win" }

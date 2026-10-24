@@ -155,4 +155,5 @@
     <string name="lan_status_linked">Linked: %1$s</string>
     <string name="lan_err">Error: %1$s</string>
     <string name="lan_missing">Fill server, PC name and account</string>
+    <string name="lan_server_not_running">Start the MSA server on this PC first, then link the watch.</string>
 </resources>
