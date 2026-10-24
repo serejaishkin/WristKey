@@ -165,8 +165,17 @@ impl BleAdapter for BtleplugAdapter {
                 for peripheral in peripherals {
                     if let Ok(Some(props)) = peripheral.properties().await {
                         let device_key = peripheral.address().to_string();
-                        info!("BLE existing device: addr={} name={:?} rssi={:?} services={:?}",
-                            peripheral.address(), props.local_name, props.rssi, props.services);
+                        let is_wk = props.services.contains(&service_uuid)
+                            || props.manufacturer_data.contains_key(&0xFFFF)
+                            || props.manufacturer_data.contains_key(&SAMSUNG_MANUF_ID)
+                            || is_likely_watch(&props.local_name, &props.services);
+                        if is_wk {
+                            info!("BLE existing device: addr={} name={:?} rssi={:?} services={:?}",
+                                peripheral.address(), props.local_name, props.rssi, props.services);
+                        } else {
+                            debug!("BLE existing device (ignored): addr={} name={:?}",
+                                peripheral.address(), props.local_name);
+                        }
                         sent_devices.insert(device_key.clone());
                         let info = PeripheralInfo {
                             pin: None,
@@ -243,7 +252,7 @@ impl BleAdapter for BtleplugAdapter {
             bounded(10, self.adapter.start_scan(ScanFilter::default())).await
                 .map_err(|e| WristKeyError::Ble(format!("scan before connect: {}", e)))?;
             let mut found = None;
-            for _ in 0..60 {
+            for _ in 0..30 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 if let Some(p) = bounded(6, self.find_peripheral(&info.id)).await? { found = Some(p); break; }
             }

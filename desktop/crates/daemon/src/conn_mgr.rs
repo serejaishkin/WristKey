@@ -61,7 +61,7 @@ impl ConnectionManager {
                 return Err(WristKeyError::Ble(format!("BLE scan start timed out")));
             }
         };
-        let deadline = Instant::now() + Duration::from_secs(8);
+        let deadline = Instant::now() + Duration::from_secs(5);
 
         // First drain all already-enumerated peripherals that the scan task
         // pushed into the channel before we started receiving.  This closes
@@ -179,10 +179,10 @@ impl ConnectionManager {
         // Daemon and UI can ask for a connection at the same time. Serialize
         // discovery/connect so WinRT never gets several competing scans.
         info!("reconnect flow: acquiring serialization lock for {}", info.id);
-        let _guard = match timeout(Duration::from_secs(20), self.reconnect_lock.lock()).await {
+        let _guard = match timeout(Duration::from_secs(5), self.reconnect_lock.lock()).await {
             Ok(guard) => guard,
             Err(_) => {
-                warn!("reconnect_lock held for 20s by another task; bailing out of reconnect cycle");
+                warn!("reconnect_lock held for 5s by another task; bailing out of reconnect cycle");
                 return Err(WristKeyError::Ble("reconnect serialization lock timed out".into()));
             }
         };
@@ -205,8 +205,8 @@ impl ConnectionManager {
         }
 
         let mut last_error = None;
-        for attempt in 1..=3 {
-            info!("BLE reconnect attempt {}/{}", attempt, 3);
+        for attempt in 1..=2 {
+            info!("BLE reconnect attempt {}/{}", attempt, 2);
 
             // BT connection first: a paired watch that was connected before is
             // most likely still reachable at the same Windows peripheral id.
@@ -224,7 +224,7 @@ impl ConnectionManager {
                     service_uuids: vec![Uuid::parse_str(SERVICE_UUID).unwrap()],
                     raw_manufacturer_data: None,
                 };
-                match timeout(Duration::from_secs(20), adapter.connect(&candidate)).await {
+                match timeout(Duration::from_secs(10), adapter.connect(&candidate)).await {
                     Ok(Ok(conn)) => {
                         info!("BLE reconnect direct (BT-first) for {} -> {}", info.id, current_id);
                         self.resolved.write().await.insert(info.id.clone(), current_id);
@@ -247,16 +247,16 @@ impl ConnectionManager {
             let current = match self.resolve_current_peripheral(adapter, info).await {
                 Ok(current) => current,
                 Err(e) => {
-                    warn!("BLE discovery attempt {}/3 failed for {}: {}", attempt, info.id, e);
+                    warn!("BLE discovery attempt {}/2 failed for {}: {}", attempt, info.id, e);
                     last_error = Some(e);
-                    if attempt < 3 {
-                        sleep(Duration::from_secs(attempt as u64)).await;
+                    if attempt < 2 {
+                        sleep(Duration::from_secs(2)).await;
                     }
                     continue;
                 }
             };
 
-            match timeout(Duration::from_secs(20), adapter.connect(&current)).await {
+            match timeout(Duration::from_secs(10), adapter.connect(&current)).await {
                 Ok(Ok(conn)) => {
                     info!("BLE reconnect successful for {} (current id {})", info.id, current.id);
                     self.resolved.write().await.insert(info.id.clone(), current.id.clone());
@@ -264,17 +264,17 @@ impl ConnectionManager {
                     return Ok(conn);
                 }
                 Ok(Err(e)) => {
-                    warn!("BLE connect attempt {}/3 failed for {}: {}", attempt, info.id, e);
+                    warn!("BLE connect attempt {}/2 failed for {}: {}", attempt, info.id, e);
                     last_error = Some(e);
-                    if attempt < 3 {
-                        sleep(Duration::from_millis(700 * attempt as u64)).await;
+                    if attempt < 2 {
+                        sleep(Duration::from_millis(1000)).await;
                     }
                 }
                 Err(_) => {
-                    warn!("BLE connect attempt {}/3 timed out for {}", attempt, info.id);
+                    warn!("BLE connect attempt {}/2 timed out for {}", attempt, info.id);
                     last_error = Some(WristKeyError::Ble(format!("connect to {} timed out", info.id)));
-                    if attempt < 3 {
-                        sleep(Duration::from_millis(700 * attempt as u64)).await;
+                    if attempt < 2 {
+                        sleep(Duration::from_millis(1000)).await;
                     }
                 }
             }
