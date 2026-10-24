@@ -295,6 +295,10 @@ impl Daemon {
         };
 
         let baseline = device.baseline_rssi;
+        // An unpaired/never-calibrated record has baseline_rssi == 0, which
+        // would make the in-range threshold -15 dBm (unreachable). Fall back
+        // to a sane default so proximity detection actually works.
+        let baseline = if baseline == 0 { -60 } else { baseline };
         let mut smoother = self.smoother.lock().await;
         let current = smoother.current_rssi();
         if current.is_none() {
@@ -311,6 +315,14 @@ impl Daemon {
         if should_unlock {
             self.debounce.lock().await.reset();
             return Ok(ProximityAction::Unlock);
+        }
+
+        // RSSI dropped below the unlock threshold: the watch is leaving the
+        // zone. Lock only when the state actually changed (away transition),
+        // not every cycle while already away.
+        if changed {
+            self.debounce.lock().await.reset();
+            return Ok(ProximityAction::Lock);
         }
 
         // A valid RSSI sample means the paired Watch is physically visible to
