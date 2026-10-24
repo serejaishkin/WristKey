@@ -85,6 +85,9 @@ constexpr LegacyClsid kLegacyClsids[] = {
     // test-microsoft-v2.ps1 as a control test ("does Windows accept this
     // architecture at all"). Never meant to stay registered permanently.
     { L"{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}", L"Microsoft sample control test" },
+    // Any previous WristKey CLSID registrations from earlier builds that may
+    // still point at a different DLL or an old install path.
+    { L"{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}", L"WristKey native provider (re-register)" },
 };
 
 void RemoveClsidRegistration(const wchar_t* clsid) {

@@ -228,6 +228,38 @@ async function stopMsaServer() {
     finally { btn.disabled = false; }
 }
 
+async function detectLanAddress() {
+    const btn = document.getElementById('msaDetectBtn');
+    btn.disabled = true;
+    try {
+        const addr = await invoke('get_local_lan_address');
+        document.getElementById('msaLocalAddressInput').value = addr;
+        setMsaStatus('ok', 'Detected: ' + addr);
+    } catch (e) { setMsaStatus('bad', 'Detection failed: ' + e); }
+    finally { btn.disabled = false; }
+}
+
+async function bootstrapLan() {
+    try {
+        const b = await invoke('get_lan_bootstrap');
+        if (b.token && document.getElementById('msaTokenInput').value.trim() === '') {
+            document.getElementById('msaTokenInput').value = b.token;
+        }
+        if (b.pc_name && document.getElementById('msaAccountInput').value.trim() === '') {
+            document.getElementById('msaAccountInput').value = b.pc_name;
+        }
+        setMsaStatus('ok', 'LAN bootstrap ready — token generated, PC: ' + b.pc_name);
+    } catch (e) { console.error('bootstrapLan failed:', e); }
+}
+
+async function fixSigninTiles() {
+    try {
+        await invoke('fix_signin_tiles');
+        alert('✅ Sign-in tiles repaired. WristKey should appear once on the lock screen.');
+        await refreshStatus();
+    } catch (e) { alert('❌ Fix failed: ' + e); }
+}
+
 async function toggleDaemon() {
     const enabled = document.getElementById('daemonToggle').checked;
     try { await invoke(enabled ? 'start_daemon' : 'stop_daemon'); daemonEnabled = enabled; await refreshStatus(); }
@@ -373,5 +405,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const msaStopBtn = document.getElementById('msaStopBtn'); if (msaStopBtn) msaStopBtn.addEventListener('click', stopMsaServer);
     const svcInstallBtn = document.getElementById('svcInstallBtn'); if (svcInstallBtn) svcInstallBtn.addEventListener('click', installService);
     const svcUninstallBtn = document.getElementById('svcUninstallBtn'); if (svcUninstallBtn) svcUninstallBtn.addEventListener('click', uninstallService);
+    // Auto-detect LAN address and bootstrap token on load
+    detectLanAddress();
+    bootstrapLan();
+    document.getElementById('msaDetectBtn')?.addEventListener('click', detectLanAddress);
+    document.getElementById('cpFixBtn')?.addEventListener('click', fixSigninTiles);
     refreshStatus(); refreshDevices(); loadConfig(); loadMsaConfig(); refreshMsaServerStatus(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
 });

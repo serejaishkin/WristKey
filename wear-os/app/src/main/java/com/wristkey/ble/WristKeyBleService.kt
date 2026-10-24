@@ -414,19 +414,9 @@ class WristKeyBleService : Service() {
         refuseChallenge()
     }
 
-    fun confirmPairing(pin: String? = null): Boolean {
+    fun confirmPairing(): Boolean {
         return try {
             val challenge = currentChallenge ?: return false
-            // PIN check: the watch advertises a 4-digit code during pairing.
-            // The PC shows it to the user; the user must enter the same code
-            // on the watch before the challenge is signed (anti-relay).
-            if (pin != null) {
-                val expected = String.format("%04d", currentPin)
-                if (!pin.equals(expected)) {
-                    debug("Pairing PIN mismatch: entered=$pin expected=$expected")
-                    return false
-                }
-            }
             val pc = connectedDevice ?: pairingDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) } ?: return false
             val signature = keyStoreManager.signChallenge(challenge)
             responseCharacteristic?.value = signature + byteArrayOf(1)

@@ -429,6 +429,17 @@ impl WindowsSecurity {
         tracing::info!("Credential Provider unregistered");
         Ok(())
     }
+
+    /// Full repair of the sign-in screen: remove every WristKey-related CLSID
+    /// registration (native, legacy, sample) and re-register the current
+    /// native DLL. Use this when duplicate tiles appear on the logon screen.
+    pub fn fix_signin_tiles(dll_path: &str) -> std::result::Result<(), String> {
+        // First unregister everything we know about.
+        Self::unregister_credential_provider()?;
+
+        // Then register the current DLL fresh.
+        Self::register_credential_provider(dll_path)
+    }
 }
 
 #[async_trait::async_trait]
