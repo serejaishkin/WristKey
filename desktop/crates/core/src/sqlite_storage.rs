@@ -99,7 +99,7 @@ impl Storage for SqliteStorage {
         tokio::task::spawn_blocking(move || {
             let binding = conn.blocking_lock();
             let mut stmt = binding.prepare_cached(
-                "SELECT id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password, windows_username FROM devices WHERE id = ?1"
+                "SELECT id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password, windows_username, pairing_pin FROM devices WHERE id = ?1"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
             let device = stmt.query_row(params![id.to_string()], Self::row_to_device).optional()
                 .map_err(|e| WristKeyError::Storage(format!("sqlite query: {}", e)))?;
@@ -111,7 +111,7 @@ impl Storage for SqliteStorage {
         tokio::task::spawn_blocking(move || {
             let binding = conn.blocking_lock();
             let mut stmt = binding.prepare_cached(
-                "SELECT id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password, windows_username FROM devices"
+                "SELECT id, name, public_key, device_id, paired_at, baseline_rssi, address, windows_password, windows_username, pairing_pin FROM devices"
             ).map_err(|e| WristKeyError::Storage(format!("sqlite prepare: {}", e)))?;
             let mut rows = stmt.query([]).map_err(|e| WristKeyError::Storage(format!("sqlite query: {}", e)))?;
             let mut devices = Vec::new();
