@@ -1,9 +1,34 @@
 use wristkey_core::{PlatformSecurity, Result, SessionManager};
 use async_trait::async_trait;
+use std::ffi::CStr;
+use std::os::raw::c_char;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
 use security_framework::os::macos::keychain::SecKeychain;
+
+extern "C" {
+    #[cfg(target_os = "macos")]
+    fn getpwuid(uid: u32) -> *mut Passwd;
+    #[cfg(target_os = "macos")]
+    fn getpwnam(name: *const c_char) -> *mut Passwd;
+    #[cfg(target_os = "macos")]
+    fn getuid() -> u32;
+}
+
+#[repr(C)]
+#[derive(Debug)]
+#[cfg(target_os = "macos")]
+struct Passwd {
+    pw_name: *const c_char,
+    pw_passwd: *const c_char,
+    pw_uid: u32,
+    pw_gid: u32,
+    pw_gecos: *const c_char,
+    pw_dir: *const c_char,
+    pw_shell: *const c_char,
+}
 
 /// macOS-local credential vault. The password never enters BLE or the Watch.
 #[cfg(target_os = "macos")]
@@ -53,6 +78,83 @@ impl MacosSecurity {
     pub fn new() -> Self { Self }
     pub fn set_session(&mut self, _session: Arc<SessionManager>) {}
     pub fn storage_type_description() -> &'static str { "macOS Keychain + launchd auth helper" }
+
+    /// Get all non-system users from /Local/Default/Users via dscl.
+    #[cfg(target_os = "macos")]
+    pub fn get_all_users() -> Vec<String> {
+        let mut users = Vec::new();
+        if let Ok(output) = std::process::Command::new("dscl")
+            .args(["localhost", "-list", "/Local/Default/Users"])
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let name = line.trim();
+                    if name.is_empty() || name.starts_with('_') || name == "daemon" || name == "nobody" || name == "root" {
+                        continue;
+                    }
+                    users.push(name.to_string());
+                }
+            }
+        }
+        users
+    }
+
+    /// Get current user name via getpwuid(getuid()).
+    #[cfg(target_os = "macos")]
+    pub fn get_current_user() -> Option<String> {
+        unsafe {
+            let pw = getpwuid(getuid());
+            if pw.is_null() { return None; }
+            CStr::from_ptr((*pw).pw_name).to_string_lossy().to_string().into()
+        }
+    }
+
+    /// Get user home directory.
+    #[cfg(target_os = "macos")]
+    pub fn get_user_home_dir(user_name: Option<&str>) -> Option<PathBuf> {
+        unsafe {
+            let pw = match user_name {
+                Some(name) => {
+                    let c_name = std::ffi::CString::new(name).ok()?;
+                    getpwnam(c_name.as_ptr())
+                }
+                None => getpwuid(getuid()),
+            };
+            if pw.is_null() { return None; }
+            CStr::from_ptr((*pw).pw_dir).to_string_lossy().to_string().into()
+        }
+    }
+
+    /// ~/Library/Application Support.
+    #[cfg(target_os = "macos")]
+    pub fn get_user_data_dir() -> Option<PathBuf> {
+        Self::get_user_home_dir(None).map(|h| h.join("Library/Application Support"))
+    }
+
+    /// ~/Library/Logs.
+    #[cfg(target_os = "macos")]
+    pub fn get_user_logs_dir() -> Option<PathBuf> {
+        Self::get_user_home_dir(None).map(|h| h.join("Library/Logs"))
+    }
+
+    /// /etc.
+    #[cfg(target_os = "macos")]
+    pub fn get_system_data_dir() -> PathBuf { PathBuf::from("/etc") }
+
+    /// /Library/Logs.
+    #[cfg(target_os = "macos")]
+    pub fn get_system_logs_dir() -> PathBuf { PathBuf::from("/Library/Logs") }
+
+    /// /tmp.
+    #[cfg(target_os = "macos")]
+    pub fn get_temp_dir() -> PathBuf {
+        if let Ok(td) = std::env::var("TMPDIR") {
+            if !td.is_empty() { return PathBuf::from(td); }
+        }
+        PathBuf::from("/tmp")
+    }
 }
 
 #[async_trait]
@@ -63,8 +165,6 @@ impl PlatformSecurity for MacosSecurity {
         Ok(())
     }
     async fn unlock_screen(&self) -> Result<()> {
-        // Deliberately no synthetic keyboard input. The daemon must first verify
-        // the Watch and then use the dedicated macOS authentication helper.
         Ok(())
     }
     async fn is_locked(&self) -> Result<bool> {

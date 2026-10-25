@@ -112,10 +112,14 @@ HRESULT STDAPICALLTYPE DllRegisterServer() {
     wchar_t clsid[64]{};
     StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
 
-    // Do this first: if a stale provider is still registered under a
-    // different CLSID, remove it before adding our own tile, so there is
-    // never a moment where both are present together.
+    // Remove ALL known WristKey CLSIDs from both HKLM and HKCU so there are
+    // never duplicate tiles on the sign-in screen.
     RemoveKnownDuplicateProviders();
+    wchar_t clsidCU[MAX_PATH]{};
+    swprintf_s(clsidCU, L"Software\\Classes\\CLSID\\%s", clsid);
+    RegDeleteTreeW(HKEY_CURRENT_USER, clsidCU);
+    swprintf_s(clsidCU, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
+    RegDeleteTreeW(HKEY_CURRENT_USER, clsidCU);
 
     wchar_t key[MAX_PATH]{};
     swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid);
