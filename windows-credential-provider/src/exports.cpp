@@ -12,14 +12,24 @@ class ClassFactory final : public IClassFactory {
 public:
     explicit ClassFactory() : ref_(1) { InterlockedIncrement(&g_objects); }
     ~ClassFactory() { InterlockedDecrement(&g_objects); }
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+
+    STDMETHOD(QueryInterface)(REFIID riid, void** ppv) override {
         if (!ppv) return E_POINTER; *ppv = nullptr;
-        if (riid == IID_IUnknown || riid == IID_IClassFactory) { *ppv = static_cast<IClassFactory*>(this); AddRef(); return S_OK; }
+        if (riid == IID_IUnknown || riid == IID_IClassFactory) {
+            *ppv = static_cast<IClassFactory*>(this);
+            AddRef();
+            return S_OK;
+        }
         return E_NOINTERFACE;
     }
-    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&ref_); }
-    ULONG STDMETHODCALLTYPE Release() override { ULONG n = InterlockedDecrement(&ref_); if (!n) delete this; return n; }
-    HRESULT STDMETHODCALLTYPE CreateInstance(IUnknown* outer, REFIID riid, void** ppv) override {
+    STDMETHOD_(ULONG, AddRef)() override { return InterlockedIncrement(&ref_); }
+    STDMETHOD_(ULONG, Release)() override {
+        ULONG n = InterlockedDecrement(&ref_);
+        if (!n) delete this;
+        return n;
+    }
+
+    STDMETHOD(CreateInstance)(IUnknown* outer, REFIID riid, void** ppv) override {
         if (outer) return CLASS_E_NOAGGREGATION;
         auto* p = new (std::nothrow) WristKeyProvider();
         if (!p) return E_OUTOFMEMORY;
@@ -27,21 +37,64 @@ public:
         p->Release();
         return hr;
     }
-    HRESULT STDMETHODCALLTYPE LockServer(BOOL lock) override {
-        if (lock) InterlockedIncrement(&g_locks); else InterlockedDecrement(&g_locks);
+    STDMETHOD(LockServer)(BOOL lock) override {
+        if (lock) InterlockedIncrement(&g_locks);
+        else InterlockedDecrement(&g_locks);
         return S_OK;
     }
-private: LONG ref_;
+
+private:
+    LONG ref_;
 };
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) { g_module = h; DisableThreadLibraryCalls(h); }
+    if (reason == DLL_PROCESS_ATTACH) {
+        g_module = h;
+        DisableThreadLibraryCalls(h);
+    }
     return TRUE;
 }
 
-// Exports are declared in WristKeyCredentialProvider.def, matching Microsoft's
-// Credential Provider sample. This avoids conflicting dllimport/dllexport
-// declarations from the Windows COM headers for the standard COM entry points.
+// -----------------------------------------------------------------------------
+// Registry helpers — remove ALL WristKey registrations from a single hive root
+// -----------------------------------------------------------------------------
+
+static void RemoveWristKeyRegistrationsFromRoot(HKEY root) {
+    wchar_t key[MAX_PATH]{};
+    wchar_t clsid[64]{};
+    StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
+
+    // Credential Providers registration point
+    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
+    RegDeleteTreeW(root, key);
+
+    // COM class registration
+    swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid);
+    RegDeleteTreeW(root, key);
+
+    // Legacy .NET provider CLSID
+    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", L"{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}");
+    RegDeleteTreeW(root, key);
+    swprintf_s(key, L"Software\\Classes\\CLSID\\%s", L"{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}");
+    RegDeleteTreeW(root, key);
+
+    // Microsoft sample control test CLSID
+    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", L"{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}");
+    RegDeleteTreeW(root, key);
+    swprintf_s(key, L"Software\\Classes\\CLSID\\%s", L"{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}");
+    RegDeleteTreeW(root, key);
+}
+
+// Remove every WristKey registration from both HKLM and HKCU.
+static void RemoveAllWristKeyRegistrations() {
+    RemoveWristKeyRegistrationsFromRoot(HKEY_LOCAL_MACHINE);
+    RemoveWristKeyRegistrationsFromRoot(HKEY_CURRENT_USER);
+}
+
+// -----------------------------------------------------------------------------
+// DLL exports
+// -----------------------------------------------------------------------------
+
 extern "C"
 HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID clsid, REFIID iid, void** ppv) {
     if (clsid != CLSID_WristKeyCredentialProvider) return CLASS_E_CLASSNOTAVAILABLE;
@@ -61,91 +114,64 @@ static HRESULT WriteClsidKey(HKEY root, const wchar_t* subkey, const wchar_t* va
     HKEY key = nullptr;
     LONG rc = RegCreateKeyExW(root, subkey, 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &key, nullptr);
     if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
-    rc = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(value), static_cast<DWORD>((wcslen(value)+1)*sizeof(wchar_t)));
+    rc = RegSetValueExW(key, nullptr, 0, REG_SZ,
+                        reinterpret_cast<const BYTE*>(value),
+                        static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
     return HRESULT_FROM_WIN32(rc);
 }
 
-// Registration entries left behind by provider implementations this project
-// has superseded. If any of these are still registered they show up as
-// EXTRA tiles on the sign-in screen next to WristKey's own tile and look
-// like "duplicates" -- this has bitten the project before (the legacy .NET
-// provider, and a Microsoft sample used as a one-off architecture control
-// test). Cleaning them up here, inside DllRegisterServer itself, means the
-// cleanup always happens on every install/update, regardless of which
-// script or installer called regsvr32.
-namespace {
-struct LegacyClsid { const wchar_t* clsid; const wchar_t* note; };
-constexpr LegacyClsid kLegacyClsids[] = {
-    // Old managed (.NET/C#) WristKey Credential Provider. CLR-hosted COM
-    // objects are unreliable inside LogonUI's secure desktop; this project
-    // moved to the native C++ provider in this same DLL.
-    { L"{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}", L"legacy managed provider" },
-    // Microsoft's own, unmodified SampleV2CredentialProvider, registered by
-    // test-microsoft-v2.ps1 as a control test ("does Windows accept this
-    // architecture at all"). Never meant to stay registered permanently.
-    { L"{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}", L"Microsoft sample control test" },
-    // Any previous WristKey CLSID registrations from earlier builds that may
-    // still point at a different DLL or an old install path.
-    { L"{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}", L"WristKey native provider (re-register)" },
-};
-
-void RemoveClsidRegistration(const wchar_t* clsid) {
-    wchar_t key[MAX_PATH]{};
-    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
-    RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
-    swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid);
-    RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
-}
-
-void RemoveKnownDuplicateProviders() {
-    for (const auto& entry : kLegacyClsids) {
-        RemoveClsidRegistration(entry.clsid);
-    }
-}
-}  // namespace
-
 extern "C"
 HRESULT STDAPICALLTYPE DllRegisterServer() {
+    // ALWAYS clean first: remove every previous WristKey registration from
+    // both HKLM and HKCU. This guarantees that repeated install/update never
+    // leaves duplicate tiles on the sign-in screen.
+    RemoveAllWristKeyRegistrations();
+
     wchar_t path[MAX_PATH]{};
-    if (!GetModuleFileNameW(g_module, path, ARRAYSIZE(path))) return HRESULT_FROM_WIN32(GetLastError());
+    if (!GetModuleFileNameW(g_module, path, ARRAYSIZE(path)))
+        return HRESULT_FROM_WIN32(GetLastError());
+
     wchar_t clsid[64]{};
     StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
 
-    // Remove ALL known WristKey CLSIDs from both HKLM and HKCU so there are
-    // never duplicate tiles on the sign-in screen.
-    RemoveKnownDuplicateProviders();
-    wchar_t clsidCU[MAX_PATH]{};
-    swprintf_s(clsidCU, L"Software\\Classes\\CLSID\\%s", clsid);
-    RegDeleteTreeW(HKEY_CURRENT_USER, clsidCU);
-    swprintf_s(clsidCU, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
-    RegDeleteTreeW(HKEY_CURRENT_USER, clsidCU);
-
+    // Register COM class
     wchar_t key[MAX_PATH]{};
     swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid);
-    HRESULT hr = WriteClsidKey(HKEY_LOCAL_MACHINE, key, L"WristKey Credential Provider");
-    if (FAILED(hr)) return hr;
-    swprintf_s(key, L"Software\\Classes\\CLSID\\%s\\InprocServer32", clsid);
-    hr = WriteClsidKey(HKEY_LOCAL_MACHINE, key, path);
-    if (FAILED(hr)) return hr;
-    HKEY server = nullptr;
-    LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, key, 0, KEY_WRITE, &server);
-    if (rc == ERROR_SUCCESS) {
-        const wchar_t model[] = L"Apartment";
-        RegSetValueExW(server, L"ThreadingModel", 0, REG_SZ, reinterpret_cast<const BYTE*>(model), sizeof(model));
-        RegCloseKey(server);
-    }
-    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
-    hr = WriteClsidKey(HKEY_LOCAL_MACHINE, key, L"WristKey Credential Provider");
-    if (FAILED(hr)) return hr;
+    HKEY hk = nullptr;
+    LONG rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key, 0, nullptr, REG_OPTION_NON_VOLATILE,
+                              KEY_WRITE, nullptr, &hk, nullptr);
+    if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
+    RegSetValueExW(hk, nullptr, 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(L"WristKey Credential Provider"),
+                   static_cast<DWORD>((wcslen(L"WristKey Credential Provider") + 1) * sizeof(wchar_t)));
+    RegCloseKey(hk);
 
-    // The tile is useless without the daemon answering \\.\pipe\wristkey
-    // BEFORE anyone signs in. regsvr32 already runs elevated, so this is
-    // the one place that reliably has the rights to install/start the
-    // service -- it does not depend on the GUI app ever being launched
-    // (let alone launched elevated), and it does not depend on a separate
-    // install script remembering to do it. Best-effort: a failure here
-    // does not fail Credential Provider registration itself.
+    // InprocServer32
+    swprintf_s(key, L"Software\\Classes\\CLSID\\%s\\InprocServer32", clsid);
+    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key, 0, nullptr, REG_OPTION_NON_VOLATILE,
+                         KEY_WRITE, nullptr, &hk, nullptr);
+    if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
+    RegSetValueExW(hk, nullptr, 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(path),
+                   static_cast<DWORD>((wcslen(path) + 1) * sizeof(wchar_t)));
+    const wchar_t model[] = L"Apartment";
+    RegSetValueExW(hk, L"ThreadingModel", 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(model),
+                   static_cast<DWORD>((wcslen(model) + 1) * sizeof(wchar_t)));
+    RegCloseKey(hk);
+
+    // Credential Providers registration point
+    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid);
+    rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key, 0, nullptr, REG_OPTION_NON_VOLATILE,
+                         KEY_WRITE, nullptr, &hk, nullptr);
+    if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
+    RegSetValueExW(hk, nullptr, 0, REG_SZ,
+                   reinterpret_cast<const BYTE*>(L"WristKey Credential Provider"),
+                   static_cast<DWORD>((wcslen(L"WristKey Credential Provider") + 1) * sizeof(wchar_t)));
+    RegCloseKey(hk);
+
+    // Best-effort: start the WristKey service so the daemon answers \\.\pipe\wristkey
     std::wstring exePath;
     if (ResolveWristKeyExePath(g_module, exePath)) {
         EnsureWristKeyServiceRunning(exePath);
@@ -156,13 +182,7 @@ HRESULT STDAPICALLTYPE DllRegisterServer() {
 
 extern "C"
 HRESULT STDAPICALLTYPE DllUnregisterServer() {
-    wchar_t clsid[64]{};
-    StringFromGUID2(CLSID_WristKeyCredentialProvider, clsid, ARRAYSIZE(clsid));
-    wchar_t key[MAX_PATH]{};
-    swprintf_s(key, L"Software\\Classes\\CLSID\\%s\\InprocServer32", clsid); RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
-    swprintf_s(key, L"Software\\Classes\\CLSID\\%s", clsid); RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
-    swprintf_s(key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsid); RegDeleteTreeW(HKEY_LOCAL_MACHINE, key);
-
+    RemoveAllWristKeyRegistrations();
     RemoveWristKeyService();
     return S_OK;
 }

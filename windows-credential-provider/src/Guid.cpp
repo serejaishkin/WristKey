@@ -1,6 +1,5 @@
 #include <windows.h>
 #include <initguid.h>
-#include <guiddef.h>
 
 // {7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}
 DEFINE_GUID(CLSID_WristKeyCredentialProvider,

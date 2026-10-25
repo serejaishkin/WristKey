@@ -204,7 +204,6 @@ mod tests {
             id, name: "Watch".into(), public_key: vec![1, 2, 3], device_id: None,
             paired_at: Utc::now(), baseline_rssi: -50, address: "AA:BB".into(),
             windows_password: Some(vec![9, 9]), windows_username: username.map(|s| s.to_string()),
-            pairing_pin: None,
         }
     }
 
