@@ -183,25 +183,18 @@ class MainActivity : ComponentActivity() {
                         item {
                             Button(
                                 onClick = {
-                                    val input = EditText(this@MainActivity)
-                                    input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_UNSIGNED)
-                                    input.setMaxWidth(120.dp.toInt())
-                                    AlertDialog.Builder(this@MainActivity)
-                                        .setTitle(getString(R.string.title_pair_pin))
-                                        .setMessage(getString(R.string.pair_enter_pin))
-                                        .setView(input)
-                                        .setPositiveButton(getString(R.string.btn_allow)) { _, _ ->
-                                            val entered = input.text.toString()
-                                            val ok = bleService?.confirmPairing(entered.takeIf { it.isNotEmpty() }) == true
-                                            if (ok) {
-                                                newSetupMode = false
-                                                Toast.makeText(this@MainActivity, R.string.toast_paired, Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(this@MainActivity, R.string.toast_pairing_failed, Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                        .setNegativeButton(getString(R.string.btn_cancel)) { _, _ -> }
-                                        .show()
+                                    // The watch only DISPLAYS the setup code; the PC
+                                    // side handles PIN entry (see WristKeyBleService.
+                                    // confirmPairing(), which takes no PIN). The old
+                                    // entry dialog called a confirmPairing(String?)
+                                    // overload that no longer exists and broke the build.
+                                    val ok = bleService?.confirmPairing() == true
+                                    if (ok) {
+                                        newSetupMode = false
+                                        Toast.makeText(this@MainActivity, R.string.toast_paired, Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(this@MainActivity, R.string.toast_pairing_failed, Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(0.82f)
                             ) { Text(getString(R.string.btn_confirm)) }
