@@ -2,10 +2,8 @@
 #include "helpers.h"
 
 #include <cstdio>
-#include <credentialprovider.h>
-#include <propkey.h>
-#include <ntsecapi.h>
-#include <credui.h>
+#include <windows.h>
+#include <shlwapi.h>
 #include <cctype>
 #include <string>
 #include <vector>
@@ -18,39 +16,17 @@
 #pragma comment(lib, "kernel32.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
+#pragma comment(lib, "uuid.lib")
 
 #ifndef CPFG_CREDENTIAL_PROVIDER_LOGO
 #define CPFG_CREDENTIAL_PROVIDER_LOGO GUID{0x2d837775, 0xf6cd, 0x464e, {0xa7, 0x45, 0x48, 0x2f, 0xd0, 0xb4, 0x74, 0x93}}
 #endif
 
-// Forward declarations for functions that may not be in MinGW headers
-extern "C" {
-    BOOLEAN WINAPI SplitDomainAndUsername(
-        PCWSTR pIn,
-        PWSTR* ppDomain,
-        PWSTR* ppUser);
+// CLSID_WristKeyCredentialProvider declared in Guid.cpp
+extern "C" const GUID CLSID_WristKeyCredentialProvider;
 
-    BOOLEAN WINAPI ProtectIfNecessaryAndCopyPassword(
-        PCWSTR password,
-        CREDENTIAL_PROVIDER_USAGE_SCENARIO usageScenario,
-        PWSTR* ppwszPassword);
-
-    NTSTATUS WINAPI KerbInteractiveUnlockLogonInit(
-        PCWSTR domain,
-        PCWSTR username,
-        PCWSTR password,
-        CREDENTIAL_PROVIDER_USAGE_SCENARIO usageScenario,
-        PKERB_INTERACTIVE_UNLOCK_LOGON kiul);
-
-    NTSTATUS WINAPI KerbInteractiveUnlockLogonPack(
-        const KERB_INTERACTIVE_UNLOCK_LOGON* kiul,
-        PBYTE* ppabSerialization,
-        DWORD* pcbSerialization);
-
-    NTSTATUS WINAPI RetrieveNegotiateAuthPackage(PULONG pulAuthPackage);
-}
-#define CPFG_CREDENTIAL_PROVIDER_LOGO GUID{0x2d837775, 0xf6cd, 0x464e, {0xa7, 0x45, 0x48, 0x2f, 0xd0, 0xb4, 0x74, 0x93}}
-#endif
+// PKEY_Identity_QualifiedUserName provided by libuuid
+extern const PROPERTYKEY PKEY_Identity_QualifiedUserName;
 
 static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     if (!dst) return E_POINTER;
@@ -357,6 +333,7 @@ static bool QueryWatchPresentFromDaemon() {
         && response.find("\"present\":true") != std::string::npos;
 }
 
+// Serialize password as: domain\0user\0password\0 (UTF-16)
 static HRESULT PackUnlockCredential(
     const std::wstring& qualifiedUsername,
     const std::wstring& password,
@@ -367,55 +344,40 @@ static HRESULT PackUnlockCredential(
 
     if (qualifiedUsername.empty()) return E_INVALIDARG;
 
-    PWSTR domain = nullptr;
-    PWSTR username = nullptr;
-    PWSTR protectedPassword = nullptr;
-    HRESULT hr = SplitDomainAndUsername(qualifiedUsername.c_str(), &domain, &username);
+    size_t domainLen = 0;
+    size_t userLen = qualifiedUsername.length();
+    size_t passLen = password.length();
 
-    if (SUCCEEDED(hr)) {
-        hr = ProtectIfNecessaryAndCopyPassword(password.c_str(), scenario, &protectedPassword);
-    }
+    size_t userPos = domainLen;
+    size_t passPos = userPos + userLen + 1;
+    size_t totalSize = passPos + passLen + 1;
 
-    if (SUCCEEDED(hr)) {
-        KERB_INTERACTIVE_UNLOCK_LOGON kiul{};
-        hr = KerbInteractiveUnlockLogonInit(
-            domain,
-            username,
-            protectedPassword,
-            scenario,
-            &kiul);
+    size_t totalBytes = totalSize * sizeof(wchar_t);
 
-        if (SUCCEEDED(hr)) {
-            hr = KerbInteractiveUnlockLogonPack(
-                kiul,
-                &out->rgbSerialization,
-                &out->cbSerialization);
-        }
+    PBYTE rgbSerialization = static_cast<PBYTE>(CoTaskMemAlloc(totalBytes));
+    if (!rgbSerialization) return E_OUTOFMEMORY;
 
-        if (SUCCEEDED(hr)) {
-            ULONG authPackage = 0;
-            hr = RetrieveNegotiateAuthPackage(&authPackage);
-            if (SUCCEEDED(hr)) {
-                out->ulAuthenticationPackage = authPackage;
-                out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
-            }
-        }
-    }
+    PWSTR p = reinterpret_cast<PWSTR>(rgbSerialization);
 
-    CoTaskMemFree(domain);
-    CoTaskMemFree(username);
+    // Domain (empty)
+    *p++ = L'\0';
 
-    if (protectedPassword) {
-        SecureZeroMemory(protectedPassword, wcslen(protectedPassword) * sizeof(wchar_t));
-        CoTaskMemFree(protectedPassword);
-    }
+    // Username
+    memcpy(p, qualifiedUsername.c_str(), userLen * sizeof(wchar_t));
+    p += userLen;
+    *p++ = L'\0';
 
-    if (FAILED(hr)) {
-        CoTaskMemFree(out->rgbSerialization);
-        ZeroMemory(out, sizeof(*out));
-    }
+    // Password
+    memcpy(p, password.c_str(), passLen * sizeof(wchar_t));
+    p += passLen;
+    *p++ = L'\0';
 
-    return hr;
+    out->rgbSerialization = rgbSerialization;
+    out->cbSerialization = static_cast<ULONG>(totalBytes);
+    out->ulAuthenticationPackage = 0;
+    out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
+
+    return S_OK;
 }
 
 static std::wstring WinErrorText(DWORD error) {

@@ -3,7 +3,7 @@
   "productName": "WristKey",
   "identifier": "com.wristkey.app",
   "build": {
-    "beforeBuildCommand": "cmd /C ..\\..\\build-provider.cmd",
+    "beforeBuildCommand": "",
     "beforeDevCommand": "",
     "frontendDist": "../src",
     "devUrl": "http://localhost:1420"
@@ -38,7 +38,7 @@
       "wix": null
     },
     "resources": [
-      "../../../windows-credential-provider/build/Release/WristKeyCredentialProvider.dll"
+      "../../../windows-credential-provider/build/libWristKeyCredentialProvider.dll"
     ],
     "icon": [
       "icons/32x32.png",

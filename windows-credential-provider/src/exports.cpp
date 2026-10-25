@@ -4,6 +4,8 @@
 #include <new>
 #include <string>
 
+extern "C" const GUID CLSID_WristKeyCredentialProvider;
+
 static HMODULE g_module = nullptr;
 static LONG g_objects = 0;
 static LONG g_locks = 0;
