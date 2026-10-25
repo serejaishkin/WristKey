@@ -260,6 +260,9 @@ fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::Pat
     if let Ok(exe)=std::env::current_exe(){if let Some(d)=exe.parent(){candidates.push(d.join("WristKeyCredentialProvider.dll"));}}
     if let Ok(rd)=app.path().resource_dir(){candidates.push(rd.join("_up_").join("_up_").join("crates").join("credential-provider").join("bin").join("Release").join("net48").join("WristKeyCredentialProvider.dll"));}
     candidates.push(std::path::PathBuf::from(r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll"));
+    // PulseUnlock CP build locations
+    candidates.push(std::path::PathBuf::from(r"C:\Users\serge\Desktop\src\target\release\wristkey_credential_provider.dll"));
+    candidates.push(std::path::PathBuf::from(r"C:\Users\serge\Desktop\src\wristkey_credential_provider.dll"));
     candidates.into_iter().find(|p|p.exists())
 }
 // Install is one button in the app: if we're not elevated, relaunch
@@ -285,7 +288,7 @@ fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::Pat
 #[tauri::command] async fn register_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
 #[cfg(target_os="windows")]
 #[tauri::command] async fn fix_signin_tiles(app: tauri::AppHandle)->Result<(),String>{
-    let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md).".to_string())?;
+    let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md or PulseUnlock src).".to_string())?;
     if !service::win_service::is_elevated() {
         return if WindowsSecurity::relaunch_elevated(&["--fix-signin-tiles"]) {
             Err("Requesting administrator rights -- approve the UAC prompt. Sign-in tile repair finishes automatically.".into())
@@ -295,6 +298,22 @@ fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::Pat
     }
     WindowsSecurity::fix_signin_tiles(dll.to_string_lossy().as_ref())
 }
+
+#[cfg(target_os="windows")]
+#[tauri::command] async fn unregister_credential_provider()->Result<(),String>{
+    if !service::win_service::is_elevated() {
+        return if WindowsSecurity::relaunch_elevated(&["--unregister-cp"]) {
+            Err("Requesting administrator rights -- approve the UAC prompt to finish removing WristKey.".into())
+        } else {
+            Err("Administrator rights are required and the elevation prompt was cancelled or failed.".into())
+        };
+    }
+    WindowsSecurity::unregister_credential_provider()?;
+    let _ = service::win_service::uninstall_service();
+    Ok(())
+}
+#[cfg(not(target_os="windows"))]
+#[tauri::command] async fn unregister_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
 
 #[cfg(not(target_os="windows"))]
 #[tauri::command] async fn fix_signin_tiles()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
@@ -442,4 +461,4 @@ async fn main() {
             warn!("Service auto-start: {}", e);
         }
     }
-}tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,clear_windows_password,get_config,update_config,set_config,get_msa_config,set_msa_config,check_msa_connection,start_msa_server,stop_msa_server,msa_server_status,get_logs,get_log_dir,lock_screen,register_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status,get_local_lan_address,get_lan_bootstrap,fix_signin_tiles,get_cp_registered,set_cp_registered]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();#[cfg(windows)]let service_running=service::win_service::get_service_status().map(|st|st=="Running"||st=="StartPending").unwrap_or(false);#[cfg(not(windows))]let service_running=false;if service_running{info!("Windows service is running; skipping in-process daemon to avoid pipe/BLE conflict")}else{tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});}let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}
+}tauri::Builder::default().manage(app_state).invoke_handler(tauri::generate_handler![get_status,get_paired_devices,get_proximity_status,scan_devices,pair_device,forget_device,calibrate_device,start_daemon,stop_daemon,set_windows_password,clear_windows_password,get_config,update_config,set_config,get_msa_config,set_msa_config,check_msa_connection,start_msa_server,stop_msa_server,msa_server_status,get_logs,get_log_dir,lock_screen,register_credential_provider,unregister_credential_provider,train_pc_touch,get_pc_touch_status,clear_pc_touch,verify_pc_touch,start_watch_training,subscribe_watch_training,get_watch_training_status,install_windows_service,uninstall_windows_service,get_windows_service_status,get_local_lan_address,get_lan_bootstrap,fix_signin_tiles,get_cp_registered,set_cp_registered]).setup(|app|{let s:tauri::State<Arc<AppState>>=app.state();let session=s.session.clone();let ble=s.ble.clone();let platform=s.platform.clone();let conn_mgr=s.conn_mgr.clone();#[cfg(windows)]let service_running=service::win_service::get_service_status().map(|st|st=="Running"||st=="StartPending").unwrap_or(false);#[cfg(not(windows))]let service_running=false;if service_running{info!("Windows service is running; skipping in-process daemon to avoid pipe/BLE conflict")}else{tauri::async_runtime::spawn(async move{let (_shutdown_tx,shutdown_rx)=watch::channel(());let daemon=Daemon::new(session,ble,platform,conn_mgr);if let Err(e)=daemon.run(shutdown_rx).await{error!("Background daemon error: {}",e)}});}let handle=app.handle().clone();let quit_item=MenuItem::with_id(&handle,"quit","Quit",true,None::<&str>)?;let menu=Menu::with_items(&handle,&[&PredefinedMenuItem::separator(&handle)?,&quit_item])?;let _tray=TrayIconBuilder::new().icon(handle.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app,event|{if event.id().as_ref()=="quit"{app.exit(0)}}).on_tray_icon_event(|tray,event|{if matches!(event, TrayIconEvent::DoubleClick { .. }) {let app=tray.app_handle();if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}}).build(&handle)?;Ok(())}).on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{window.hide().ok();api.prevent_close()}}).build(tauri::generate_context!()).expect("error while running tauri application").run(|_app_handle,event|{if let RunEvent::ExitRequested{api,..}=event{api.prevent_exit()}});}

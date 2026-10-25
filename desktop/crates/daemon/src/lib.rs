@@ -162,6 +162,15 @@ impl Daemon {
             tokio::spawn(pipe_server::run(session, ble, conn_mgr, shutdown))
         };
 
+        #[cfg(windows)]
+        let _pipe_handle_unlock = {
+            let session = self.session.clone();
+            let ble = self.ble.clone();
+            let conn_mgr = self.conn_mgr.clone();
+            let shutdown = shutdown_rx.clone();
+            tokio::spawn(pipe_server::run_named(session, ble, conn_mgr, shutdown, r"\\.\pipe\WristKeyUnlock"))
+        };
+
         let devices = self.session.list_paired_devices().await?;
         if !devices.is_empty() {
             let state = self.session.state().await;
@@ -442,12 +451,12 @@ mod pipe_server {
     /// descriptor itself fails (logged loudly, since that should never
     /// happen in practice and silently degrading here would reopen the
     /// exposure this function exists to close).
-    fn create_locked_down_pipe() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    fn create_locked_down_pipe(pipe_name: &str) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
         unsafe {
             match restricted_security_attributes() {
                 Ok((mut sa, hlocal)) => {
                     let result = ServerOptions::new().create_with_security_attributes_raw(
-                        r"\\.\pipe\wristkey",
+                        pipe_name,
                         &mut sa as *mut _ as *mut std::ffi::c_void,
                     );
                     let _ = windows::Win32::Foundation::LocalFree(hlocal);
@@ -455,18 +464,18 @@ mod pipe_server {
                 }
                 Err(e) => {
                     warn!("failed to build restricted pipe ACL, falling back to default (INSECURE): {}", e);
-                    ServerOptions::new().create(r"\\.\pipe\wristkey")
+                    ServerOptions::new().create(pipe_name)
                 }
             }
         }
     }
 
-    pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
+    pub async fn run_named(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>, pipe_name: &str) {
         loop {
             // A named-pipe instance serves exactly one client. Create a fresh
             // instance for every connection and hand the connected instance to a
             // per-connection task, so the daemon keeps accepting clients.
-            let server = match create_locked_down_pipe() {
+            let server = match create_locked_down_pipe(pipe_name) {
                 Ok(server) => server,
                 Err(e) => {
                     warn!("pipe server create failed: {}", e);
@@ -494,6 +503,10 @@ mod pipe_server {
                 handle_client(server, session, ble, conn_mgr).await;
             });
         }
+    }
+
+    pub async fn run(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
+        run_named(session, ble, conn_mgr, shutdown, r"\\.\pipe\wristkey").await
     }
 
     /// Same location the Tauri app reads its config from, so the CLI edits
@@ -573,9 +586,12 @@ mod pipe_server {
         };
         let config = wristkey_core::Config::from_file(&config_path()).unwrap_or_default();
         let response = match request.get("action").and_then(|v| v.as_str()).unwrap_or("") {
-            "unlock" => match do_ble_unlock(session, ble, conn_mgr, config).await {
-                Ok(password) => serde_json::json!({"status":"success","password":password}),
-                Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
+            "unlock" => {
+                let token = request.get("token").and_then(|v| v.as_i64());
+                match do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), config.clone(), token).await {
+                    Ok(password) => serde_json::json!({"status":"success","password":password}),
+                    Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
+                }
             },
             "set_password" => {
                 let password = request.get("password").and_then(|v| v.as_str()).unwrap_or("");
@@ -659,7 +675,7 @@ mod pipe_server {
         session.clear_device_password(device.id).await
     }
 
-    async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, config: wristkey_core::Config) -> Result<String> {
+    async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, config: wristkey_core::Config, token: Option<i64>) -> Result<String> {
         let devices = session.list_paired_devices().await?;
         // No BLE watch paired: fall back to the LAN binding if one is configured.
         // Otherwise the credential provider has no way to unlock this PC.
@@ -673,7 +689,7 @@ mod pipe_server {
 
         let mut last_error = None;
         for attempt in 1..=3 {
-            match try_do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), &device, service_uuid).await {
+            match try_do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), &device, service_uuid, token).await {
                 Ok(password) => return Ok(password),
                 Err(e) => {
                     last_error = Some(e.clone());
@@ -687,7 +703,19 @@ mod pipe_server {
         Err(last_error.unwrap_or_else(|| WristKeyError::Ble("do_ble_unlock failed after 3 attempts".into())))
     }
 
-    async fn try_do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, device: &wristkey_core::PairedDevice, service_uuid: Uuid) -> Result<String> {
+    async fn try_do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, device: &wristkey_core::PairedDevice, service_uuid: Uuid, token: Option<i64>) -> Result<String> {
+        // Token freshness: reject tokens older than 30 s to prevent replay of
+        // a stale unlock request captured from the pipe.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        if let Some(ts) = token {
+            if now_ms - ts > 30_000 {
+                return Err(WristKeyError::Protocol("unlock token expired".into()));
+            }
+        }
+
         let info = PeripheralInfo { id: device.address.clone(), name: Some(device.name.clone()), pin: device.pairing_pin.clone(),
             device_id: device.device_id.as_ref().and_then(|v| String::from_utf8(v.clone()).ok()), rssi: None,
             service_uuids: vec![service_uuid], raw_manufacturer_data: None };

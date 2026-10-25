@@ -1,6 +1,7 @@
 #include "Provider.h"
 #include "helpers.h"
 
+#include <cstdio>
 #include <credentialprovider.h>
 #include <propkey.h>
 #include <cctype>
@@ -638,9 +639,11 @@ static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& out
     DWORD mode = PIPE_READMODE_BYTE;
     SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
 
-    static const char request[] = "{\"action\":\"unlock\"}\n";
+    static const char request_fmt[] = "{\"action\":\"unlock\",\"token\":\"%lld\"}\n";
+    char request_buf[128];
+    snprintf(request_buf, sizeof(request_buf), request_fmt, (long long)GetTickCount64());
     DWORD written = 0;
-    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
+    if (!WriteFile(pipe, request_buf, static_cast<DWORD>(strlen(request_buf)), &written, nullptr)) {
         CloseHandle(pipe);
         outError = L"WristKey: daemon communication failed.";
         return false;
