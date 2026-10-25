@@ -172,6 +172,7 @@ pairing complete
 | — | `CONFIRM_BUTTON` возвращал false | Wear OS | Исправлено через `pendingUserPresent` |
 | — | Имя лог-файла не совпадало с реальным daily rolling файлом | Tauri | Исправлено |
 | — | `Config` ломал сохранение из-за отсутствия serde defaults | core | Исправлено |
+| — | **«Дубли учётной записи / устройства»** — повторяется (≥3 раза). Это 4 РАЗНЫХ явления, см. §3.10; не чинить, пока не выяснено, какое из них | core / platform-win / CP | A, B, D исправлены; C открыт |
 | — | `baseline_rssi` не сохранялся в desktop storage | daemon/Tauri | Исправлено |
 | — | Мусорные `desktop/lib.rs`, `lib (2/3/4).rs` | desktop | Периодически появляются, Cargo их не использует |
 | — | Два pipe server давали `Access denied` | platform-win | Исправлено lazy singleton / явный start |
@@ -284,6 +285,25 @@ Allow this PC?
 Пользователь сообщил, что после сброса pairing на часах Windows иногда сразу показывает системный запрос Bluetooth pairing. Это **не является желаемым механизмом WristKey pairing**.
 
 Не считать системное Bluetooth pairing успешным. Нужно выяснить, почему Windows UWP/btleplug инициирует системное pairing для текущего GATT сценария, если оно повторится после успешного `PUBLIC_KEY` read.
+
+### 3.10 Дубли учётной записи / устройства (повторяющийся баг, зафиксировано 2026-10-25)
+
+Слово «дубли» относится как минимум к четырём разным вещам. Перед правкой **спросить / проверить, какая из них**:
+
+| | Что видно | Причина | Статус |
+|---|---|---|---|
+| **A** | В приложении 2+ записи одних и тех же часов; после повторного спаривания «сломалось» | `complete_pairing` на каждое спаривание делал `Uuid::new_v4()`; везде берётся `devices.first()` → оставалась старая запись со СТАРЫМ публичным ключом, unlock проверялся по ней | Исправлено `92d2340`: повторное спаривание заменяет запись (совпадение по BLE-адресу / BLE id / public key), пароль, username и PIN переносятся; `SessionManager::dedupe_devices()` склеивает уже накопленные дубли (остаётся новейшая) при старте приложения и демона |
+| **B** | Unlock «то работает, то нет», хотя записей по сути одна пара | `list_devices()` отдаёт rowid-порядок, а `INSERT OR REPLACE` даёт пересохранённой строке новый rowid → любое сохранение (пароль, username, baseline) меняло, какая запись `.first()`. При двух записях (BLE + LAN, либо старая + новая) unlock читал запись без пароля / без BLE-адреса | Исправлено 2026-10-25: `list_paired_devices()` теперь сортирует стабильно — сначала BLE-записи (непустой `address`), затем новейшие, затем по id. Тест `first_device_is_stable_and_prefers_the_ble_record_over_a_lan_one` |
+| **C** | В списке устройств и BLE-запись, и LAN-запись одного ПК | `upsert_lan_device` создаёт отдельную запись с id = UUIDv5(msa_account) и пустым `address`; `same_watch` **намеренно** их не склеивает (разные ключи и слоты пароля) | **ОТКРЫТО.** После B вреда для unlock нет (BLE-запись всегда первая), но UI показывает обе. Решение: скрывать LAN-записи в `get_paired_devices` либо показывать с пометкой «LAN» |
+| **D** | На экране входа 2+ плитки WristKey | Реестр, а не БД: остатки старых CLSID (managed `{A1B2C3D4-…-EF1234567895}`, MS-sample `{5FD3D285-…}`) или регистрация DLL по другому пути | Исправлено: `DllRegisterServer` чистит известные старые CLSID перед регистрацией; в GUI кнопка «Fix sign-in tiles» (`fix_signin_tiles`, CLI `--fix-signin-tiles`). Замечание: в `kLegacyClsids` (`exports.cpp`) добавлен ТЕКУЩИЙ CLSID `{7E1B7B8A-…}`; это безвредно (чистка идёт до записи собственных ключей), но не добавлять туда ничего, что регистрируется следом без этой оговорки |
+
+**Чек-лист при новом «снова дубли»:**
+1. Где именно: плитки на экране входа (→ D) / записи в приложении (→ A, B, C) / несколько Windows-аккаунтов на экране входа (→ это не дубли: `CreateCredentials` создаёт одну плитку на выбранного пользователя, выбор по `windows_username`, коммит `245acb2`).
+2. Для A/B/C посмотреть таблицу: файл `wristkey.sqlite` в каталоге данных (`WRISTKEY_DATA_DIR` либо `ProjectDirs("", "", "WristKey")`; служба запускается с `--data-dir`, т.е. БД должна быть общей с GUI): `SELECT id, name, address, length(windows_password), windows_username, paired_at FROM devices;`. Две строки с одним `address` → A; одна с пустым `address` → C.
+3. Для D: `reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers"` — должен остаться один WristKey CLSID `{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}`.
+4. Не добавлять новые `Uuid::new_v4()` для записей устройства и не использовать `.first()` по `storage.list_devices()` напрямую — только через `SessionManager::list_paired_devices()`.
+
+Не проверено на Windows-сборке: изменения в `daemon`/`tauri` (не собираются на Linux-окружении агента из-за `winreg`/GTK), `Provider.cpp`, `exports.cpp`. `wristkey-core`: 25/25 тестов.
 
 ---
 
