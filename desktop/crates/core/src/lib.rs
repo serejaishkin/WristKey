@@ -345,7 +345,21 @@ impl SessionManager {
     }
     pub async fn state(&self) -> SessionState { self.state.read().await.clone() }
     pub async fn load_device(&self, device_id: Uuid) -> Result<Option<PairedDevice>> { self.storage.load_device(device_id).await }
-    pub async fn list_paired_devices(&self) -> Result<Vec<PairedDevice>> { self.storage.list_devices().await }
+    /// Paired devices in a STABLE order. Nearly every caller takes `.first()`
+    /// as "the" device, but the SQLite scan is in rowid order and
+    /// `INSERT OR REPLACE` gives a re-saved row a new rowid -- so without
+    /// this, merely saving a password/username/baseline flipped which record
+    /// was first whenever two existed (e.g. a BLE watch plus a LAN record),
+    /// and unlock then read the one with no password / no BLE address.
+    /// Order: BLE-paired (non-empty address) before LAN records, then newest
+    /// first, then id as a final tie-break.
+    pub async fn list_paired_devices(&self) -> Result<Vec<PairedDevice>> {
+        let mut devices = self.storage.list_devices().await?;
+        devices.sort_by(|a, b| a.address.is_empty().cmp(&b.address.is_empty())
+            .then(b.paired_at.cmp(&a.paired_at))
+            .then(a.id.cmp(&b.id)));
+        Ok(devices)
+    }
     pub async fn load_config(&self) -> Result<Config> { self.storage.load_config().await }
     pub async fn begin_pairing(&self) -> Result<Challenge> {
         let challenge = Challenge::generate();
@@ -825,5 +839,29 @@ mod windows_username_tests {
         assert_eq!(all[0].public_key, vec![2; 65]);
         assert_eq!(all[0].windows_password, Some(vec![9, 9]));
         assert_eq!(s.dedupe_devices().await.unwrap(), 0, "idempotent");
+    }
+
+    #[tokio::test]
+    async fn first_device_is_stable_and_prefers_the_ble_record_over_a_lan_one() {
+        let st: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
+        let s = SessionManager::new(Arc::new(EcdsaP256Crypto), st.clone());
+        let mk = |address: &str, age_min: i64| PairedDevice {
+            id: Uuid::new_v4(), name: "Watch".into(), public_key: vec![7; 65],
+            device_id: Some(b"w".to_vec()), paired_at: Utc::now() - chrono::Duration::minutes(age_min),
+            baseline_rssi: -50, address: address.into(), windows_password: None, windows_username: None,
+            pairing_pin: None,
+        };
+        let ble = mk("AA:BB", 60);
+        let lan = mk("", 0); // newer, but a LAN record: must not win
+        st.save_device(&lan).await.unwrap();
+        st.save_device(&ble).await.unwrap();
+        assert_eq!(s.list_paired_devices().await.unwrap()[0].id, ble.id);
+
+        // Re-saving either record (password, username, baseline...) must not
+        // change which one is first.
+        s.set_device_password(lan.id, vec![1]).await.unwrap();
+        assert_eq!(s.list_paired_devices().await.unwrap()[0].id, ble.id);
+        s.set_device_password(ble.id, vec![2]).await.unwrap();
+        assert_eq!(s.list_paired_devices().await.unwrap()[0].id, ble.id);
     }
 }

@@ -425,7 +425,13 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetStringValue(DWORD id, P
     if (!value) return E_POINTER;
     *value = nullptr;
 
-    if (id == WristKeyFields::Tile) return CopyString(_username.c_str(), value);
+    // The big text is the provider's own name, NOT the Windows account name
+    // (as in Microsoft's V2 sample: "Sample Credential Provider"). Showing
+    // DOMAIN\\user here made the tile read as a second account with the same
+    // name as the real one on the sign-in screen. The real user keeps their
+    // own tile; the account to sign in as is still carried by the SID
+    // (GetUserSid) and the serialization, not by this label.
+    if (id == WristKeyFields::Tile) return CopyString(L"WristKey", value);
     if (id == WristKeyFields::Status) return CopyString(L"Confirm on your watch", value);
     return E_INVALIDARG;
 }
