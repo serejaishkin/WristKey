@@ -6,6 +6,7 @@ members = [
     "crates/platform-win",
     "crates/platform-linux",
     "crates/daemon",
+    "crates/wristkey-service",
     "tauri/src-tauri",
 ]
 default-members = ["tauri/src-tauri"]

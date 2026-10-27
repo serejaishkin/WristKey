@@ -454,6 +454,11 @@ async fn main() {
     let _ = ensure_windows_service();
 }
 #[cfg(windows)]{
+    if let Err(e) = WindowsSecurity::ensure_auto_start() {
+        warn!("Failed to add WristKey to Windows startup: {}", e);
+    }
+}
+#[cfg(windows)]{
     // Credential Provider installation is explicit only. Do not mutate
     // Windows logon registration or trigger UAC on every app startup.
     if service::win_service::is_elevated() {

@@ -1,14 +1,16 @@
-use wristkey_core::vault::{DeviceVault, KeyProtector};
 use wristkey_core::{PlatformSecurity, Result, SessionManager};
+use wristkey_ble::{BleAdapter, BtleplugAdapter};
+use wristkey_daemon::{Daemon, ConnectionManager};
 use wristkey_crypto::generate_key;
 use std::sync::Arc;
 use windows::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_LOCAL_MACHINE,
+    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPT_PROTECT_LOCAL_MACHINE,
 };
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
+use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
+use winreg::RegKey;
 
 pub struct WindowsKeyProtector;
-
 impl KeyProtector for WindowsKeyProtector {
     fn protect(&self, plaintext: &[u8]) -> Vec<u8> {
         unsafe {
@@ -17,7 +19,7 @@ impl KeyProtector for WindowsKeyProtector {
                 pbData: plaintext.as_ptr() as *mut u8,
             };
             let mut data_out = CRYPT_INTEGER_BLOB::default();
-            CryptProtectData(&mut data_in, None, None, None, None, CRYPTPROTECT_LOCAL_MACHINE, &mut data_out)
+            CryptProtectData(&mut data_in, None, None, None, None, CRYPT_PROTECT_LOCAL_MACHINE, &mut data_out)
                 .expect("CryptProtectData failed");
             let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
             let result = slice.to_vec();
@@ -43,7 +45,7 @@ impl KeyProtector for WindowsKeyProtector {
 }
 
 pub struct WindowsVault {
-    vault: DeviceVault<WindowsKeyProtector>,
+    vault: wristkey_core::vault::DeviceVault<WindowsKeyProtector>,
 }
 
 impl WindowsVault {
@@ -56,7 +58,7 @@ impl WindowsVault {
             std::fs::create_dir_all(parent).ok();
         }
         Self {
-            vault: DeviceVault::new(path, WindowsKeyProtector),
+            vault: wristkey_core::vault::DeviceVault::new(path, WindowsKeyProtector),
         }
     }
 
@@ -115,26 +117,20 @@ impl WindowsSecurity {
     }
 
     pub fn start_pipe_server() {}
+}
 
-    // The production provider is the native x64 V2 implementation under
-    // windows-credential-provider/. The old managed C# provider used another
-    // CLSID and could be registered successfully while still not producing a
-    // Windows 10/11 Sign-in options tile.
-    const CP_CLSID: &'static str = "{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}";
-    const CP_NAME: &'static str = "WristKey";
-    const LEGACY_CP_CLSID: &'static str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
-    // Microsoft's own, unmodified SampleV2CredentialProvider. Registered by a
-    // past architecture control test (test-microsoft-v2.ps1) and never meant
-    // to stay registered; if it is, its "Sample Credential Provider" tile
-    // shows up next to WristKey's own tile and looks like a duplicate.
-    const SAMPLE_CONTROL_CLSID: &'static str = "{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}";
+// CLSID constants - defined at module level
+pub const CP_CLSID: &str = "{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}";
+pub const CP_NAME: &str = "WristKey";
+pub const LEGACY_CP_CLSID: &str = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567895}";
+pub const SAMPLE_CONTROL_CLSID: &str = "{5FD3D285-0DD9-4362-8855-E0ABAACD4AF6}";
 
+impl WindowsSecurity {
     pub fn is_credential_provider_registered() -> bool {
-        use winreg::enums::HKEY_LOCAL_MACHINE;
         let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
         let inproc = hklm.open_subkey(format!(
             r"SOFTWARE\Classes\CLSID\{}\InprocServer32",
-            Self::CP_CLSID
+            CP_CLSID
         ));
         let registered = match inproc {
             Ok(key) => key
@@ -145,129 +141,10 @@ impl WindowsSecurity {
         };
         registered && hklm.open_subkey(format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::CP_CLSID
+            CP_CLSID
         )).is_ok()
     }
 
-    pub fn validate_current_user_password(password: &str) -> std::result::Result<(), String> {
-        use windows::core::PCWSTR;
-        use windows::Win32::Foundation::{CloseHandle, HANDLE};
-        use windows::Win32::Security::{
-            LogonUserW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
-        };
-
-        let username = std::env::var("USERNAME")
-            .map_err(|_| "Windows USERNAME environment variable is unavailable.".to_string())?;
-        let domain = std::env::var("USERDOMAIN")
-            .or_else(|_| std::env::var("COMPUTERNAME"))
-            .unwrap_or_else(|_| ".".to_string());
-
-        let to_wide = |value: &str| -> Vec<u16> {
-            value.encode_utf16().chain(std::iter::once(0)).collect()
-        };
-        let user_w = to_wide(&username);
-        let domain_w = to_wide(&domain);
-        let password_w = to_wide(password);
-
-        let mut token = HANDLE::default();
-        let result = unsafe {
-            LogonUserW(
-                PCWSTR(user_w.as_ptr()),
-                PCWSTR(domain_w.as_ptr()),
-                PCWSTR(password_w.as_ptr()),
-                LOGON32_LOGON_INTERACTIVE,
-                LOGON32_PROVIDER_DEFAULT,
-                &mut token,
-            )
-        };
-
-        match result {
-            Ok(()) => {
-                unsafe { let _ = CloseHandle(token); }
-                Ok(())
-            }
-            Err(error) => {
-                let code = error.code().0 as u32;
-                let detail = match code {
-                    1326 => "The username or password is incorrect.",
-                    1331 => "The account is disabled.",
-                    1909 => "The account is locked out.",
-                    1330 => "The password has expired.",
-                    1385 => "The account is not allowed this logon type.",
-                    _ => "Windows rejected the current password.",
-                };
-
-                Err(format!("Password validation failed for {}\\{}: error {} — {}", domain, username, code, detail))
-            }
-        }
-    }
-
-    pub fn storage_type_description() -> &'static str {
-        "DPAPI (Windows Data Protection)"
-    }
-
-    /// Locate the native x64 Credential Provider DLL. Searches next to the
-    /// executable, the in-repo build output (development layout) and the
-    /// installed location under Program Files.
-    pub fn resolve_credential_provider_dll() -> Option<std::path::PathBuf> {
-        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.push(dir.join("WristKeyCredentialProvider.dll"));
-
-                // Development layout: walk up from the exe looking for a
-                // "windows-credential-provider" sibling directory, instead of
-                // assuming a fixed depth. The exe can land at different
-                // depths depending on how it was built --
-                // desktop\tauri\src-tauri\target\{release,debug}\...exe for
-                // `cargo build`/`cargo run`, or one level deeper under
-                // target\<triple>\release for a cross-compile -- and a fixed
-                // "..\..\.." badly undershot the actual repo-root distance,
-                // silently failing to find a dev-built DLL.
-                let mut probe = dir.to_path_buf();
-                for _ in 0..8 {
-                    let candidate = probe
-                        .join("windows-credential-provider")
-                        .join("build")
-                        .join("Release")
-                        .join("WristKeyCredentialProvider.dll");
-                    candidates.push(candidate);
-                    match probe.parent() {
-                        Some(parent) => probe = parent.to_path_buf(),
-                        None => break,
-                    }
-                }
-            }
-        }
-        candidates.push(std::path::PathBuf::from(
-            r"C:\Program Files\WristKey\WristKeyCredentialProvider.dll",
-        ));
-        candidates.into_iter().find(|p| p.exists())
-    }
-
-    /// Register the native Credential Provider on startup if it is missing.
-    /// Registration needs Administrator, so a non-elevated process asks for
-    /// elevation by relaunching itself with `--register-cp`.
-    pub fn ensure_credential_provider_registered() {
-        if Self::is_credential_provider_registered() {
-            return;
-        }
-        match Self::resolve_credential_provider_dll() {
-            Some(dll) => match Self::register_credential_provider(dll.to_string_lossy().as_ref()) {
-                Ok(()) => tracing::info!("Credential Provider auto-registered on startup"),
-                Err(e) => {
-                    tracing::warn!("Automatic registration failed ({}); requesting elevation", e);
-                    Self::relaunch_elevated(&["--register-cp"]);
-                }
-            },
-            None => tracing::warn!("Credential Provider DLL not found next to the executable"),
-        }
-    }
-
-    /// Relaunches this same executable elevated (UAC "runas") with the given
-    /// arguments, e.g. `&["--register-cp"]` or `&["--unregister-cp"]`.
-    /// Returns true if the elevated relaunch was accepted (not necessarily
-    /// finished yet -- the elevated child does the actual work and exits).
     pub fn relaunch_elevated(args: &[&str]) -> bool {
         use std::os::windows::ffi::OsStrExt;
         use windows::core::PCWSTR;
@@ -327,7 +204,6 @@ impl WindowsSecurity {
 
         // Remove the legacy managed registration so Windows cannot resolve the
         // old provider while the native V2 provider is being installed.
-        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
         let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
         let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
         fn delete_tree(hive: &winreg::RegKey, path: &str) {
@@ -339,10 +215,10 @@ impl WindowsSecurity {
             }
             let _ = hive.delete_subkey(path);
         }
-        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::LEGACY_CP_CLSID));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", LEGACY_CP_CLSID));
         delete_tree(&hklm, &format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::LEGACY_CP_CLSID
+            LEGACY_CP_CLSID
         ));
 
         // Same cleanup for a leftover Microsoft sample control-test
@@ -357,18 +233,18 @@ impl WindowsSecurity {
                 .output();
             let _ = std::fs::remove_file(&sample_dll);
         }
-        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::SAMPLE_CONTROL_CLSID));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", SAMPLE_CONTROL_CLSID));
         delete_tree(&hklm, &format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::SAMPLE_CONTROL_CLSID
+            SAMPLE_CONTROL_CLSID
         ));
 
         // Tell the DLL's own DllRegisterServer where WristKey.exe lives, so
         // it can install/start the background service itself (regsvr32 is
-        // already elevated at this point -- that's the one reliable place
+        // already elevated at this point, so this is the one reliable place
         // to do it, independent of whether the service was ever installed
         // before, whether this app was ever run elevated, or whether anyone
-        // has signed in yet this boot).
+        // has signed in yet).
         if let Ok(exe) = std::env::current_exe() {
             if let Ok((key, _)) = hklm.create_subkey_with_flags("SOFTWARE\\WristKey", KEY_WRITE) {
                 let exe_path: String = exe.to_string_lossy().into_owned();
@@ -386,12 +262,11 @@ impl WindowsSecurity {
             return Err(format!("Native Credential Provider registration failed (regsvr32 exit {}). Run WristKey as Administrator and verify the DLL is x64.", code));
         }
 
-        tracing::info!("Native V2 Credential Provider registered: CLSID={} dll={}", Self::CP_CLSID, dest_dll.display());
+        tracing::info!("Native V2 Credential Provider registered: CLSID={} dll={}", CP_CLSID, dest_dll.display());
         Ok(())
     }
 
     pub fn unregister_credential_provider() -> std::result::Result<(), String> {
-        use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE};
         fn delete_tree(hive: &winreg::RegKey, path: &str) {
             if let Ok(key) = hive.open_subkey_with_flags(path, KEY_READ | KEY_WRITE) {
                 let subkeys: Vec<String> = key.enum_keys().flatten().collect();
@@ -404,20 +279,20 @@ impl WindowsSecurity {
 
         let hkcr = winreg::RegKey::predef(HKEY_CLASSES_ROOT);
         let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
-        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::CP_CLSID));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", CP_CLSID));
         delete_tree(&hklm, &format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::CP_CLSID
+            CP_CLSID
         ));
-        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::LEGACY_CP_CLSID));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", LEGACY_CP_CLSID));
         delete_tree(&hklm, &format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::LEGACY_CP_CLSID
+            LEGACY_CP_CLSID
         ));
-        delete_tree(&hkcr, &format!(r"CLSID\{}", Self::SAMPLE_CONTROL_CLSID));
+        delete_tree(&hkcr, &format!(r"CLSID\{}", SAMPLE_CONTROL_CLSID));
         delete_tree(&hklm, &format!(
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{}",
-            Self::SAMPLE_CONTROL_CLSID
+            SAMPLE_CONTROL_CLSID
         ));
 
         let system32 = std::env::var("SystemRoot")
@@ -439,6 +314,28 @@ impl WindowsSecurity {
 
         // Then register the current DLL fresh.
         Self::register_credential_provider(dll_path)
+    }
+
+    /// Ensure WristKey starts automatically on Windows login.
+    /// Adds the current executable to HKCU\Software\Microsoft\Windows\CurrentVersion\Run.
+    pub fn ensure_auto_start() -> Result<(), String> {
+        let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+        let run_key = hkcu.open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            winreg::enums::KEY_READ | KEY_WRITE,
+        )?;
+
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Cannot get exe path: {}", e))?;
+
+        let existing: Option<String> = run_key.get_value("WristKey").unwrap_or(None);
+        if existing.is_none() || existing.as_deref() != Some(exe_path.to_str().unwrap_or("")) {
+            run_key.set_value("WristKey", &exe_path.to_string_lossy().to_string())
+                .map_err(|e| format!("Failed to set autostart: {}", e))?;
+            tracing::info!("WristKey added to Windows startup: {:?}", exe_path);
+        }
+
+        Ok(())
     }
 }
 
