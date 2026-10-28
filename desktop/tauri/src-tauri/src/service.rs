@@ -79,7 +79,7 @@ pub mod win_service {
             controls_accepted: ServiceControlAccept::empty(),
             exit_code: ServiceExitCode::Win32(0),
             checkpoint: 0,
-            wait_hint: Duration::from_secs(10),
+            wait_hint: Duration::from_secs(30),
             process_id: None,
         })?;
 
@@ -96,22 +96,24 @@ pub mod win_service {
         let _log_guard = init_service_logging(&log_dir);
         info!("WristKey service starting... (data dir: {:?})", std::env::var("WRISTKEY_DATA_DIR").ok());
 
-        status_handle.set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP,
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })?;
+        let report_stopped = |code: u32| {
+            let _ = status_handle.set_service_status(ServiceStatus {
+                service_type: SERVICE_TYPE,
+                current_state: ServiceState::Stopped,
+                controls_accepted: ServiceControlAccept::empty(),
+                exit_code: ServiceExitCode::Win32(code),
+                checkpoint: 0,
+                wait_hint: Duration::default(),
+                process_id: None,
+            });
+        };
 
         // Block on tokio runtime for the daemon
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
 
         let storage: Arc<dyn wristkey_core::Storage> = match SqliteStorage::open_default() {
             Ok(s) => { info!("SQLite storage opened"); Arc::new(s) }
-            Err(e) => { error!("SQLite open failed: {}", e); return Ok(()); }
+            Err(e) => { error!("SQLite open failed: {}", e); report_stopped(1); return Ok(()); }
         };
 
         let crypto = Arc::new(EcdsaP256Crypto);
@@ -123,7 +125,7 @@ pub mod win_service {
 
         let ble: Arc<dyn BleAdapter> = match rt.block_on(BtleplugAdapter::new()) {
             Ok(a) => Arc::new(a),
-            Err(e) => { error!("BLE adapter unavailable: {}", e); return Ok(()); }
+            Err(e) => { error!("BLE adapter unavailable: {}", e); report_stopped(2); return Ok(()); }
         };
 
         let conn_mgr = Arc::new(ConnectionManager::new());
@@ -138,6 +140,17 @@ pub mod win_service {
             }
         });
 
+        // Everything is initialised: only now report Running.
+        status_handle.set_service_status(ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::Running,
+            controls_accepted: ServiceControlAccept::STOP,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        })?;
+
         // Block on the service control channel
         loop {
             match shutdown_rx.recv_timeout(Duration::from_secs(1)) {
@@ -149,6 +162,15 @@ pub mod win_service {
         // Signal tokio daemon to shut down. Bound the wait so `sc stop` always
         // completes even if a BLE operation is wedged in progress; as a final
         // safety net shutdown_timeout drops any remaining blocked tasks.
+        let _ = status_handle.set_service_status(ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::StopPending,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 1,
+            wait_hint: Duration::from_secs(35),
+            process_id: None,
+        });
         let _ = tokio_shutdown_tx.send(());
         rt.block_on(async {
             let _ = tokio::time::timeout(Duration::from_secs(25), daemon_handle).await;

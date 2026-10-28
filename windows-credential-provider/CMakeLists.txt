@@ -30,6 +30,7 @@ target_link_libraries(WristKeyCredentialProvider PRIVATE
     oleaut32
     advapi32
     user32
+    gdi32
     netapi32
     credui
     secur32

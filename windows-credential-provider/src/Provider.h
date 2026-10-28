@@ -31,6 +31,9 @@ public:
     void RefreshStatus();
 
 private:
+    static DWORD WINAPI PresenceThreadProc(LPVOID param);
+    void StartPresenceWatcher();
+    void StopPresenceWatcher();
     void ReleaseCredentials();
     HRESULT CreateCredentials();
 
@@ -41,7 +44,10 @@ private:
     ICredentialProviderUserArray* _userArray = nullptr;
     ICredentialProviderEvents* _events = nullptr;
     UINT_PTR _adviseContext = 0;
-    DWORD _lastAutoLogonTick = 0;
+    volatile DWORD _lastAutoLogonTick = 0;   // GetTickCount() of last auto-logon; 0 = never
+    volatile bool _haveCredentials = false;
+    HANDLE _thread = nullptr;
+    HANDLE _stopEvent = nullptr;
 };
 
 namespace WristKeyFields {

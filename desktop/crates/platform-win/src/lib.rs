@@ -249,6 +249,13 @@ impl WindowsSecurity {
             if let Ok((key, _)) = hklm.create_subkey_with_flags("SOFTWARE\\WristKey", KEY_WRITE) {
                 let exe_path: String = exe.to_string_lossy().into_owned();
                 let _ = key.set_value("ExePath", &exe_path);
+                // Same folder the app/installer passes as `--data-dir`: the
+                // DLL creates the service with it so the SYSTEM service reads
+                // the *user's* paired-device database.
+                if let Ok(appdata) = std::env::var("APPDATA") {
+                    let data_dir = std::path::Path::new(&appdata).join("WristKey").join("data");
+                    let _ = key.set_value("DataDir", &data_dir.to_string_lossy().into_owned());
+                }
             }
         }
 
