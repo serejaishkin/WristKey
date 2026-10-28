@@ -26,7 +26,7 @@
 1. Нужна правка DLL → минимальный diff, только по запросу пользователя; объяснить, что и почему.
 2. После правки обязательно собрать: `cmake` с mingw (`x86_64-w64-mingw32-g++`) **и** `build-dll.cmd` на Windows; не заявлять «работает» без проверки на экране входа.
 3. Не возвращать удалённое: `desktop/crates/credential-provider` (C#) и `.microsoft-v2-control` — устаревшие подходы.
-4. Откат к эталону: `git checkout cp-reference-1 -- windows-credential-provider/`.
+4. Откат к эталону: `git checkout 32ca1d2 -- windows-credential-provider/`.
 
 ---
 

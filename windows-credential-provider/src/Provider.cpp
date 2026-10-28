@@ -1,5 +1,5 @@
 // *** REFERENCE IMPLEMENTATION -- see AI_HANDOFF.md ("ЭТАЛОН"). Do not rewrite;
-// minimal diffs only, and only when the owner asks. Restore: git checkout cp-reference-1 ***
+// minimal diffs only, and only when the owner asks. Restore: git checkout 32ca1d2 -- windows-credential-provider/ ***
 // WristKey Credential Provider (V2): one tile per sign-in user, unlocks by
 // asking the WristKey service (\\.\pipe\wristkey) for a watch-confirmed password.
 #include "Provider.h"
