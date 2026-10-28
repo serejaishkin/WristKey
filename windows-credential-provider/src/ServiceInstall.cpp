@@ -16,16 +16,10 @@ bool ResolveWristKeyExePath(HMODULE hModule, std::wstring& exePathOut) {
     return true;
 }
 
-void EnsureWristKeyServiceRunning(const std::wstring& exePath) {
+void EnsureWristKeyServiceRunning(const std::wstring&) {
     // Best-effort: try to start the WristKey service
     SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (!scm) return;
-
-    SC_HANDLE svc = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!svc) {
-        CloseServiceHandle(scm);
-        return;
-    }
 
     // Try to open existing service
     SC_HANDLE hSvc = OpenServiceW(scm, L"WristKey", SERVICE_QUERY_STATUS | SERVICE_START);

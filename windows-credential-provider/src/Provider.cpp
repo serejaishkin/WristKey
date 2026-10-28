@@ -1,32 +1,38 @@
+// WristKey Credential Provider (V2): one tile per sign-in user, unlocks by
+// asking the WristKey service (\\.\pipe\wristkey) for a watch-confirmed password.
 #include "Provider.h"
-#include "helpers.h"
 
-#include <cstdio>
 #include <windows.h>
+#include <ntsecapi.h>
 #include <shlwapi.h>
-#include <cctype>
-#include <string>
-#include <vector>
 #include <wchar.h>
 
+#include <cctype>
+#include <cstdio>
+#include <functional>
+#include <new>
+#include <string>
+#include <vector>
+
+#ifdef _MSC_VER
 #pragma comment(lib, "advapi32.lib")
-#pragma comment(lib, "credui.lib")
 #pragma comment(lib, "secur32.lib")
 #pragma comment(lib, "shlwapi.lib")
-#pragma comment(lib, "kernel32.lib")
 #pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "uuid.lib")
+#endif
 
 #ifndef CPFG_CREDENTIAL_PROVIDER_LOGO
 #define CPFG_CREDENTIAL_PROVIDER_LOGO GUID{0x2d837775, 0xf6cd, 0x464e, {0xa7, 0x45, 0x48, 0x2f, 0xd0, 0xb4, 0x74, 0x93}}
 #endif
 
-// CLSID_WristKeyCredentialProvider declared in Guid.cpp
 extern "C" const GUID CLSID_WristKeyCredentialProvider;
-
-// PKEY_Identity_QualifiedUserName provided by libuuid
 extern const PROPERTYKEY PKEY_Identity_QualifiedUserName;
+
+static const wchar_t kPipeName[] = L"\\\\.\\pipe\\wristkey";
+static const DWORD kUnlockWaitMs = 25000;     // watch confirmation budget
+static const DWORD kAutoLogonCooldownMs = 30000;
+static const DWORD kPollIntervalMs = 1500;
 
 static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
     if (!dst) return E_POINTER;
@@ -41,7 +47,7 @@ static HRESULT CopyString(PCWSTR src, PWSTR* dst) {
 }
 
 // -----------------------------------------------------------------------------
-// Helpers
+// JSON / text helpers
 // -----------------------------------------------------------------------------
 
 static std::wstring Utf8ToWide(const std::string& text) {
@@ -136,250 +142,6 @@ static bool ExtractJsonStringValue(const std::string& text, const std::string& k
     return false;
 }
 
-static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& outError,
-                                     ICredentialProviderCredentialEvents* events = nullptr,
-                                     ICredentialProviderCredential* credential = nullptr) {
-    const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
-
-    if (!WaitNamedPipeW(pipeName, 2000)) {
-        outError = L"WristKey daemon is not running.";
-        return false;
-    }
-
-    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) {
-        outError = L"WristKey: cannot connect to the daemon.";
-        return false;
-    }
-
-    DWORD mode = PIPE_READMODE_BYTE;
-    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
-
-    static const char request[] = "{\"action\":\"unlock\"}\n";
-    DWORD written = 0;
-    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
-        CloseHandle(pipe);
-        outError = L"WristKey: daemon communication failed.";
-        return false;
-    }
-
-    std::string response;
-    char buffer[512];
-    const DWORD startTick = GetTickCount();
-    const DWORD totalWaitMs = 25000;
-    const DWORD deadline = startTick + totalWaitMs;
-    bool timedOut = false;
-    DWORD lastStatusUpdateTick = 0;
-
-    for (;;) {
-        DWORD available = 0;
-        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
-            if (GetTickCount() > deadline) {
-                timedOut = true;
-                break;
-            }
-
-            if (events && credential) {
-                const DWORD now = GetTickCount();
-                if (now - lastStatusUpdateTick >= 1000) {
-                    lastStatusUpdateTick = now;
-                    const DWORD elapsedMs = now - startTick;
-                    const DWORD remainingSeconds =
-                        elapsedMs < totalWaitMs ? (totalWaitMs - elapsedMs + 999) / 1000 : 0;
-                    const std::wstring statusText =
-                        L"Confirm on your watch\u2026 (" + std::to_wstring(remainingSeconds) + L"s)";
-                    events->SetFieldString(credential, WristKeyFields::Status, statusText.c_str());
-                }
-            }
-
-            Sleep(100);
-            continue;
-        }
-
-        DWORD read = 0;
-        if (!ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) || read == 0) break;
-        buffer[read] = '\0';
-        response.append(buffer, read);
-        if (response.find('\n') != std::string::npos) break;
-        if (GetTickCount() > deadline) { timedOut = true; break; }
-    }
-
-    CloseHandle(pipe);
-
-    if (events && credential) {
-        events->SetFieldString(credential, WristKeyFields::Status, L"Confirm on your watch");
-    }
-
-    if (timedOut && response.empty()) {
-        outError = L"WristKey: daemon did not answer.";
-        return false;
-    }
-
-    std::string status;
-    if (!ExtractJsonStringValue(response, "status", status) || status != "success") {
-        std::string message;
-        if (ExtractJsonStringValue(response, "message", message) && !message.empty()) {
-            outError = L"WristKey: " + Utf8ToWide(message) + L".";
-        } else {
-            outError = L"WristKey: the watch did not confirm the unlock.";
-        }
-        return false;
-    }
-
-    std::string password;
-    if (!ExtractJsonStringValue(response, "password", password) || password.empty()) {
-        outError = L"WristKey: daemon returned a malformed password.";
-        return false;
-    }
-
-    outPassword = Utf8ToWide(password);
-    return true;
-}
-
-static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername) {
-    outUsername.clear();
-    const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
-
-    if (!WaitNamedPipeW(pipeName, 500)) return false;
-
-    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) return false;
-
-    DWORD mode = PIPE_READMODE_BYTE;
-    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
-
-    static const char request[] = "{\"action\":\"get_username\"}\n";
-    DWORD written = 0;
-    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
-        CloseHandle(pipe);
-        return false;
-    }
-
-    std::string response;
-    char buffer[512];
-    const DWORD deadline = GetTickCount() + 1000;
-    bool timedOut = false;
-
-    for (;;) {
-        DWORD available = 0;
-        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
-            if (GetTickCount() > deadline) { timedOut = true; break; }
-            Sleep(25);
-            continue;
-        }
-
-        DWORD read = 0;
-        if (!ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) || read == 0) break;
-        buffer[read] = '\0';
-        response.append(buffer, read);
-        if (response.find('\n') != std::string::npos) break;
-        if (GetTickCount() > deadline) { timedOut = true; break; }
-    }
-
-    CloseHandle(pipe);
-
-    if (timedOut && response.empty()) return false;
-
-    std::string status;
-    if (!ExtractJsonStringValue(response, "status", status) || status != "success") return false;
-
-    std::string username;
-    if (!ExtractJsonStringValue(response, "username", username) || username.empty()) return false;
-
-    outUsername = Utf8ToWide(username);
-    return !outUsername.empty();
-}
-
-static bool QueryWatchPresentFromDaemon() {
-    const wchar_t* pipeName = L"\\\\.\\pipe\\wristkey";
-
-    if (!WaitNamedPipeW(pipeName, 300)) return false;
-
-    HANDLE pipe = CreateFileW(pipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) return false;
-
-    DWORD mode = PIPE_READMODE_BYTE;
-    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
-
-    static const char request[] = "{\"action\":\"proximity\"}\n";
-    DWORD written = 0;
-    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
-        CloseHandle(pipe);
-        return false;
-    }
-
-    std::string response;
-    char buffer[256];
-    const DWORD deadline = GetTickCount() + 700;
-    for (;;) {
-        DWORD available = 0;
-        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available == 0) {
-            if (GetTickCount() > deadline) break;
-            Sleep(20);
-            continue;
-        }
-        DWORD read = 0;
-        if (!ReadFile(pipe, buffer, sizeof(buffer) - 1, &read, nullptr) || read == 0) break;
-        response.append(buffer, read);
-        if (response.find('\n') != std::string::npos) break;
-        if (GetTickCount() > deadline) break;
-    }
-    CloseHandle(pipe);
-
-    return response.find("\"status\":\"success\"") != std::string::npos
-        && response.find("\"present\":true") != std::string::npos;
-}
-
-// Serialize password as: domain\0user\0password\0 (UTF-16)
-static HRESULT PackUnlockCredential(
-    const std::wstring& qualifiedUsername,
-    const std::wstring& password,
-    CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
-    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* out) {
-    if (!out) return E_POINTER;
-    ZeroMemory(out, sizeof(*out));
-
-    if (qualifiedUsername.empty()) return E_INVALIDARG;
-
-    size_t domainLen = 0;
-    size_t userLen = qualifiedUsername.length();
-    size_t passLen = password.length();
-
-    size_t userPos = domainLen;
-    size_t passPos = userPos + userLen + 1;
-    size_t totalSize = passPos + passLen + 1;
-
-    size_t totalBytes = totalSize * sizeof(wchar_t);
-
-    PBYTE rgbSerialization = static_cast<PBYTE>(CoTaskMemAlloc(totalBytes));
-    if (!rgbSerialization) return E_OUTOFMEMORY;
-
-    PWSTR p = reinterpret_cast<PWSTR>(rgbSerialization);
-
-    // Domain (empty)
-    *p++ = L'\0';
-
-    // Username
-    memcpy(p, qualifiedUsername.c_str(), userLen * sizeof(wchar_t));
-    p += userLen;
-    *p++ = L'\0';
-
-    // Password
-    memcpy(p, password.c_str(), passLen * sizeof(wchar_t));
-    p += passLen;
-    *p++ = L'\0';
-
-    out->rgbSerialization = rgbSerialization;
-    out->cbSerialization = static_cast<ULONG>(totalBytes);
-    out->ulAuthenticationPackage = 0;
-    out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
-
-    return S_OK;
-}
-
 static std::wstring WinErrorText(DWORD error) {
     wchar_t message[512]{};
     const DWORD length = FormatMessageW(
@@ -403,12 +165,213 @@ static std::wstring WinErrorText(DWORD error) {
 }
 
 // -----------------------------------------------------------------------------
+// Daemon pipe client
+// -----------------------------------------------------------------------------
+
+// Sends one JSON line, reads one JSON line. `onWait(elapsedMs)` is called about
+// every 100 ms while waiting. Returns false on connect/IO failure or timeout.
+static bool PipeRoundTrip(const char* request, DWORD connectMs, DWORD totalMs,
+                          std::string& response, std::wstring* error,
+                          const std::function<void(DWORD)>& onWait = nullptr) {
+    response.clear();
+    if (!WaitNamedPipeW(kPipeName, connectMs)) {
+        if (error) *error = L"WristKey service is not running.";
+        return false;
+    }
+    HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        if (error) *error = L"WristKey: cannot connect to the service.";
+        return false;
+    }
+    DWORD mode = PIPE_READMODE_BYTE;
+    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+
+    DWORD written = 0;
+    if (!WriteFile(pipe, request, static_cast<DWORD>(strlen(request)), &written, nullptr)) {
+        CloseHandle(pipe);
+        if (error) *error = L"WristKey: service communication failed.";
+        return false;
+    }
+
+    const DWORD start = GetTickCount();
+    char buffer[512];
+    bool gotLine = false;
+    for (;;) {
+        const DWORD elapsed = GetTickCount() - start;
+        DWORD available = 0;
+        if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr)) break;  // pipe closed
+        if (available == 0) {
+            if (elapsed >= totalMs) break;
+            if (onWait) onWait(elapsed);
+            Sleep(60);
+            continue;
+        }
+        DWORD read = 0;
+        if (!ReadFile(pipe, buffer, sizeof(buffer), &read, nullptr) || read == 0) break;
+        response.append(buffer, read);
+        if (response.find('\n') != std::string::npos) { gotLine = true; break; }
+    }
+    CloseHandle(pipe);
+
+    if (!gotLine && response.empty()) {
+        if (error) *error = L"WristKey: the service did not answer.";
+        return false;
+    }
+    return true;
+}
+
+static bool RequestUnlockFromDaemon(std::wstring& outPassword, std::wstring& outError,
+                                    ICredentialProviderCredentialEvents* events,
+                                    ICredentialProviderCredential* credential) {
+    DWORD lastShown = 0xFFFFFFFF;
+    std::string response;
+    const bool ok = PipeRoundTrip(
+        "{\"action\":\"unlock\"}\n", 2000, kUnlockWaitMs, response, &outError,
+        [&](DWORD elapsed) {
+            if (!events || !credential) return;
+            const DWORD remaining = elapsed < kUnlockWaitMs ? (kUnlockWaitMs - elapsed + 999) / 1000 : 0;
+            if (remaining == lastShown) return;
+            lastShown = remaining;
+            const std::wstring text = L"Confirm on your watch… (" + std::to_wstring(remaining) + L"s)";
+            events->SetFieldString(credential, WristKeyFields::Status, text.c_str());
+        });
+    if (events && credential) {
+        events->SetFieldString(credential, WristKeyFields::Status, L"Confirm on your watch");
+    }
+    if (!ok) return false;
+
+    std::string status;
+    if (!ExtractJsonStringValue(response, "status", status) || status != "success") {
+        std::string message;
+        if (ExtractJsonStringValue(response, "message", message) && !message.empty()) {
+            outError = L"WristKey: " + Utf8ToWide(message) + L".";
+        } else {
+            outError = L"WristKey: the watch did not confirm the unlock.";
+        }
+        return false;
+    }
+    std::string password;
+    if (!ExtractJsonStringValue(response, "password", password) || password.empty()) {
+        outError = L"WristKey: the service returned no password (set it in the WristKey app).";
+        return false;
+    }
+    outPassword = Utf8ToWide(password);
+    if (!password.empty()) SecureZeroMemory(&password[0], password.size());
+    return true;
+}
+
+static bool QueryExpectedUsernameFromDaemon(std::wstring& outUsername) {
+    outUsername.clear();
+    std::string response;
+    if (!PipeRoundTrip("{\"action\":\"get_username\"}\n", 500, 1000, response, nullptr)) return false;
+    std::string status, username;
+    if (!ExtractJsonStringValue(response, "status", status) || status != "success") return false;
+    if (!ExtractJsonStringValue(response, "username", username) || username.empty()) return false;
+    outUsername = Utf8ToWide(username);
+    return !outUsername.empty();
+}
+
+static bool QueryWatchPresentFromDaemon() {
+    std::string response;
+    if (!PipeRoundTrip("{\"action\":\"proximity\"}\n", 300, 700, response, nullptr)) return false;
+    return response.find("\"status\":\"success\"") != std::string::npos
+        && response.find("\"present\":true") != std::string::npos;
+}
+
+// -----------------------------------------------------------------------------
+// Serialization: KERB_INTERACTIVE_UNLOCK_LOGON in the self-relative form that
+// LogonUI hands to LSA (UNICODE_STRING.Buffer holds an offset).
+// -----------------------------------------------------------------------------
+
+static void SplitQualifiedName(const std::wstring& qualified, std::wstring& domain, std::wstring& user) {
+    const size_t slash = qualified.find(L'\\');
+    if (slash != std::wstring::npos) {
+        domain = qualified.substr(0, slash);
+        user = qualified.substr(slash + 1);
+        if (domain == L".") domain.clear();
+    } else {
+        domain.clear();
+        user = qualified;
+    }
+    if (domain.empty() && user.find(L'@') == std::wstring::npos) {
+        wchar_t computer[MAX_COMPUTERNAME_LENGTH + 1]{};
+        DWORD n = ARRAYSIZE(computer);
+        if (GetComputerNameW(computer, &n)) domain = computer;
+    }
+}
+
+static HRESULT AuthenticationPackageId(ULONG* id) {
+    HANDLE lsa = nullptr;
+    NTSTATUS st = LsaConnectUntrusted(&lsa);
+    if (st != 0) return HRESULT_FROM_WIN32(LsaNtStatusToWinError(st));
+    char name[] = "Negotiate";
+    LSA_STRING pkg{};
+    pkg.Buffer = name;
+    pkg.Length = static_cast<USHORT>(strlen(name));
+    pkg.MaximumLength = static_cast<USHORT>(sizeof(name));
+    st = LsaLookupAuthenticationPackage(lsa, &pkg, id);
+    LsaDeregisterLogonProcess(lsa);
+    return st == 0 ? S_OK : HRESULT_FROM_WIN32(LsaNtStatusToWinError(st));
+}
+
+static HRESULT PackUnlockCredential(const std::wstring& qualifiedUsername, const std::wstring& password,
+                                    CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+                                    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* out) {
+    if (!out) return E_POINTER;
+    ZeroMemory(out, sizeof(*out));
+    if (qualifiedUsername.empty() || password.empty()) return E_INVALIDARG;
+
+    std::wstring domain, user;
+    SplitQualifiedName(qualifiedUsername, domain, user);
+    if (user.empty()) return E_INVALIDARG;
+
+    const size_t strBytes = (domain.size() + user.size() + password.size()) * sizeof(wchar_t);
+    const size_t total = sizeof(KERB_INTERACTIVE_UNLOCK_LOGON) + strBytes;
+    if (total > 0xFFFF0000u) return E_INVALIDARG;
+    auto* buf = static_cast<BYTE*>(CoTaskMemAlloc(total));
+    if (!buf) return E_OUTOFMEMORY;
+    ZeroMemory(buf, total);
+
+    auto* kiul = reinterpret_cast<KERB_INTERACTIVE_UNLOCK_LOGON*>(buf);
+    KERB_INTERACTIVE_LOGON& kil = kiul->Logon;
+    kil.MessageType = (scenario == CPUS_UNLOCK_WORKSTATION) ? KerbWorkstationUnlockLogon : KerbInteractiveLogon;
+
+    size_t offset = sizeof(KERB_INTERACTIVE_UNLOCK_LOGON);
+    auto put = [&](UNICODE_STRING& us, const std::wstring& s) {
+        us.Length = static_cast<USHORT>(s.size() * sizeof(wchar_t));
+        us.MaximumLength = us.Length;
+        if (!s.empty()) memcpy(buf + offset, s.data(), us.Length);
+        us.Buffer = reinterpret_cast<PWSTR>(static_cast<ULONG_PTR>(offset));  // self-relative
+        offset += us.Length;
+    };
+    put(kil.LogonDomainName, domain);
+    put(kil.UserName, user);
+    put(kil.Password, password);
+
+    ULONG pkgId = 0;
+    HRESULT hr = AuthenticationPackageId(&pkgId);
+    if (FAILED(hr)) {
+        SecureZeroMemory(buf, total);
+        CoTaskMemFree(buf);
+        return hr;
+    }
+
+    out->rgbSerialization = buf;
+    out->cbSerialization = static_cast<ULONG>(total);
+    out->ulAuthenticationPackage = pkgId;
+    out->clsidCredentialProvider = CLSID_WristKeyCredentialProvider;
+    return S_OK;
+}
+
+// -----------------------------------------------------------------------------
 // WristKeyProvider
 // -----------------------------------------------------------------------------
 
 WristKeyProvider::WristKeyProvider() = default;
 
 WristKeyProvider::~WristKeyProvider() {
+    StopPresenceWatcher();
     ReleaseCredentials();
     if (_userArray) { _userArray->Release(); _userArray = nullptr; }
     if (_events) { _events->Release(); _events = nullptr; }
@@ -417,7 +380,6 @@ WristKeyProvider::~WristKeyProvider() {
 HRESULT STDMETHODCALLTYPE WristKeyProvider::QueryInterface(REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
-
     if (riid == IID_IUnknown || riid == IID_ICredentialProvider) {
         *ppv = static_cast<ICredentialProvider*>(this);
     } else if (riid == IID_ICredentialProviderSetUserArray) {
@@ -425,14 +387,11 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::QueryInterface(REFIID riid, void** p
     } else {
         return E_NOINTERFACE;
     }
-
     AddRef();
     return S_OK;
 }
 
-ULONG STDMETHODCALLTYPE WristKeyProvider::AddRef() {
-    return InterlockedIncrement(&_ref);
-}
+ULONG STDMETHODCALLTYPE WristKeyProvider::AddRef() { return InterlockedIncrement(&_ref); }
 
 ULONG STDMETHODCALLTYPE WristKeyProvider::Release() {
     const ULONG n = InterlockedDecrement(&_ref);
@@ -447,11 +406,9 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUsageScenario(CREDENTIAL_PROVIDER
         _scenario = cpus;
         _recreateCredentials = true;
         return S_OK;
-
     case CPUS_CHANGE_PASSWORD:
     case CPUS_CREDUI:
         return E_NOTIMPL;
-
     default:
         return E_INVALIDARG;
     }
@@ -461,21 +418,66 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetSerialization(const CREDENTIAL_PR
     return E_NOTIMPL;
 }
 
+// --- presence watcher --------------------------------------------------------
+// While the sign-in UI is shown, poll the service; when the watch comes into
+// range, ask LogonUI to re-query GetCredentialCount (which then requests
+// auto-logon). Fires only on the absent -> present edge.
+
+DWORD WINAPI WristKeyProvider::PresenceThreadProc(LPVOID param) {
+    auto* self = static_cast<WristKeyProvider*>(param);
+    bool wasPresent = false;
+    while (WaitForSingleObject(self->_stopEvent, kPollIntervalMs) == WAIT_TIMEOUT) {
+        if (!self->_haveCredentials) continue;
+        const bool present = QueryWatchPresentFromDaemon();
+        if (present && !wasPresent) {
+            const DWORD last = self->_lastAutoLogonTick;
+            const DWORD now = GetTickCount();
+            if (last == 0 || now - last > kAutoLogonCooldownMs) {
+                self->RefreshStatus();
+            }
+        }
+        wasPresent = present;
+    }
+    return 0;
+}
+
+void WristKeyProvider::StartPresenceWatcher() {
+    if (_thread) return;
+    _stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!_stopEvent) return;
+    _thread = CreateThread(nullptr, 0, PresenceThreadProc, this, 0, nullptr);
+    if (!_thread) { CloseHandle(_stopEvent); _stopEvent = nullptr; }
+}
+
+void WristKeyProvider::StopPresenceWatcher() {
+    if (_thread) {
+        SetEvent(_stopEvent);
+        WaitForSingleObject(_thread, 5000);
+        CloseHandle(_thread);
+        _thread = nullptr;
+    }
+    if (_stopEvent) { CloseHandle(_stopEvent); _stopEvent = nullptr; }
+}
+
 HRESULT STDMETHODCALLTYPE WristKeyProvider::Advise(ICredentialProviderEvents* pcpe, UINT_PTR context) {
+    StopPresenceWatcher();
     if (_events) _events->Release();
     _events = pcpe;
     _adviseContext = context;
-    if (_events) _events->AddRef();
+    if (_events) {
+        _events->AddRef();
+        StartPresenceWatcher();
+    }
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::UnAdvise() {
-    if (_events) {
-        _events->Release();
-        _events = nullptr;
-    }
+    StopPresenceWatcher();  // join before dropping the events pointer
+    if (_events) { _events->Release(); _events = nullptr; }
     return S_OK;
 }
+
+// --- fields ------------------------------------------------------------------
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorCount(DWORD* count) {
     if (!count) return E_POINTER;
@@ -486,55 +488,34 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorCount(DWORD* count
 HRESULT STDMETHODCALLTYPE WristKeyProvider::GetFieldDescriptorAt(DWORD index, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR** out) {
     if (!out) return E_POINTER;
     *out = nullptr;
-    if (index >= WristKeyFields::Count) return E_INVALIDARG;
 
-    CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR d{};
-    d.dwFieldID = index;
-    d.cpft = CPFT_TILE_IMAGE;
-    d.guidFieldType = GUID_NULL;
-
+    CREDENTIAL_PROVIDER_FIELD_TYPE type;
+    GUID guid = GUID_NULL;
+    PCWSTR label;
     switch (index) {
-    case WristKeyFields::TileImage:
-        d.cpft = CPFT_TILE_IMAGE;
-        d.guidFieldType = CPFG_CREDENTIAL_PROVIDER_LOGO;
-        return CopyString(L"WristKey", &d.pszLabel)
-            ? [&]() -> HRESULT {
-                auto* copy = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
-                if (!copy) { CoTaskMemFree(d.pszLabel); return E_OUTOFMEMORY; }
-                *copy = d; *out = copy; return S_OK;
-              }() : E_OUTOFMEMORY;
-    case WristKeyFields::Tile:
-        d.cpft = CPFT_LARGE_TEXT;
-        return CopyString(L"WristKey", &d.pszLabel)
-            ? [&]() -> HRESULT {
-                auto* copy = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
-                if (!copy) { CoTaskMemFree(d.pszLabel); return E_OUTOFMEMORY; }
-                *copy = d; *out = copy; return S_OK;
-              }() : E_OUTOFMEMORY;
-    case WristKeyFields::Status:
-        d.cpft = CPFT_SMALL_TEXT;
-        return CopyString(L"Confirm on your watch", &d.pszLabel)
-            ? [&]() -> HRESULT {
-                auto* copy = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
-                if (!copy) { CoTaskMemFree(d.pszLabel); return E_OUTOFMEMORY; }
-                *copy = d; *out = copy; return S_OK;
-              }() : E_OUTOFMEMORY;
-    case WristKeyFields::Submit:
-        d.cpft = CPFT_SUBMIT_BUTTON;
-        return CopyString(L"Unlock", &d.pszLabel)
-            ? [&]() -> HRESULT {
-                auto* copy = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(d)));
-                if (!copy) { CoTaskMemFree(d.pszLabel); return E_OUTOFMEMORY; }
-                *copy = d; *out = copy; return S_OK;
-              }() : E_OUTOFMEMORY;
-    default:
-        return E_INVALIDARG;
+    case WristKeyFields::TileImage: type = CPFT_TILE_IMAGE;    guid = CPFG_CREDENTIAL_PROVIDER_LOGO; label = L"WristKey"; break;
+    case WristKeyFields::Tile:      type = CPFT_LARGE_TEXT;    label = L"WristKey"; break;
+    case WristKeyFields::Status:    type = CPFT_SMALL_TEXT;    label = L"Status"; break;
+    case WristKeyFields::Submit:    type = CPFT_SUBMIT_BUTTON; label = L"Unlock"; break;
+    default: return E_INVALIDARG;
     }
+
+    auto* d = static_cast<CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*>(CoTaskMemAlloc(sizeof(CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR)));
+    if (!d) return E_OUTOFMEMORY;
+    ZeroMemory(d, sizeof(CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR));
+    d->dwFieldID = index;
+    d->cpft = type;
+    d->guidFieldType = guid;
+    const HRESULT hr = CopyString(label, &d->pszLabel);
+    if (FAILED(hr)) { CoTaskMemFree(d); return hr; }
+    *out = d;
+    return S_OK;
 }
+
+// --- users / credentials -----------------------------------------------------
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUserArray(ICredentialProviderUserArray* users) {
     if (_userArray) { _userArray->Release(); _userArray = nullptr; }
-
     _userArray = users;
     if (_userArray) _userArray->AddRef();
     _recreateCredentials = true;
@@ -542,6 +523,7 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetUserArray(ICredentialProviderUser
 }
 
 void WristKeyProvider::ReleaseCredentials() {
+    _haveCredentials = false;
     for (auto* credential : _credentials) {
         if (credential) credential->Release();
     }
@@ -550,82 +532,63 @@ void WristKeyProvider::ReleaseCredentials() {
 
 HRESULT WristKeyProvider::CreateCredentials() {
     ReleaseCredentials();
-
-    if ((_scenario != CPUS_LOGON && _scenario != CPUS_UNLOCK_WORKSTATION) || !_userArray) {
-        return S_OK;
-    }
+    if ((_scenario != CPUS_LOGON && _scenario != CPUS_UNLOCK_WORKSTATION) || !_userArray) return S_OK;
 
     DWORD userCount = 0;
     HRESULT hr = _userArray->GetCount(&userCount);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr) || userCount == 0) return FAILED(hr) ? hr : S_OK;
 
-    DWORD selectedIndex = 0;
-    if (userCount > 1) {
-        std::wstring expectedUsername;
-        if (QueryExpectedUsernameFromDaemon(expectedUsername) && !expectedUsername.empty()) {
-            for (DWORD i = 0; i < userCount; ++i) {
-                ICredentialProviderUser* candidate = nullptr;
-                if (FAILED(_userArray->GetAt(i, &candidate)) || !candidate) continue;
-                PWSTR candidateName = nullptr;
-                const bool matched = SUCCEEDED(candidate->GetStringValue(PKEY_Identity_QualifiedUserName, &candidateName))
-                    && candidateName
-                    && _wcsicmp(candidateName, expectedUsername.c_str()) == 0;
-                CoTaskMemFree(candidateName);
-                candidate->Release();
-                if (matched) {
-                    selectedIndex = i;
-                    break;
-                }
-            }
+    // Prefer the account the watch was set up for; otherwise the first user.
+    DWORD selected = 0;
+    std::wstring expected;
+    if (userCount > 1 && QueryExpectedUsernameFromDaemon(expected)) {
+        for (DWORD i = 0; i < userCount; ++i) {
+            ICredentialProviderUser* candidate = nullptr;
+            if (FAILED(_userArray->GetAt(i, &candidate)) || !candidate) continue;
+            PWSTR name = nullptr;
+            const bool match = SUCCEEDED(candidate->GetStringValue(PKEY_Identity_QualifiedUserName, &name))
+                && name && _wcsicmp(name, expected.c_str()) == 0;
+            CoTaskMemFree(name);
+            candidate->Release();
+            if (match) { selected = i; break; }
         }
     }
 
-    if (userCount > 0) {
-        ICredentialProviderUser* selectedUser = nullptr;
-        if (SUCCEEDED(_userArray->GetAt(selectedIndex, &selectedUser)) && selectedUser) {
-            PWSTR username = nullptr;
-            PWSTR sid = nullptr;
+    ICredentialProviderUser* user = nullptr;
+    if (FAILED(_userArray->GetAt(selected, &user)) || !user) return S_OK;
 
-            HRESULT userHr = selectedUser->GetStringValue(PKEY_Identity_QualifiedUserName, &username);
-            if (SUCCEEDED(userHr)) {
-                userHr = selectedUser->GetSid(&sid);
-            }
-
-            if (SUCCEEDED(userHr) && username && sid) {
-                auto* credential = new (std::nothrow) WristKeyProviderCredential(
-                    this, _scenario, username, sid);
-                if (credential) {
-                    _credentials.push_back(credential);
-                }
-            }
-
-            CoTaskMemFree(username);
-            CoTaskMemFree(sid);
-            selectedUser->Release();
+    PWSTR name = nullptr;
+    PWSTR sid = nullptr;
+    if (SUCCEEDED(user->GetStringValue(PKEY_Identity_QualifiedUserName, &name)) &&
+        SUCCEEDED(user->GetSid(&sid)) && name && sid) {
+        auto* credential = new (std::nothrow) WristKeyProviderCredential(this, _scenario, name, sid);
+        if (credential) {
+            _credentials.push_back(credential);
+            _haveCredentials = true;
         }
     }
-
+    CoTaskMemFree(name);
+    CoTaskMemFree(sid);
+    user->Release();
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialCount(DWORD* count, DWORD* def, BOOL* autoLogon) {
     if (!count || !def || !autoLogon) return E_POINTER;
-
     *count = 0;
     *def = CREDENTIAL_PROVIDER_NO_DEFAULT;
     *autoLogon = FALSE;
 
     if (_recreateCredentials) {
         _recreateCredentials = false;
-        HRESULT hr = CreateCredentials();
+        const HRESULT hr = CreateCredentials();
         if (FAILED(hr)) return hr;
     }
-
     *count = static_cast<DWORD>(_credentials.size());
 
     if (!_credentials.empty()) {
         const DWORD now = GetTickCount();
-        const bool cooledDown = _lastAutoLogonTick == 0 || (now - _lastAutoLogonTick) > 30000;
+        const bool cooledDown = _lastAutoLogonTick == 0 || now - _lastAutoLogonTick > kAutoLogonCooldownMs;
         if (cooledDown && QueryWatchPresentFromDaemon()) {
             _lastAutoLogonTick = now ? now : 1;
             *def = 0;
@@ -639,28 +602,22 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialAt(DWORD index, ICreden
     if (!out) return E_POINTER;
     *out = nullptr;
     if (index >= _credentials.size() || !_credentials[index]) return E_INVALIDARG;
-
-    return _credentials[index]->QueryInterface(IID_ICredentialProviderCredential,
-                                               reinterpret_cast<void**>(out));
+    return _credentials[index]->QueryInterface(IID_ICredentialProviderCredential, reinterpret_cast<void**>(out));
 }
 
 void WristKeyProvider::RefreshStatus() {
-    if (_events) _events->CredentialsChanged(_adviseContext);
+    ICredentialProviderEvents* events = _events;  // stable: UnAdvise joins the watcher first
+    if (events) events->CredentialsChanged(_adviseContext);
 }
 
 // -----------------------------------------------------------------------------
 // WristKeyProviderCredential
 // -----------------------------------------------------------------------------
 
-WristKeyProviderCredential::WristKeyProviderCredential(
-    WristKeyProvider* provider,
-    CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
-    std::wstring username,
-    std::wstring sid)
-    : _provider(provider),
-      _scenario(scenario),
-      _username(std::move(username)),
-      _sid(std::move(sid)) {
+WristKeyProviderCredential::WristKeyProviderCredential(WristKeyProvider* provider,
+                                                       CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+                                                       std::wstring username, std::wstring sid)
+    : _provider(provider), _scenario(scenario), _username(std::move(username)), _sid(std::move(sid)) {
     if (_provider) _provider->AddRef();
 }
 
@@ -672,7 +629,6 @@ WristKeyProviderCredential::~WristKeyProviderCredential() {
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::QueryInterface(REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
-
     if (riid == IID_IUnknown || riid == IID_ICredentialProviderCredential) {
         *ppv = static_cast<ICredentialProviderCredential*>(this);
     } else if (riid == IID_ICredentialProviderCredential2) {
@@ -680,14 +636,11 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::QueryInterface(REFIID riid
     } else {
         return E_NOINTERFACE;
     }
-
     AddRef();
     return S_OK;
 }
 
-ULONG STDMETHODCALLTYPE WristKeyProviderCredential::AddRef() {
-    return InterlockedIncrement(&_ref);
-}
+ULONG STDMETHODCALLTYPE WristKeyProviderCredential::AddRef() { return InterlockedIncrement(&_ref); }
 
 ULONG STDMETHODCALLTYPE WristKeyProviderCredential::Release() {
     const ULONG n = InterlockedDecrement(&_ref);
@@ -709,44 +662,42 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::UnAdvise() {
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetSelected(BOOL* autoLogon) {
     if (!autoLogon) return E_POINTER;
-    *autoLogon = FALSE;
+    *autoLogon = FALSE;  // auto-logon is decided in GetCredentialCount
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetDeselected() {
-    return S_OK;
-}
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetDeselected() { return S_OK; }
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetFieldState(
-    DWORD id, CREDENTIAL_PROVIDER_FIELD_STATE* state,
-    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE* interactive) {
-    if (!state || !interactive || id >= WristKeyFields::Count) return E_INVALIDARG;
-
+    DWORD id, CREDENTIAL_PROVIDER_FIELD_STATE* state, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE* interactive) {
+    if (!state || !interactive) return E_POINTER;
     switch (id) {
     case WristKeyFields::TileImage:
     case WristKeyFields::Tile:
         *state = CPFS_DISPLAY_IN_BOTH;
         *interactive = CPFIS_NONE;
-        break;
+        return S_OK;
     case WristKeyFields::Status:
         *state = CPFS_DISPLAY_IN_SELECTED_TILE;
         *interactive = CPFIS_NONE;
-        break;
+        return S_OK;
     case WristKeyFields::Submit:
         *state = CPFS_DISPLAY_IN_SELECTED_TILE;
         *interactive = CPFIS_FOCUSED;
-        break;
+        return S_OK;
     default:
         return E_INVALIDARG;
     }
-    return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetStringValue(DWORD id, PWSTR* value) {
     if (!value) return E_POINTER;
     *value = nullptr;
-
-    if (id == WristKeyFields::Tile) return CopyString(_username.c_str(), value);
+    if (id == WristKeyFields::Tile) {
+        const size_t slash = _username.find(L'\\');
+        const std::wstring shortName = slash == std::wstring::npos ? _username : _username.substr(slash + 1);
+        return CopyString((L"WristKey — " + shortName).c_str(), value);
+    }
     if (id == WristKeyFields::Status) return CopyString(L"Confirm on your watch", value);
     return E_INVALIDARG;
 }
@@ -756,19 +707,33 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetBitmapValue(DWORD id, H
     *bitmap = nullptr;
     if (id != WristKeyFields::TileImage) return E_INVALIDARG;
 
-    HICON icon = LoadIconW(nullptr, IDI_INFORMATION);
-    if (!icon) return HRESULT_FROM_WIN32(GetLastError());
-
-    ICONINFO info{};
-    if (!GetIconInfo(icon, &info)) {
-        DestroyIcon(icon);
-        return HRESULT_FROM_WIN32(GetLastError());
+    // Draw a simple 128x128 key-coloured tile (no resources to ship).
+    HDC screen = GetDC(nullptr);
+    HDC mem = CreateCompatibleDC(screen);
+    HBITMAP bmp = CreateCompatibleBitmap(screen, 128, 128);
+    if (!mem || !bmp) {
+        if (bmp) DeleteObject(bmp);
+        if (mem) DeleteDC(mem);
+        ReleaseDC(nullptr, screen);
+        return E_FAIL;
     }
-    DestroyIcon(icon);
-
-    if (info.hbmMask) DeleteObject(info.hbmMask);
-    if (!info.hbmColor) return E_FAIL;
-    *bitmap = info.hbmColor;
+    HGDIOBJ old = SelectObject(mem, bmp);
+    HBRUSH bg = CreateSolidBrush(RGB(0x1E, 0x6F, 0xEB));
+    RECT rc{0, 0, 128, 128};
+    FillRect(mem, &rc, bg);
+    DeleteObject(bg);
+    SetBkMode(mem, TRANSPARENT);
+    SetTextColor(mem, RGB(255, 255, 255));
+    HFONT font = CreateFontW(72, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    HGDIOBJ oldFont = SelectObject(mem, font);
+    DrawTextW(mem, L"WK", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(mem, oldFont);
+    DeleteObject(font);
+    SelectObject(mem, old);
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    *bitmap = bmp;
     return S_OK;
 }
 
@@ -795,27 +760,14 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetComboBoxValueAt(DWORD, 
     return E_NOTIMPL;
 }
 
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetStringValue(DWORD, PCWSTR) {
-    return E_NOTIMPL;
-}
-
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetCheckboxValue(DWORD, BOOL) {
-    return E_NOTIMPL;
-}
-
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetComboBoxSelectedValue(DWORD, DWORD) {
-    return E_NOTIMPL;
-}
-
-HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::CommandLinkClicked(DWORD) {
-    return E_NOTIMPL;
-}
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetStringValue(DWORD, PCWSTR) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetCheckboxValue(DWORD, BOOL) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::SetComboBoxSelectedValue(DWORD, DWORD) { return E_NOTIMPL; }
+HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::CommandLinkClicked(DWORD) { return E_NOTIMPL; }
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
-    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* response,
-    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* serialization,
-    PWSTR* status,
-    CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
+    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* response, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* serialization,
+    PWSTR* status, CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
     if (!response || !serialization || !status || !icon) return E_POINTER;
 
     ZeroMemory(serialization, sizeof(*serialization));
@@ -823,54 +775,34 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
     *status = nullptr;
     *icon = CPSI_NONE;
 
-    std::wstring password;
-    std::wstring daemonError;
-    if (!RequestUnlockFromDaemon(password, daemonError, _events,
-                                  static_cast<ICredentialProviderCredential*>(this))) {
-        CopyString((daemonError.empty()
-                        ? L"WristKey: confirm the unlock on your watch."
-                        : daemonError.c_str()),
-                   status);
+    std::wstring password, error;
+    if (!RequestUnlockFromDaemon(password, error, _events, static_cast<ICredentialProviderCredential*>(this))) {
+        CopyString(error.empty() ? L"WristKey: confirm the unlock on your watch." : error.c_str(), status);
         *icon = CPSI_WARNING;
         return S_OK;
     }
 
-    HRESULT hr = PackUnlockCredential(_username, password, _scenario, serialization);
-
-    if (!password.empty()) {
-        SecureZeroMemory(password.data(), password.size() * sizeof(wchar_t));
-    }
+    const HRESULT hr = PackUnlockCredential(_username, password, _scenario, serialization);
+    if (!password.empty()) SecureZeroMemory(&password[0], password.size() * sizeof(wchar_t));
 
     if (SUCCEEDED(hr)) {
         *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
         *icon = CPSI_SUCCESS;
     } else {
-        CopyString(L"WristKey: Windows could not serialize the credential.", status);
+        CopyString((L"WristKey: could not build the credential. " + WinErrorText(static_cast<DWORD>(hr & 0xFFFF))).c_str(), status);
         *icon = CPSI_ERROR;
     }
-
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::ReportResult(
-    NTSTATUS ntsStatus,
-    NTSTATUS ntsSubstatus,
-    PWSTR* status,
-    CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
+    NTSTATUS ntsStatus, NTSTATUS ntsSubstatus, PWSTR* status, CREDENTIAL_PROVIDER_STATUS_ICON* icon) {
     if (status) *status = nullptr;
     if (icon) *icon = CPSI_NONE;
+    if (ntsStatus == 0 && ntsSubstatus == 0) return S_OK;
 
-    if (ntsStatus == 0 && ntsSubstatus == 0) {
-        return S_OK;
-    }
-
-    const NTSTATUS detailStatus = ntsSubstatus != 0 ? ntsSubstatus : ntsStatus;
-    const DWORD winError = LsaNtStatusToWinError(detailStatus);
-
-    if (status) {
-        const std::wstring text = WinErrorText(winError);
-        CopyString((L"WristKey: " + text).c_str(), status);
-    }
+    const NTSTATUS detail = ntsSubstatus != 0 ? ntsSubstatus : ntsStatus;
+    if (status) CopyString((L"WristKey: " + WinErrorText(LsaNtStatusToWinError(detail))).c_str(), status);
     if (icon) *icon = CPSI_ERROR;
     return S_OK;
 }
