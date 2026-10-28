@@ -27,7 +27,9 @@
 #endif
 
 extern "C" const GUID CLSID_WristKeyCredentialProvider;
-extern const PROPERTYKEY PKEY_Identity_QualifiedUserName;
+// PKEY_Identity_QualifiedUserName, defined locally: MSVC's uuid.lib does not export it.
+static const PROPERTYKEY PKEY_Identity_QualifiedUserName =
+    {{0xda520e51, 0xf4e9, 0x4739, {0xac, 0x82, 0x02, 0xe0, 0xa9, 0x5c, 0x90, 0x30}}, 100};
 
 static const wchar_t kPipeName[] = L"\\\\.\\pipe\\wristkey";
 static const DWORD kUnlockWaitMs = 25000;     // watch confirmation budget

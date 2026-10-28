@@ -10,4 +10,3 @@ extern "C" {
 }
 
 // Forward declarations for Credential Provider fields
-extern const PROPERTYKEY PKEY_Identity_QualifiedUserName;
