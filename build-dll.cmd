@@ -164,8 +164,10 @@ echo [build-dll] all smoke tests passed.
 
 :done
 echo.
-echo Install ^(Administrator PowerShell^):
-echo   powershell -ExecutionPolicy Bypass -File "%SRC%\install.ps1" -Action Install -DllPath "%DLL%"
+echo Install ^(Administrator console^):
+echo   regsvr32 "%DLL%"
+echo Uninstall:
+echo   regsvr32 /u "%DLL%"
 set "BRC=0" & goto end
 
 :end
