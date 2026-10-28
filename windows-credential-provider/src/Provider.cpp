@@ -1,6 +1,7 @@
 // WristKey Credential Provider (V2): one tile per sign-in user, unlocks by
 // asking the WristKey service (\\.\pipe\wristkey) for a watch-confirmed password.
 #include "Provider.h"
+#include "ServiceInstall.h"
 
 #include <windows.h>
 #include <ntsecapi.h>
@@ -428,7 +429,17 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetSerialization(const CREDENTIAL_PR
 DWORD WINAPI WristKeyProvider::PresenceThreadProc(LPVOID param) {
     auto* self = static_cast<WristKeyProvider*>(param);
     bool wasPresent = false;
-    while (WaitForSingleObject(self->_stopEvent, kPollIntervalMs) == WAIT_TIMEOUT) {
+    DWORD lastEnsure = 0;
+    do {
+        // Service down (never started / crashed / not installed yet): start or
+        // install it from HKLM\SOFTWARE\WristKey\ExePath. Retry every 20 s.
+        if (!WaitNamedPipeW(kPipeName, 0) && GetLastError() == ERROR_FILE_NOT_FOUND) {
+            const DWORD now = GetTickCount();
+            if (lastEnsure == 0 || now - lastEnsure > 20000) {
+                lastEnsure = now ? now : 1;
+                EnsureWristKeyServiceRunning(std::wstring());
+            }
+        }
         if (!self->_haveCredentials) continue;
         const bool present = QueryWatchPresentFromDaemon();
         if (present && !wasPresent) {
@@ -439,7 +450,7 @@ DWORD WINAPI WristKeyProvider::PresenceThreadProc(LPVOID param) {
             }
         }
         wasPresent = present;
-    }
+    } while (WaitForSingleObject(self->_stopEvent, kPollIntervalMs) == WAIT_TIMEOUT);
     return 0;
 }
 
