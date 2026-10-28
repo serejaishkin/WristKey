@@ -113,14 +113,20 @@ if exist "%DLL%" (
 )
 
 rem ---- 3. configure ----------------------------------------------------------
-rem Prefer the VS2022 generator; if that fails (different VS, stale cache from
-rem another generator) wipe the cache and let CMake pick its default.
+rem A build dir created by another generator (e.g. Ninja/MinGW) cannot be reused
+rem by the Visual Studio generator: wipe it automatically.
+if exist "%BLD%\CMakeCache.txt" (
+    findstr /c:"CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022" "%BLD%\CMakeCache.txt" >nul 2>&1
+    if errorlevel 1 (
+        echo [build-dll] build dir was made by another generator, wiping %BLD%
+        rmdir /s /q "%BLD%"
+    )
+)
 cmake -S "%SRC%" -B "%BLD%" -G "Visual Studio 17 2022" -A x64
 if errorlevel 1 (
-    echo [build-dll] VS2022 generator failed, retrying with CMake's default generator...
-    if exist "%BLD%\CMakeCache.txt" del /q "%BLD%\CMakeCache.txt"
-    if exist "%BLD%\CMakeFiles" rmdir /s /q "%BLD%\CMakeFiles"
-    cmake -S "%SRC%" -B "%BLD%" -A x64
+    echo [build-dll] VS2022 generator failed, wiping build dir and retrying with Ninja...
+    if exist "%BLD%" rmdir /s /q "%BLD%"
+    cmake -S "%SRC%" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release
     if errorlevel 1 (
         echo [build-dll] ERROR: cmake configure failed.
         set "RC=6" & goto end
@@ -134,6 +140,7 @@ if errorlevel 1 (
     set "RC=7" & goto end
 )
 
+if not exist "%DLL%" if exist "%BLD%\WristKeyCredentialProvider.dll" set "DLL=%BLD%\WristKeyCredentialProvider.dll"
 if not exist "%DLL%" (
     echo [build-dll] ERROR: build reported success but %DLL% is missing.
     set "RC=8" & goto end
