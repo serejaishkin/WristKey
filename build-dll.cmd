@@ -19,7 +19,7 @@ rem  Output: windows-credential-provider\build\Release\WristKeyCredentialProvide
 rem  Exit code is 0 only if the DLL was produced (and, with `test`, tests passed).
 rem ============================================================================
 setlocal EnableExtensions
-set "RC=0"
+set "BRC=0"
 
 set "ROOT=%~dp0"
 set "SRC=%ROOT%windows-credential-provider"
@@ -39,7 +39,7 @@ goto args
 
 if not exist "%SRC%\CMakeLists.txt" (
     echo [build-dll] ERROR: %SRC%\CMakeLists.txt not found. Run this from the repo root.
-    set "RC=2" & goto end
+    set "BRC=2" & goto end
 )
 
 rem ---- 1. compiler -----------------------------------------------------------
@@ -67,7 +67,7 @@ for /d %%V in ("%BT%\VC\Tools\MSVC\*") do set "MSVCVER=%%~nxV"
 if not defined MSVCVER (
     echo [build-dll] ERROR: no MSVC toolset under %BT%\VC\Tools\MSVC
     echo             Install "Desktop development with C++" ^(VS2022 Build Tools^).
-    set "RC=3" & goto end
+    set "BRC=3" & goto end
 )
 set "VS=%BT%\VC\Tools\MSVC\%MSVCVER%"
 set "SDK=%PF86%\Windows Kits\10"
@@ -75,7 +75,7 @@ set "SDKVER="
 for /d %%V in ("%SDK%\Include\10.*") do set "SDKVER=%%~nxV"
 if not defined SDKVER (
     echo [build-dll] ERROR: no Windows 10/11 SDK under %SDK%\Include
-    set "RC=3" & goto end
+    set "BRC=3" & goto end
 )
 set "INCLUDE=%VS%\include;%SDK%\Include\%SDKVER%\ucrt;%SDK%\Include\%SDKVER%\um;%SDK%\Include\%SDKVER%\shared"
 set "LIB=%VS%\lib\x64;%SDK%\Lib\%SDKVER%\ucrt\x64;%SDK%\Lib\%SDKVER%\um\x64"
@@ -83,14 +83,14 @@ set "PATH=%VS%\bin\Hostx64\x64;%SDK%\bin\%SDKVER%\x64;%PATH%"
 where cl >nul 2>&1
 if errorlevel 1 (
     echo [build-dll] ERROR: cl.exe still not found after setting up the environment.
-    set "RC=3" & goto end
+    set "BRC=3" & goto end
 )
 
 :have_cl
 where cmake >nul 2>&1
 if errorlevel 1 (
     echo [build-dll] ERROR: cmake not found in PATH ^(>= 3.20 required^).
-    set "RC=4" & goto end
+    set "BRC=4" & goto end
 )
 echo [build-dll] compiler:
 where cl
@@ -108,7 +108,7 @@ if exist "%DLL%" (
     if exist "%DLL%" (
         echo [build-dll] ERROR: cannot overwrite %DLL% -- it is in use.
         echo             Stop WristKey / close anything that loaded it and retry.
-        set "RC=5" & goto end
+        set "BRC=5" & goto end
     )
 )
 
@@ -129,7 +129,7 @@ if errorlevel 1 (
     cmake -S "%SRC%" -B "%BLD%" -G Ninja -DCMAKE_BUILD_TYPE=Release
     if errorlevel 1 (
         echo [build-dll] ERROR: cmake configure failed.
-        set "RC=6" & goto end
+        set "BRC=6" & goto end
     )
 )
 
@@ -137,13 +137,13 @@ rem ---- 4. build --------------------------------------------------------------
 cmake --build "%BLD%" --config Release --parallel
 if errorlevel 1 (
     echo [build-dll] ERROR: build failed.
-    set "RC=7" & goto end
+    set "BRC=7" & goto end
 )
 
 if not exist "%DLL%" if exist "%BLD%\WristKeyCredentialProvider.dll" set "DLL=%BLD%\WristKeyCredentialProvider.dll"
 if not exist "%DLL%" (
     echo [build-dll] ERROR: build reported success but %DLL% is missing.
-    set "RC=8" & goto end
+    set "BRC=8" & goto end
 )
 
 echo.
@@ -158,7 +158,7 @@ set "FAILED=0"
 for %%T in (ProviderSmokeTest ScenarioSafetySmokeTest UserArraySmokeTest SerializationSmokeTest) do call :run_test %%T
 if not "%FAILED%"=="0" (
     echo [build-dll] %FAILED% smoke test^(s^) FAILED.
-    set "RC=9" & goto end
+    set "BRC=9" & goto end
 )
 echo [build-dll] all smoke tests passed.
 
@@ -166,15 +166,15 @@ echo [build-dll] all smoke tests passed.
 echo.
 echo Install ^(Administrator PowerShell^):
 echo   powershell -ExecutionPolicy Bypass -File "%SRC%\install.ps1" -Action Install -DllPath "%DLL%"
-set "RC=0" & goto end
+set "BRC=0" & goto end
 
 :end
-if not "%RC%"=="0" (
+if not "%BRC%"=="0" (
     echo.
-    echo [build-dll] FAILED with code %RC% -- window kept open so you can copy the error.
+    echo [build-dll] FAILED with code %BRC% -- window kept open so you can copy the error.
     pause
 )
-exit /b %RC%
+exit /b %BRC%
 
 :run_test
 set "EXE=%BLD%\Release\%1.exe"
