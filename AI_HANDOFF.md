@@ -8,13 +8,35 @@
 
 ---
 
+## ⛔ ЭТАЛОН — Windows Credential Provider (native C++ DLL) НЕ ЛОМАТЬ
+
+`windows-credential-provider/` (`src/Provider.cpp`, `Provider.h`, `exports.cpp`, `ServiceInstall.cpp`, `CMakeLists.txt`, `*.def`) — **рабочий эталон**. Пользователь собрал его (MSVC через `build-dll.cmd`, mingw тоже собирается) и принял как базу. Другим AI **запрещено** переписывать, «упрощать», «чистить» или заменять его другим подходом (C#/.NET, MS-sample, другой набор полей) без прямой просьбы пользователя в текущем чате.
+
+Что в нём намеренно и нельзя «исправлять»:
+- **4 поля** `TileImage=0, Tile=1, Status=2, Submit=3`; `GetFieldDescriptorAt` выделяет дескриптор через `CoTaskMemAlloc` и проверяет `FAILED(hr)` (баг `CopyString(...) ? x : E_OUTOFMEMORY` уже был — `S_OK==0`).
+- **Сериализация = `KERB_INTERACTIVE_UNLOCK_LOGON`**, self-relative (`UNICODE_STRING.Buffer` = смещение), пакет `Negotiate`, `KerbWorkstationUnlockLogon` для unlock / `KerbInteractiveLogon` для logon. Сырая строка `\0user\0pass\0` с `ulAuthenticationPackage=0` Windows не принимает.
+- **Pipe `\\.\pipe\wristkey`**: JSON-lines, действия `unlock`, `get_username`, `proximity`; ответ содержит `"status":"success"`, `"present":true`. Менять формат — только синхронно с `desktop/crates/daemon/src/lib.rs`.
+- **Автологон** решается в `GetCredentialCount` (по `proximity`, cooldown 30 с); `SetSelected` всегда `FALSE`. Поток слежения вызывает `CredentialsChanged` только на фронте absent→present.
+- **Служба**: DLL сама ставит/запускает службу `WristKey` из `HKLM\SOFTWARE\WristKey\ExePath` (+ `DataDir`), см. `ServiceInstall.cpp`. Автозапуск приложения от этого не зависит.
+- **`PKEY_Identity_QualifiedUserName` определён локально** (в MSVC `uuid.lib` его нет — иначе LNK2019).
+- **Регистрация** (`exports.cpp`) сначала удаляет все старые записи WristKey (HKLM+HKCU), потом пишет CLSID `{7E1B7B8A-4C8B-4C2F-9D8A-8D3A7F2E51A1}`; без этого появляются дубли плиток.
+- Переменную окружения `RC` в `.cmd` **не использовать** — CMake читает её как resource compiler.
+
+Правила для любого AI:
+1. Нужна правка DLL → минимальный diff, только по запросу пользователя; объяснить, что и почему.
+2. После правки обязательно собрать: `cmake` с mingw (`x86_64-w64-mingw32-g++`) **и** `build-dll.cmd` на Windows; не заявлять «работает» без проверки на экране входа.
+3. Не возвращать удалённое: `desktop/crates/credential-provider` (C#) и `.microsoft-v2-control` — устаревшие подходы.
+4. Откат к эталону: `git checkout cp-reference-1 -- windows-credential-provider/`.
+
+---
+
 ## 0. Быстрый старт
 
 - **GUI — Tauri v2, не eframe.** Точка входа: `desktop/tauri/src-tauri/src/main.rs`. Старые `daemon/src/main.rs`, `gui.rs`, `pair_gui.rs`, `tray.rs` не являются текущей архитектурой.
 - **Storage — SQLite, не sled.** `wristkey_core::SqliteStorage`.
 - **Daemon — library crate.** `desktop/crates/daemon/src/lib.rs` содержит proximity loop и crypto unlock; `conn_mgr.rs` управляет BLE connections.
 - **Crypto unlock НЕ должен обходиться RSSI.** Рабочий путь: `session.begin_unlock()` → GATT challenge write → notify response → `session.verify_unlock()` → `platform.unlock_screen()`.
-- **Windows Credential Provider** — отдельный C#/.NET проект в `desktop/crates/credential-provider/`; он требует проверки на реальной Windows.
+- **Windows Credential Provider** — нативная C++ DLL в `windows-credential-provider/` (**эталон, см. блок ⛔ выше**). Старый C#/.NET проект отменён.
 - **Логи ПК:** `tracing_appender::rolling::daily` создаёт `wristkey.YYYY-MM-DD`, а не `wristkey.log`. В Tauri есть Diagnostics/`get_log_dir`.
 - **Wear OS:** GATT server — `WristKeyBleService.kt`; advertising разбит на primary + scan response из-за лимита legacy BLE advertising.
 
@@ -211,6 +233,8 @@ Tauri `calibrate_proximity` собирает RSSI 10 секунд, считае�
 6. использование baseline в proximity loop.
 
 ### 3.4 Windows Credential Provider
+
+> Актуально (2026-10-28): провайдер — нативная C++ DLL, собирается и принята как эталон (блок ⛔ в начале файла). Текст ниже — исторический (C#), не использовать как инструкцию.
 
 Credential Provider — отдельный C#/.NET COM проект. Для lock screen плитки недостаточно просто иметь Rust daemon или DLL в репозитории: COM registration, правильная архитектура DLL, registry entries и Windows logon integration должны быть реально проверены на Windows.
 
