@@ -81,7 +81,7 @@
 
 | # | Шаг | Где | Проверка без Windows |
 |---|---|---|---|
-| 1 | `session.rs`: FSM + тесты | `daemon` | `cargo test -p wristkey-daemon` |
+| 1 | ✅ FSM + 12 тестов: `core/src/unlock_session.rs` (в `core`, т.к. `daemon` не собирается на Linux) | `core` | `cargo test -p wristkey-core --lib unlock_session` |
 | 2 | Pipe v2 (`ui_shown`, `session_state`, `consume`, `unlock_failed`, `ui_hidden`) | `daemon/lib.rs` | юнит + `wristkeyctl` |
 | 3 | PREAUTH: демон запускает challenge сам; grant store; режимы | `daemon`, `core::Config` | mock-watch |
 | 4 | `--mock-watch` + `wristkeyctl` | `daemon`, новый bin | CI на Linux |
@@ -90,7 +90,11 @@
 | 7 | UI приложения: выбор режима, статус сессии, «недавние попытки» | Tauri | вручную |
 | 8 | Win+L-окно, backoff, аудит-лог | `daemon` | юнит |
 
-## 7. Открытые решения (нужны от владельца)
+## 7. Решения владельца
+- Режимы: поддерживаются оба (`silent` и `confirm`), по умолчанию `confirm`; `silent` без данных on-body сам работает как `confirm`.
+- Датчик on-body: наличие не подтверждено, определяется на часах в рантайме.
+
+## 7a. Ещё открыто
 1. Режим по умолчанию: `confirm` (рекомендую) или `silent`?
 2. Есть ли у часов датчик on-body в нужной модели (Wear OS `Sensor.TYPE_LOW_LATENCY_OFFBODY_DETECT`)? Без него `silent` небезопасен.
 3. Разрешено ли менять эталонную DLL (шаг 5)? Объём: ~60 строк, только pipe-вызовы.
