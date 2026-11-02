@@ -38,8 +38,7 @@
       "wix": null
     },
     "resources": [
-      "../../../windows-credential-provider/build/Release/WristKeyCredentialProvider.dll",
-      "../../target/release/wristkey-service.exe"
+      "../../../windows-credential-provider/build/Release/WristKeyCredentialProvider.dll"
     ],
     "icon": [
       "icons/32x32.png",
