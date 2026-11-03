@@ -93,6 +93,8 @@ impl Session {
 
     pub fn set_mode(&mut self, mode: UnlockMode) { self.mode = mode; }
     pub fn failures(&self) -> u32 { self.failures }
+    pub fn mode(&self) -> UnlockMode { self.mode }
+    pub fn present(&self) -> bool { self.present }
 
     /// Silent only counts when the watch confirms it is on the wrist and the
     /// Win+L window has passed; otherwise a tap is required.
@@ -198,6 +200,103 @@ impl Session {
             _ => Err(ConsumeError::NoGrant),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Hub: Session + action queue + the one-time secret held by a grant.
+// ---------------------------------------------------------------------------
+
+fn wipe(s: String) {
+    let mut b = s.into_bytes();
+    for byte in b.iter_mut() {
+        // volatile so the compiler cannot drop the wipe as a dead store
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+}
+
+/// Snapshot for `session_state` replies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    pub state: &'static str,
+    pub grant_id: Option<String>,
+    pub mode: UnlockMode,
+    pub present: bool,
+    pub failures: u32,
+    /// Seconds until the grant / backoff ends (0 if not applicable).
+    pub remaining_secs: u64,
+}
+
+/// Thread-safe-by-ownership (wrap in a `Mutex`). Events may come from any task;
+/// a single driver drains `take_actions()` and performs the IO.
+pub struct Hub {
+    session: Session,
+    queue: Vec<Action>,
+    secret: Option<String>,
+    epoch: std::time::Instant,
+}
+
+impl Hub {
+    pub fn new(mode: UnlockMode) -> Self {
+        Self { session: Session::new(mode), queue: Vec::new(), secret: None, epoch: std::time::Instant::now() }
+    }
+
+    fn now(&self) -> u64 { self.epoch.elapsed().as_secs() }
+
+    fn drop_secret_unless_granted(&mut self) {
+        if !matches!(self.session.state, State::GrantReady { .. }) {
+            if let Some(s) = self.secret.take() { wipe(s); }
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: UnlockMode) { self.session.set_mode(mode); }
+
+    pub fn handle(&mut self, ev: Event) {
+        let now = self.now();
+        let actions = self.session.handle(ev, now);
+        self.queue.extend(actions);
+        self.drop_secret_unless_granted();
+    }
+
+    pub fn take_actions(&mut self) -> Vec<Action> { std::mem::take(&mut self.queue) }
+
+    /// The watch signed: store the secret and open a grant. Returns the grant id,
+    /// or None if no pre-authentication is in progress (the secret is wiped).
+    pub fn approve(&mut self, secret: String) -> Option<String> {
+        if !matches!(self.session.state, State::Preauth { .. }) { wipe(secret); return None; }
+        let grant_id = uuid::Uuid::new_v4().to_string();
+        self.secret = Some(secret);
+        self.handle(Event::WatchApproved { grant_id: grant_id.clone() });
+        Some(grant_id)
+    }
+
+    /// Single-use: returns the secret and removes it.
+    pub fn consume(&mut self, grant_id: &str) -> Result<String, ConsumeError> {
+        let now = self.now();
+        let r = self.session.consume(grant_id, now);
+        match r {
+            Ok(()) => Ok(self.secret.take().unwrap_or_default()),
+            Err(e) => { self.drop_secret_unless_granted(); Err(e) }
+        }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        let now = self.now();
+        let (state, grant_id, remaining) = match &self.session.state {
+            State::Unlocked => ("unlocked", None, 0),
+            State::LockedUiShown => ("locked", None, 0),
+            State::Preauth { needs_tap: true } => ("preauth_tap", None, 0),
+            State::Preauth { needs_tap: false } => ("preauth", None, 0),
+            State::GrantReady { grant_id, expires } => ("grant_ready", Some(grant_id.clone()), expires.saturating_sub(now)),
+            State::Failed { until } => ("failed", None, until.saturating_sub(now)),
+            State::Disabled => ("disabled", None, 0),
+        };
+        Snapshot { state, grant_id, mode: self.session.mode(), present: self.session.present(),
+                   failures: self.session.failures(), remaining_secs: remaining }
+    }
+}
+
+impl Drop for Hub {
+    fn drop(&mut self) { if let Some(s) = self.secret.take() { wipe(s); } }
 }
 
 #[cfg(test)]
@@ -336,5 +435,32 @@ mod tests {
         s.handle(Event::UiShown, 0);
         assert_eq!(s.handle(Event::UiHidden, 1), vec![Action::CancelPreauth]);
         assert_eq!(s.state, State::Unlocked);
+    }
+
+    #[test]
+    fn hub_full_flow_and_single_use_secret() {
+        let mut h = Hub::new(UnlockMode::Confirm);
+        h.handle(Event::Presence(true));
+        h.handle(Event::UiShown);
+        assert_eq!(h.take_actions(), vec![Action::StartPreauth { needs_tap: true }]);
+        assert_eq!(h.snapshot().state, "preauth_tap");
+        let id = h.approve("pw".into()).unwrap();
+        assert_eq!(h.take_actions(), vec![Action::NotifyGrantReady]);
+        let snap = h.snapshot();
+        assert_eq!((snap.state, snap.grant_id.as_deref()), ("grant_ready", Some(id.as_str())));
+        assert_eq!(h.consume("nope"), Err(ConsumeError::WrongGrant));
+        assert_eq!(h.consume(&id), Ok("pw".to_string()));
+        assert_eq!(h.consume(&id), Err(ConsumeError::NoGrant));
+    }
+
+    #[test]
+    fn hub_secret_dropped_when_grant_lost() {
+        let mut h = Hub::new(UnlockMode::Confirm);
+        h.handle(Event::Presence(true));
+        h.handle(Event::UiShown);
+        let id = h.approve("pw".into()).unwrap();
+        h.handle(Event::Presence(false)); // walked away
+        assert_eq!(h.consume(&id), Err(ConsumeError::NoGrant));
+        assert!(h.approve("late".into()).is_none()); // no preauth running
     }
 }

@@ -233,6 +233,8 @@ pub struct Config {
     pub auto_unlock: bool,
     /// Automatically submit the WristKey credential on workstation resume when the daemon reports fresh watch proximity.
     pub auto_unlock_on_resume: bool,
+    /// silent | confirm | manual (see docs/AUTOLOGIN_DESIGN.md). Silent needs an on-wrist signal from the watch.
+    pub unlock_mode: unlock_session::UnlockMode,
 }
 
 impl Default for Config {
@@ -240,7 +242,8 @@ impl Default for Config {
         Self { auto_lock_timeout_sec: 30, rssi_threshold_offset_dbm: 15, challenge_timeout_sec: 10,
             log_to_file: true, log_to_console: true, log_level: "info".into(),
             msa_server_url: String::new(), msa_token: String::new(), msa_account: String::new(),
-            auto_unlock: true, auto_unlock_on_resume: true }
+            auto_unlock: true, auto_unlock_on_resume: true,
+            unlock_mode: unlock_session::UnlockMode::Confirm }
     }
 }
 

@@ -13,6 +13,32 @@ use std::time::Duration;
 static LAST_IN_RANGE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 const PRESENCE_FRESH_SECS: u64 = 8;
 
+/// Watch-assisted sign-in session (see docs/AUTOLOGIN_DESIGN.md). Events come
+/// from pipe handlers and the driver; only the driver performs BLE IO.
+static HUB: std::sync::OnceLock<std::sync::Mutex<wristkey_core::unlock_session::Hub>> = std::sync::OnceLock::new();
+
+fn hub() -> std::sync::MutexGuard<'static, wristkey_core::unlock_session::Hub> {
+    HUB.get_or_init(|| std::sync::Mutex::new(wristkey_core::unlock_session::Hub::new(Default::default())))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+fn resolve_mode(c: &wristkey_core::Config) -> wristkey_core::unlock_session::UnlockMode {
+    if c.auto_unlock && c.auto_unlock_on_resume { c.unlock_mode } else { wristkey_core::unlock_session::UnlockMode::Manual }
+}
+
+fn snapshot_json(s: &wristkey_core::unlock_session::Snapshot) -> serde_json::Value {
+    serde_json::json!({
+        "status": "success",
+        "state": s.state,
+        "grant_id": s.grant_id,
+        "mode": serde_json::to_value(s.mode).unwrap_or(serde_json::Value::Null),
+        "present": s.present,
+        "failures": s.failures,
+        "remaining_secs": s.remaining_secs,
+    })
+}
+
 fn set_in_range(in_range: bool) {
     if let Ok(mut g) = LAST_IN_RANGE.lock() {
         if in_range { *g = Some(std::time::Instant::now()); } else { *g = None; }
@@ -160,6 +186,15 @@ impl Daemon {
             let conn_mgr = self.conn_mgr.clone();
             let shutdown = shutdown_rx.clone();
             tokio::spawn(pipe_server::run(session, ble, conn_mgr, shutdown))
+        };
+
+        #[cfg(windows)]
+        let _session_driver = {
+            let session = self.session.clone();
+            let ble = self.ble.clone();
+            let conn_mgr = self.conn_mgr.clone();
+            let shutdown = shutdown_rx.clone();
+            tokio::spawn(pipe_server::session_driver(session, ble, conn_mgr, shutdown))
         };
 
         #[cfg(windows)]
@@ -470,6 +505,58 @@ mod pipe_server {
         }
     }
 
+    /// Drives the sign-in session: feeds presence/ticks to the hub and runs the
+    /// watch pre-authentication when the hub asks for it. The credential
+    /// provider never waits on BLE: it polls `session_state` and `consume`s.
+    pub async fn session_driver(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>) {
+        use wristkey_core::unlock_session::{Action, Event};
+        let mut tick = interval(Duration::from_millis(500));
+        let mut task: Option<tokio::task::JoinHandle<()>> = None;
+        let mut n: u32 = 0;
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => { if let Some(t) = task.take() { t.abort(); } return; }
+                _ = tick.tick() => {}
+            }
+            n = n.wrapping_add(1);
+            if n % 10 == 1 {
+                if let Ok(c) = session.load_config().await { hub().set_mode(resolve_mode(&c)); }
+            }
+            let running = task.as_ref().map_or(false, |t| !t.is_finished());
+            let actions = {
+                let mut h = hub();
+                // The exchange itself proves the watch is there; don't let the
+                // 8 s range hint expiring mid-exchange cancel it.
+                h.handle(Event::Presence(watch_in_range() || running));
+                h.handle(Event::Tick);
+                h.take_actions()
+            };
+            for action in actions {
+                match action {
+                    Action::StartPreauth { needs_tap } => {
+                        if running { continue; }
+                        info!("session: pre-authenticating with the watch (needs_tap={})", needs_tap);
+                        let (session, ble, conn_mgr) = (session.clone(), ble.clone(), conn_mgr.clone());
+                        task = Some(tokio::spawn(async move {
+                            let config = session.load_config().await.unwrap_or_default();
+                            match do_ble_unlock(session, ble, conn_mgr, config, None).await {
+                                Ok(password) => {
+                                    if hub().approve(password).is_some() { info!("session: grant ready"); }
+                                }
+                                Err(e) => {
+                                    warn!("session: pre-authentication failed: {}", e);
+                                    hub().handle(Event::WatchDenied);
+                                }
+                            }
+                        }));
+                    }
+                    Action::CancelPreauth => { if let Some(t) = task.take() { t.abort(); } }
+                    Action::NotifyGrantReady => {}
+                }
+            }
+        }
+    }
+
     pub async fn run_named(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, mut shutdown: watch::Receiver<()>, pipe_name: &str) {
         loop {
             // A named-pipe instance serves exactly one client. Create a fresh
@@ -641,6 +728,55 @@ mod pipe_server {
             "proximity" => {
                 let enabled = session.load_config().await.map(|c| c.auto_unlock && c.auto_unlock_on_resume).unwrap_or(false);
                 serde_json::json!({"status":"success","present": enabled && watch_in_range()})
+            }
+            // ---- sign-in session (docs/AUTOLOGIN_DESIGN.md) ----
+            "ui_shown" => {
+                let mode = session.load_config().await.map(|c| resolve_mode(&c))
+                    .unwrap_or(wristkey_core::unlock_session::UnlockMode::Manual);
+                let mut h = hub();
+                h.set_mode(mode);
+                h.handle(wristkey_core::unlock_session::Event::UiShown);
+                snapshot_json(&h.snapshot())
+            }
+            "ui_hidden" => {
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::UiHidden);
+                snapshot_json(&h.snapshot())
+            }
+            "user_locked" => {
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::UserLocked);
+                snapshot_json(&h.snapshot())
+            }
+            "on_body" => {
+                let v = request.get("value").and_then(|v| v.as_bool());
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::OnBody(v));
+                snapshot_json(&h.snapshot())
+            }
+            "manual_unlock" => {
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::ManualUnlock);
+                snapshot_json(&h.snapshot())
+            }
+            "session_state" => snapshot_json(&hub().snapshot()),
+            "consume" => {
+                let id = request.get("grant_id").and_then(|v| v.as_str()).unwrap_or("");
+                match hub().consume(id) {
+                    Ok(password) if !password.is_empty() => serde_json::json!({"status":"success","password":password}),
+                    Ok(_) => serde_json::json!({"status":"error","message":"grant carried no password"}),
+                    Err(e) => serde_json::json!({"status":"error","message":format!("{:?}", e)}),
+                }
+            }
+            "unlock_failed" => {
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::UnlockFailed);
+                snapshot_json(&h.snapshot())
+            }
+            "reset_session" => {
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::PasswordLogin);
+                snapshot_json(&h.snapshot())
             }
             "clear_password" => match clear_stored_password(session).await {
                 Ok(()) => serde_json::json!({"status":"success"}),

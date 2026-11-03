@@ -82,8 +82,8 @@
 | # | Шаг | Где | Проверка без Windows |
 |---|---|---|---|
 | 1 | ✅ FSM + 12 тестов: `core/src/unlock_session.rs` (в `core`, т.к. `daemon` не собирается на Linux) | `core` | `cargo test -p wristkey-core --lib unlock_session` |
-| 2 | Pipe v2 (`ui_shown`, `session_state`, `consume`, `unlock_failed`, `ui_hidden`) | `daemon/lib.rs` | юнит + `wristkeyctl` |
-| 3 | PREAUTH: демон запускает challenge сам; grant store; режимы | `daemon`, `core::Config` | mock-watch |
+| 2 | ✅ Pipe v2: `ui_shown`, `ui_hidden`, `user_locked`, `on_body`, `manual_unlock`, `session_state`, `consume`, `unlock_failed`, `reset_session` (`daemon/lib.rs`, не собрано — Windows-only) | `daemon/lib.rs` | юнит + `wristkeyctl` |
+| 3 | ✅ PREAUTH: `session_driver` (демон сам запускает challenge), `Hub` (grant + секрет с обнулением), `Config.unlock_mode`. Пока `silent` = тот же обмен с тапом: тихая подпись нужна на стороне часов (шаг 6) | `daemon`, `core` | mock-watch |
 | 4 | `--mock-watch` + `wristkeyctl` | `daemon`, новый bin | CI на Linux |
 | 5 | CP: отправка `ui_shown/ui_hidden/unlock_failed`, опрос `session_state`, `consume` в `GetSerialization` | `Provider.cpp` (мин. дифф, **согласовать с владельцем эталона**) | mingw-сборка + тест-харнесс |
 | 6 | Часы: режимы silent/confirm, on-body, UI подтверждения | Wear OS | вручную |
