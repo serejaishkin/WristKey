@@ -23,6 +23,15 @@ fn hub() -> std::sync::MutexGuard<'static, wristkey_core::unlock_session::Hub> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
+/// Dev/test only: WRISTKEY_MOCK_WATCH=1 in the service's environment lets
+/// `wristkeyctl mock ...` stand in for the watch (no BLE pre-auth is started).
+fn mock_enabled() -> bool {
+    std::env::var_os("WRISTKEY_MOCK_WATCH").map_or(false, |v| v == "1")
+}
+
+/// 0 = real presence, 1 = forced present, 2 = forced absent.
+static MOCK_PRESENCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
 fn resolve_mode(c: &wristkey_core::Config) -> wristkey_core::unlock_session::UnlockMode {
     if c.auto_unlock && c.auto_unlock_on_resume { c.unlock_mode } else { wristkey_core::unlock_session::UnlockMode::Manual }
 }
@@ -527,7 +536,12 @@ mod pipe_server {
                 let mut h = hub();
                 // The exchange itself proves the watch is there; don't let the
                 // 8 s range hint expiring mid-exchange cancel it.
-                h.handle(Event::Presence(watch_in_range() || running));
+                let presence = match MOCK_PRESENCE.load(std::sync::atomic::Ordering::Relaxed) {
+                    1 if mock_enabled() => true,
+                    2 if mock_enabled() => false,
+                    _ => watch_in_range() || running,
+                };
+                h.handle(Event::Presence(presence));
                 h.handle(Event::Tick);
                 h.take_actions()
             };
@@ -535,6 +549,7 @@ mod pipe_server {
                 match action {
                     Action::StartPreauth { needs_tap } => {
                         if running { continue; }
+                        if mock_enabled() { info!("session: MOCK watch -- waiting for `wristkeyctl mock approve|deny`"); continue; }
                         info!("session: pre-authenticating with the watch (needs_tap={})", needs_tap);
                         let (session, ble, conn_mgr) = (session.clone(), ble.clone(), conn_mgr.clone());
                         task = Some(tokio::spawn(async move {
@@ -776,6 +791,27 @@ mod pipe_server {
             "reset_session" => {
                 let mut h = hub();
                 h.handle(wristkey_core::unlock_session::Event::PasswordLogin);
+                snapshot_json(&h.snapshot())
+            }
+            "mock_presence" | "mock_approve" | "mock_deny" if !mock_enabled() => {
+                serde_json::json!({"status":"error","message":"mock watch disabled (set WRISTKEY_MOCK_WATCH=1 for the service)"})
+            }
+            "mock_presence" => {
+                let v = match request.get("value").and_then(|v| v.as_bool()) { Some(true) => 1, Some(false) => 2, None => 0 };
+                MOCK_PRESENCE.store(v, std::sync::atomic::Ordering::Relaxed);
+                serde_json::json!({"status":"success","mock_presence":v})
+            }
+            "mock_approve" => {
+                let pw = request.get("password").and_then(|v| v.as_str()).unwrap_or("mock-password").to_string();
+                let granted = hub().approve(pw);
+                match granted {
+                    Some(id) => serde_json::json!({"status":"success","grant_id":id}),
+                    None => serde_json::json!({"status":"error","message":"no pre-authentication in progress (run ui-shown with presence on first)"}),
+                }
+            }
+            "mock_deny" => {
+                let mut h = hub();
+                h.handle(wristkey_core::unlock_session::Event::WatchDenied);
                 snapshot_json(&h.snapshot())
             }
             "clear_password" => match clear_stored_password(session).await {

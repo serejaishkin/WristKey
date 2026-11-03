@@ -1,0 +1,11 @@
+[package]
+name = "wristkeyctl"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "wristkeyctl"
+path = "src/main.rs"
+
+[dependencies]

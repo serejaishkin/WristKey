@@ -77,6 +77,19 @@
 4. **Тест-харнесс CP** (CMake, не регистрируется в LogonUI): фейковый `ICredentialProviderEvents` + тестовый pipe-сервер проверяют: `ui_shown` отправлен, `CredentialsChanged` вызван ровно на фронте `grant_ready`, `consume` в `GetSerialization`, `unlock_failed` в `ReportResult`.
 5. **VM-сценарий**: Windows-VM со снапшотом + `build-dll.cmd` + `regsvr32`; блокировка `Win+L` → `wristkeyctl mock approve` → вход. Записать как чек-лист.
 
+### Сценарий без часов (Администраторская консоль)
+```
+setx /M WRISTKEY_MOCK_WATCH 1         # затем перезапустить службу: sc stop WristKey & sc start WristKey
+cargo run -p wristkeyctl -- watch     # в 2-м окне: живое состояние
+wristkeyctl mock presence on          # «часы рядом»
+wristkeyctl ui-shown                  # экран входа показан -> preauth
+wristkeyctl mock approve              # «часы подписали» -> grant_ready
+wristkeyctl consume <grant_id>        # пароль выдаётся один раз
+wristkeyctl fail ; wristkeyctl state  # backoff 30 с -> 2 мин -> disabled
+wristkeyctl reset                     # как вход паролем
+```
+Не оставляйте `WRISTKEY_MOCK_WATCH` на рабочей машине: mock_approve кладёт произвольный пароль в grant.
+
 ## 6. План работ (каждый шаг отдельным коммитом, DLL — минимальные диффы)
 
 | # | Шаг | Где | Проверка без Windows |
@@ -84,7 +97,7 @@
 | 1 | ✅ FSM + 12 тестов: `core/src/unlock_session.rs` (в `core`, т.к. `daemon` не собирается на Linux) | `core` | `cargo test -p wristkey-core --lib unlock_session` |
 | 2 | ✅ Pipe v2: `ui_shown`, `ui_hidden`, `user_locked`, `on_body`, `manual_unlock`, `session_state`, `consume`, `unlock_failed`, `reset_session` (`daemon/lib.rs`, не собрано — Windows-only) | `daemon/lib.rs` | юнит + `wristkeyctl` |
 | 3 | ✅ PREAUTH: `session_driver` (демон сам запускает challenge), `Hub` (grant + секрет с обнулением), `Config.unlock_mode`. Пока `silent` = тот же обмен с тапом: тихая подпись нужна на стороне часов (шаг 6) | `daemon`, `core` | mock-watch |
-| 4 | `--mock-watch` + `wristkeyctl` | `daemon`, новый bin | CI на Linux |
+| 4 | ✅ `wristkeyctl` (`desktop/crates/wristkeyctl`, 3 теста) + mock-режим демона: служба с `WRISTKEY_MOCK_WATCH=1` принимает `mock presence|approve|deny` вместо часов | `daemon`, `wristkeyctl` | см. «Сценарий без часов» |
 | 5 | CP: отправка `ui_shown/ui_hidden/unlock_failed`, опрос `session_state`, `consume` в `GetSerialization` | `Provider.cpp` (мин. дифф, **согласовать с владельцем эталона**) | mingw-сборка + тест-харнесс |
 | 6 | Часы: режимы silent/confirm, on-body, UI подтверждения | Wear OS | вручную |
 | 7 | UI приложения: выбор режима, статус сессии, «недавние попытки» | Tauri | вручную |
