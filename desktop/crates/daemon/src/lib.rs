@@ -554,7 +554,7 @@ mod pipe_server {
                         let (session, ble, conn_mgr) = (session.clone(), ble.clone(), conn_mgr.clone());
                         task = Some(tokio::spawn(async move {
                             let config = session.load_config().await.unwrap_or_default();
-                            match do_ble_unlock(session, ble, conn_mgr, config, None).await {
+                            match do_ble_unlock(session, ble, conn_mgr, config, None, needs_tap).await {
                                 Ok(password) => {
                                     if hub().approve(password).is_some() { info!("session: grant ready"); }
                                 }
@@ -690,7 +690,7 @@ mod pipe_server {
         let response = match request.get("action").and_then(|v| v.as_str()).unwrap_or("") {
             "unlock" => {
                 let token = request.get("token").and_then(|v| v.as_i64());
-                match do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), config.clone(), token).await {
+                match do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), config.clone(), token, false).await {
                     Ok(password) => serde_json::json!({"status":"success","password":password}),
                     Err(e) => serde_json::json!({"status":"error","message":e.to_string()}),
                 }
@@ -847,7 +847,7 @@ mod pipe_server {
         session.clear_device_password(device.id).await
     }
 
-    async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, config: wristkey_core::Config, token: Option<i64>) -> Result<String> {
+    async fn do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, config: wristkey_core::Config, token: Option<i64>, force_tap: bool) -> Result<String> {
         let devices = session.list_paired_devices().await?;
         // No BLE watch paired: fall back to the LAN binding if one is configured.
         // Otherwise the credential provider has no way to unlock this PC.
@@ -861,7 +861,7 @@ mod pipe_server {
 
         let mut last_error = None;
         for attempt in 1..=3 {
-            match try_do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), &device, service_uuid, token).await {
+            match try_do_ble_unlock(session.clone(), ble.clone(), conn_mgr.clone(), &device, service_uuid, token, force_tap).await {
                 Ok(password) => return Ok(password),
                 Err(e) => {
                     last_error = Some(e.clone());
@@ -875,7 +875,7 @@ mod pipe_server {
         Err(last_error.unwrap_or_else(|| WristKeyError::Ble("do_ble_unlock failed after 3 attempts".into())))
     }
 
-    async fn try_do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, device: &wristkey_core::PairedDevice, service_uuid: Uuid, token: Option<i64>) -> Result<String> {
+    async fn try_do_ble_unlock(session: Arc<SessionManager>, ble: Arc<dyn BleAdapter>, conn_mgr: Arc<ConnectionManager>, device: &wristkey_core::PairedDevice, service_uuid: Uuid, token: Option<i64>, force_tap: bool) -> Result<String> {
         // Token freshness: reject tokens older than 30 s to prevent replay of
         // a stale unlock request captured from the pipe.
         let now_ms = std::time::SystemTime::now()
@@ -894,7 +894,11 @@ mod pipe_server {
         let conn = conn_mgr.get_or_connect(&ble, &info).await?;
         let response_char = Uuid::parse_str(RESPONSE_CHAR).unwrap();
         let challenge = session.begin_unlock(device.id).await?;
-        ble.write(&conn, Uuid::parse_str(CHALLENGE_CHAR).unwrap(), &challenge.to_bytes()).await?;
+        let mut challenge_bytes = challenge.to_bytes();
+        // Confirm mode: ask the watch for an explicit tap. The watch strips this
+        // flags byte before signing, so verification still covers the 24 bytes.
+        if force_tap { challenge_bytes.push(1); }
+        ble.write(&conn, Uuid::parse_str(CHALLENGE_CHAR).unwrap(), &challenge_bytes).await?;
         let data = wait_for_response(&ble, &conn, response_char, RESPONSE_WAIT_SECS).await?;
         if data.len() < 65 { return Err(WristKeyError::Protocol(format!("unlock response too short: {} bytes", data.len()))); }
         let response = Response { signature: data[..64].to_vec(), user_present: data[64] != 0, timestamp: chrono::Utc::now() };

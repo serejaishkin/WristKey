@@ -44,7 +44,7 @@
 ### 3.3 Режимы (`Config.unlock_mode`)
 | Режим | Условие | Для кого |
 |---|---|---|
-| `silent` | present + часы **на руке** (датчик on-body) + подпись без касания | как Apple Watch |
+| `silent` | present + часы **на руке** (датчик off-body, проверяет сама часы) + недавнее движение; подпись без касания | как Apple Watch |
 | `confirm` (по умолчанию) | present + подпись после тапа на часах | безопаснее |
 | `manual` | только по кнопке на плитке | без автологона |
 
@@ -99,7 +99,7 @@ wristkeyctl reset                     # как вход паролем
 | 3 | ✅ PREAUTH: `session_driver` (демон сам запускает challenge), `Hub` (grant + секрет с обнулением), `Config.unlock_mode`. Пока `silent` = тот же обмен с тапом: тихая подпись нужна на стороне часов (шаг 6) | `daemon`, `core` | mock-watch |
 | 4 | ✅ `wristkeyctl` (`desktop/crates/wristkeyctl`, 3 теста) + mock-режим демона: служба с `WRISTKEY_MOCK_WATCH=1` принимает `mock presence|approve|deny` вместо часов | `daemon`, `wristkeyctl` | см. «Сценарий без часов» |
 | 5 | ✅ CP: `ui_shown`/`ui_hidden` из потока слежения, опрос `session_state`, автологон только при `grant_ready`, `consume` в `GetSerialization`, `unlock_failed` из `ReportResult`; со старой службой — прежний путь (`unlock`/`proximity`). Разрешено владельцем 2026-11-03. mingw-сборка проходит, на экране входа не проверено | `Provider.cpp` | mingw + сценарий без часов |
-| 6 | Часы: режимы silent/confirm, on-body, UI подтверждения | Wear OS | вручную |
+| 6 | ✅ Часы: off-body датчик (`OnBodyDetector`), тихая подпись только на руке + при недавнем движении; PC в режиме `confirm` добавляет к challenge флаг-байт (25-й) «обязательный тап», часы отрезают его перед подписью. **Часы и ПК нужно обновить вместе**: старое приложение на часах подпишет 25 байт, и проверка на ПК не пройдёт. Kotlin не собирался (нет Android SDK) | Wear OS | вручную |
 | 7 | UI приложения: выбор режима, статус сессии, «недавние попытки» | Tauri | вручную |
 | 8 | Win+L-окно, backoff, аудит-лог | `daemon` | юнит |
 

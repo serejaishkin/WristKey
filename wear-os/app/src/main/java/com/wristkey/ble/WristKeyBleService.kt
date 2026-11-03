@@ -12,6 +12,7 @@ import com.wristkey.WristKeySettings
 import com.wristkey.net.LanClient
 import com.wristkey.security.KeyStoreManager
 import com.wristkey.sensors.MotionDetector
+import com.wristkey.sensors.OnBodyDetector
 import com.wristkey.ui.PairingActivity
 import com.wristkey.ui.TrainingActivity
 import com.wristkey.ui.UnlockActivity
@@ -36,6 +37,10 @@ class WristKeyBleService : Service() {
         private const val CHANNEL_ID = "wristkey_ble_channel"
         private const val CHALLENGE_CHANNEL_ID = "wristkey_confirm_channel"
         private const val CHALLENGE_CONFIRM_TIMEOUT_MS = 10_000L
+        // Unlock challenge = nonce(16) + timestamp(8). A PC in "confirm" mode appends
+        // one flags byte; the watch strips it before signing (the PC verifies the 24 bytes).
+        private const val UNLOCK_CHALLENGE_LEN = 24
+        private const val FLAG_REQUIRE_TAP = 1
         // Shared with the settings UI so the paired PC list reflects reality.
         const val PREFS_NAME = "WristKeyPrefs"
         const val PREFS_PAIRED_ADDRESS = "paired_device_address"
@@ -86,6 +91,7 @@ class WristKeyBleService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val keyStoreManager = KeyStoreManager()
     private val motionDetector by lazy { MotionDetector(this) }
+    private val onBodyDetector by lazy { OnBodyDetector(this) }
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val settings by lazy { WristKeySettings(this) }
     // Live LAN/MSA unlock: a PC without Bluetooth asks the wristkey-msa
@@ -140,6 +146,7 @@ class WristKeyBleService : Service() {
         if (isPaired()) startAdvertising()
         registerBluetoothStateReceiver(); registerUnlockReceiver(); registerForgetReceiver()
         motionDetector.start()
+        onBodyDetector.start()
         startLanUnlockPolling()
         debug("BLE service created; paired=${isPaired()} advertising=${isAdvertising()} pinPersisted=true pairingMode=${pairingMode.get()}")
     }
@@ -335,14 +342,22 @@ class WristKeyBleService : Service() {
      * Without recent motion, fall back to an explicit on-watch confirmation
      * instead of staying silent (silence left the PC on a 10 s timeout).
      */
-    private fun respondToPairedChallenge(device: BluetoothDevice?, challenge: ByteArray?): Boolean {
-        if (challenge == null || device == null) return false
+    private fun respondToPairedChallenge(device: BluetoothDevice?, rawChallenge: ByteArray?): Boolean {
+        if (rawChallenge == null || device == null) return false
         if (!isPaired()) return false
-        if (motionDetector.hasRecentMotion()) {
+        // Optional flags byte after the 24-byte challenge (see UNLOCK_CHALLENGE_LEN).
+        val forceTap = rawChallenge.size > UNLOCK_CHALLENGE_LEN &&
+            (rawChallenge[UNLOCK_CHALLENGE_LEN].toInt() and FLAG_REQUIRE_TAP) != 0
+        val challenge = if (rawChallenge.size > UNLOCK_CHALLENGE_LEN) rawChallenge.copyOf(UNLOCK_CHALLENGE_LEN) else rawChallenge
+        // Tap-less signing needs the watch ON the wrist (when the sensor exists) AND recent
+        // motion; the PC asking for "confirm" mode always forces the on-watch tap.
+        val worn = onBodyDetector.isOnBody() != false
+        if (!forceTap && worn && motionDetector.hasRecentMotion()) {
             val answered = answerChallenge(challenge)
-            if (answered) debug("Paired challenge signed for ${device.address} (recent wrist motion)")
+            if (answered) debug("Paired challenge signed for ${device.address} (on wrist, recent motion)")
             return answered
         }
+        debug("Paired challenge needs a tap (forceTap=$forceTap onBody=${onBodyDetector.isOnBody()})")
         return requestExplicitChallengeConfirmation(challenge)
     }
 
@@ -398,7 +413,7 @@ class WristKeyBleService : Service() {
             mainHandler.postDelayed(challengeTimeoutRunnable, CHALLENGE_CONFIRM_TIMEOUT_MS)
         }
         notifier.notify(CHALLENGE_NOTIFICATION_ID, notification)
-        debug("No recent wrist motion -- challenge confirmation notification shown")
+        debug("Challenge confirmation notification shown")
         return true
     }
 
@@ -608,5 +623,5 @@ class WristKeyBleService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(forgetReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(forgetReceiver, filter)
     }
     private val forgetReceiver = object : BroadcastReceiver() { override fun onReceive(context: Context?, intent: Intent?) { if (intent?.action == ACTION_FORGET_DEVICE) { debug("Forget requested from settings UI"); forgetDevice() } } }
-    override fun onDestroy() { mainHandler.removeCallbacks(challengeTimeoutRunnable); mainHandler.removeCallbacks(lanChallengeTimeoutRunnable); lanPollJob?.cancel(); lanScope.cancel(); try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}; stopAdvertising(); stopGattServer(); motionDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
+    override fun onDestroy() { mainHandler.removeCallbacks(challengeTimeoutRunnable); mainHandler.removeCallbacks(lanChallengeTimeoutRunnable); lanPollJob?.cancel(); lanScope.cancel(); try { getSystemService(NotificationManager::class.java).cancel(CHALLENGE_NOTIFICATION_ID) } catch (_: Exception) {}; stopAdvertising(); stopGattServer(); motionDetector.stop(); onBodyDetector.stop(); try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}; try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}; try { unregisterReceiver(forgetReceiver) } catch (_: Exception) {}; wakeLock?.let { if (it.isHeld) it.release() }; super.onDestroy() }
 }

@@ -15,7 +15,7 @@ pub const MAX_FAILURES: u32 = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnlockMode {
-    /// Presence + watch on wrist, no tap (falls back to Confirm without on-body data).
+    /// Presence + watch on wrist, no tap (the watch enforces on-wrist + motion, else it asks for a tap).
     Silent,
     /// Presence, then the user taps on the watch.
     Confirm,
@@ -96,10 +96,11 @@ impl Session {
     pub fn mode(&self) -> UnlockMode { self.mode }
     pub fn present(&self) -> bool { self.present }
 
-    /// Silent only counts when the watch confirms it is on the wrist and the
-    /// Win+L window has passed; otherwise a tap is required.
+    /// Silent skips the forced tap; the watch itself still demands one unless it
+    /// is on the wrist (off-body sensor) with recent motion. An explicit
+    /// off-wrist report or the Win+L window forces the tap from the PC side too.
     fn needs_tap(&self, now: u64) -> bool {
-        !(self.mode == UnlockMode::Silent && self.on_body == Some(true) && now >= self.silent_block_until)
+        !(self.mode == UnlockMode::Silent && self.on_body != Some(false) && now >= self.silent_block_until)
     }
 
     fn auto_start(&mut self, now: u64) -> Vec<Action> {
@@ -346,9 +347,9 @@ mod tests {
     }
 
     #[test]
-    fn silent_needs_on_body_else_tap() {
+    fn silent_skips_forced_tap_unless_off_wrist() {
         let mut s = locked_present(UnlockMode::Silent);
-        assert_eq!(s.handle(Event::UiShown, 0), vec![Action::StartPreauth { needs_tap: true }]);
+        assert_eq!(s.handle(Event::UiShown, 0), vec![Action::StartPreauth { needs_tap: false }]);
         let mut s = locked_present(UnlockMode::Silent);
         s.handle(Event::OnBody(Some(true)), 0);
         assert_eq!(s.handle(Event::UiShown, 0), vec![Action::StartPreauth { needs_tap: false }]);
