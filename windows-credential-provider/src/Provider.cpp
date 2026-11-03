@@ -285,6 +285,100 @@ static bool QueryWatchPresentFromDaemon() {
 }
 
 // -----------------------------------------------------------------------------
+// Sign-in session (daemon "session_*" API, see docs/AUTOLOGIN_DESIGN.md).
+// The daemon pre-authenticates with the watch and holds a one-time grant; the
+// provider only polls the state and consumes the grant. An older service that
+// does not know these actions answers "unknown action": `supported` is false
+// and the provider falls back to the legacy blocking "unlock".
+// -----------------------------------------------------------------------------
+
+struct SessionInfo {
+    bool supported = false;
+    std::string state;      // unlocked|locked|preauth|preauth_tap|grant_ready|failed|disabled
+    std::string grantId;
+    DWORD remainingSecs = 0;
+};
+
+static DWORD ExtractJsonNumber(const std::string& text, const char* key) {
+    const std::string needle = std::string("\"") + key + "\":";
+    const size_t pos = text.find(needle);
+    if (pos == std::string::npos) return 0;
+    return static_cast<DWORD>(strtoul(text.c_str() + pos + needle.size(), nullptr, 10));
+}
+
+// `request` is a full JSON line; every session action replies with the same snapshot.
+static SessionInfo SessionCall(const char* request, DWORD connectMs = 300, DWORD totalMs = 700) {
+    SessionInfo info;
+    std::string response;
+    if (!PipeRoundTrip(request, connectMs, totalMs, response, nullptr)) return info;
+    std::string status;
+    if (!ExtractJsonStringValue(response, "status", status) || status != "success") return info;
+    if (!ExtractJsonStringValue(response, "state", info.state) || info.state.empty()) return info;
+    info.supported = true;
+    ExtractJsonStringValue(response, "grant_id", info.grantId);
+    info.remainingSecs = ExtractJsonNumber(response, "remaining_secs");
+    return info;
+}
+
+static SessionInfo QuerySession() { return SessionCall("{\"action\":\"session_state\"}\n"); }
+
+static std::wstring SessionStatusText(const SessionInfo& si) {
+    if (si.state == "preauth_tap") return L"Confirm on your watch";
+    if (si.state == "preauth") return L"Checking your watch\u2026";
+    if (si.state == "grant_ready") return L"Unlocking\u2026";
+    if (si.state == "failed") return L"WristKey paused \u2014 try again in " + std::to_wstring(si.remainingSecs) + L"s";
+    if (si.state == "disabled") return L"WristKey auto-unlock is off \u2014 sign in with your password";
+    return L"Looking for your watch\u2026";
+}
+
+// Returns false with `supported=false` if the daemon has no session API (caller
+// falls back to RequestUnlockFromDaemon). Otherwise true/false = unlocked or not.
+static bool RequestUnlockViaSession(bool& supported, std::wstring& outPassword, std::wstring& outError,
+                                    ICredentialProviderCredentialEvents* events,
+                                    ICredentialProviderCredential* credential) {
+    supported = true;
+    SessionInfo si = QuerySession();
+    if (!si.supported) { supported = false; return false; }
+
+    if (si.state == "unlocked") si = SessionCall("{\"action\":\"ui_shown\"}\n");
+    if (si.state == "locked") si = SessionCall("{\"action\":\"manual_unlock\"}\n");
+
+    const DWORD start = GetTickCount();
+    std::wstring lastText;
+    while (si.state != "grant_ready") {
+        if (si.state == "failed" || si.state == "disabled" || !si.supported) {
+            outError = L"WristKey: " + SessionStatusText(si);
+            return false;
+        }
+        if (GetTickCount() - start > kUnlockWaitMs) {
+            outError = L"WristKey: the watch did not confirm the unlock.";
+            return false;
+        }
+        const std::wstring text = SessionStatusText(si);
+        if (events && credential && text != lastText) {
+            events->SetFieldString(credential, WristKeyFields::Status, text.c_str());
+            lastText = text;
+        }
+        Sleep(250);
+        si = QuerySession();
+        if (si.state == "locked") si = SessionCall("{\"action\":\"manual_unlock\"}\n");
+    }
+
+    std::string response;
+    const std::string request = "{\"action\":\"consume\",\"grant_id\":\"" + si.grantId + "\"}\n";
+    if (!PipeRoundTrip(request.c_str(), 500, 2000, response, &outError)) return false;
+    std::string status, password;
+    if (!ExtractJsonStringValue(response, "status", status) || status != "success" ||
+        !ExtractJsonStringValue(response, "password", password) || password.empty()) {
+        outError = L"WristKey: the unlock grant was not accepted. Try again.";
+        return false;
+    }
+    outPassword = Utf8ToWide(password);
+    SecureZeroMemory(&password[0], password.size());
+    return true;
+}
+
+// -----------------------------------------------------------------------------
 // Serialization: KERB_INTERACTIVE_UNLOCK_LOGON in the self-relative form that
 // LogonUI hands to LSA (UNICODE_STRING.Buffer holds an offset).
 // -----------------------------------------------------------------------------
@@ -431,28 +525,49 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::SetSerialization(const CREDENTIAL_PR
 DWORD WINAPI WristKeyProvider::PresenceThreadProc(LPVOID param) {
     auto* self = static_cast<WristKeyProvider*>(param);
     bool wasPresent = false;
+    bool wasGrant = false;
+    bool announced = false;
     DWORD lastEnsure = 0;
     do {
         // Service down (never started / crashed / not installed yet): start or
-        // install it from HKLM\SOFTWARE\WristKey\ExePath. Retry every 20 s.
+        // install it from HKLM\\SOFTWARE\\WristKey\\ExePath. Retry every 20 s.
         if (!WaitNamedPipeW(kPipeName, 0) && GetLastError() == ERROR_FILE_NOT_FOUND) {
             const DWORD now = GetTickCount();
             if (lastEnsure == 0 || now - lastEnsure > 20000) {
                 lastEnsure = now ? now : 1;
                 EnsureWristKeyServiceRunning(std::wstring());
             }
+            announced = false;  // re-announce once the service is back
         }
         if (!self->_haveCredentials) continue;
-        const bool present = QueryWatchPresentFromDaemon();
-        if (present && !wasPresent) {
+
+        bool edge = false;
+        SessionInfo si;
+        if (!announced) {
+            si = SessionCall("{\"action\":\"ui_shown\"}\n");
+            announced = si.supported;
+        } else {
+            si = QuerySession();
+        }
+        if (si.supported) {
+            const bool grant = si.state == "grant_ready";
+            edge = grant && !wasGrant;
+            wasGrant = grant;
+        } else {
+            // Legacy service: presence hint only.
+            const bool present = QueryWatchPresentFromDaemon();
+            edge = present && !wasPresent;
+            wasPresent = present;
+        }
+        if (edge) {
             const DWORD last = self->_lastAutoLogonTick;
             const DWORD now = GetTickCount();
             if (last == 0 || now - last > kAutoLogonCooldownMs) {
                 self->RefreshStatus();
             }
         }
-        wasPresent = present;
     } while (WaitForSingleObject(self->_stopEvent, kPollIntervalMs) == WAIT_TIMEOUT);
+    if (announced) SessionCall("{\"action\":\"ui_hidden\"}\n");
     return 0;
 }
 
@@ -604,7 +719,11 @@ HRESULT STDMETHODCALLTYPE WristKeyProvider::GetCredentialCount(DWORD* count, DWO
     if (!_credentials.empty()) {
         const DWORD now = GetTickCount();
         const bool cooledDown = _lastAutoLogonTick == 0 || now - _lastAutoLogonTick > kAutoLogonCooldownMs;
-        if (cooledDown && QueryWatchPresentFromDaemon()) {
+        const SessionInfo si = cooledDown ? QuerySession() : SessionInfo();
+        // New service: auto-logon only once a grant is ready (GetSerialization
+        // then returns instantly). Old service: presence hint, as before.
+        const bool go = si.supported ? si.state == "grant_ready" : (cooledDown && QueryWatchPresentFromDaemon());
+        if (cooledDown && go) {
             _lastAutoLogonTick = now ? now : 1;
             *def = 0;
             *autoLogon = TRUE;
@@ -791,7 +910,13 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::GetSerialization(
     *icon = CPSI_NONE;
 
     std::wstring password, error;
-    if (!RequestUnlockFromDaemon(password, error, _events, static_cast<ICredentialProviderCredential*>(this))) {
+    bool supported = true;
+    bool ok = RequestUnlockViaSession(supported, password, error, _events, static_cast<ICredentialProviderCredential*>(this));
+    if (!supported) {
+        error.clear();
+        ok = RequestUnlockFromDaemon(password, error, _events, static_cast<ICredentialProviderCredential*>(this));
+    }
+    if (!ok) {
         CopyString(error.empty() ? L"WristKey: confirm the unlock on your watch." : error.c_str(), status);
         *icon = CPSI_WARNING;
         return S_OK;
@@ -815,6 +940,9 @@ HRESULT STDMETHODCALLTYPE WristKeyProviderCredential::ReportResult(
     if (status) *status = nullptr;
     if (icon) *icon = CPSI_NONE;
     if (ntsStatus == 0 && ntsSubstatus == 0) return S_OK;
+
+    // Windows rejected what we submitted: let the daemon back off (no lockout loops).
+    SessionCall("{\"action\":\"unlock_failed\"}\n");
 
     const NTSTATUS detail = ntsSubstatus != 0 ? ntsSubstatus : ntsStatus;
     if (status) CopyString((L"WristKey: " + WinErrorText(LsaNtStatusToWinError(detail))).c_str(), status);

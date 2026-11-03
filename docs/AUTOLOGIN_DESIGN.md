@@ -98,7 +98,7 @@ wristkeyctl reset                     # как вход паролем
 | 2 | ✅ Pipe v2: `ui_shown`, `ui_hidden`, `user_locked`, `on_body`, `manual_unlock`, `session_state`, `consume`, `unlock_failed`, `reset_session` (`daemon/lib.rs`, не собрано — Windows-only) | `daemon/lib.rs` | юнит + `wristkeyctl` |
 | 3 | ✅ PREAUTH: `session_driver` (демон сам запускает challenge), `Hub` (grant + секрет с обнулением), `Config.unlock_mode`. Пока `silent` = тот же обмен с тапом: тихая подпись нужна на стороне часов (шаг 6) | `daemon`, `core` | mock-watch |
 | 4 | ✅ `wristkeyctl` (`desktop/crates/wristkeyctl`, 3 теста) + mock-режим демона: служба с `WRISTKEY_MOCK_WATCH=1` принимает `mock presence|approve|deny` вместо часов | `daemon`, `wristkeyctl` | см. «Сценарий без часов» |
-| 5 | CP: отправка `ui_shown/ui_hidden/unlock_failed`, опрос `session_state`, `consume` в `GetSerialization` | `Provider.cpp` (мин. дифф, **согласовать с владельцем эталона**) | mingw-сборка + тест-харнесс |
+| 5 | ✅ CP: `ui_shown`/`ui_hidden` из потока слежения, опрос `session_state`, автологон только при `grant_ready`, `consume` в `GetSerialization`, `unlock_failed` из `ReportResult`; со старой службой — прежний путь (`unlock`/`proximity`). Разрешено владельцем 2026-11-03. mingw-сборка проходит, на экране входа не проверено | `Provider.cpp` | mingw + сценарий без часов |
 | 6 | Часы: режимы silent/confirm, on-body, UI подтверждения | Wear OS | вручную |
 | 7 | UI приложения: выбор режима, статус сессии, «недавние попытки» | Tauri | вручную |
 | 8 | Win+L-окно, backoff, аудит-лог | `daemon` | юнит |
