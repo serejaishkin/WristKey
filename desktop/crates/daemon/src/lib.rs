@@ -36,6 +36,16 @@ fn resolve_mode(c: &wristkey_core::Config) -> wristkey_core::unlock_session::Unl
     if c.auto_unlock && c.auto_unlock_on_resume { c.unlock_mode } else { wristkey_core::unlock_session::UnlockMode::Manual }
 }
 
+/// Status snapshot + audit trail for the (non-elevated) app; see core::session_audit.
+fn files() -> Option<&'static wristkey_core::session_audit::SessionFiles> {
+    static F: std::sync::OnceLock<Option<wristkey_core::session_audit::SessionFiles>> = std::sync::OnceLock::new();
+    F.get_or_init(wristkey_core::session_audit::SessionFiles::default_dir).as_ref()
+}
+
+fn audit(event: &str, detail: &str) {
+    if let Some(f) = files() { f.audit(event, detail); }
+}
+
 fn snapshot_json(s: &wristkey_core::unlock_session::Snapshot) -> serde_json::Value {
     serde_json::json!({
         "status": "success",
@@ -522,6 +532,7 @@ mod pipe_server {
         let mut tick = interval(Duration::from_millis(500));
         let mut task: Option<tokio::task::JoinHandle<()>> = None;
         let mut n: u32 = 0;
+        let mut last_state = String::from("unlocked");
         loop {
             tokio::select! {
                 _ = shutdown.changed() => { if let Some(t) = task.take() { t.abort(); } return; }
@@ -532,6 +543,22 @@ mod pipe_server {
                 if let Ok(c) = session.load_config().await { hub().set_mode(resolve_mode(&c)); }
             }
             let running = task.as_ref().map_or(false, |t| !t.is_finished());
+            // Publish status for the app (every 2 s heartbeat, immediately on change).
+            {
+                let snap = hub().snapshot();
+                let changed = snap.state != last_state;
+                if changed {
+                    audit("state", &format!("{} -> {} (mode {:?}, present {})", last_state, snap.state, snap.mode, snap.present));
+                    last_state = snap.state.to_string();
+                }
+                if changed || n % 4 == 0 {
+                    if let Some(f) = files() {
+                        let mut j = snap.to_json();
+                        if let Some(o) = j.as_object_mut() { o.insert("mock".into(), serde_json::json!(mock_enabled())); }
+                        f.write_status(&j);
+                    }
+                }
+            }
             let actions = {
                 let mut h = hub();
                 // The exchange itself proves the watch is there; don't let the
@@ -556,10 +583,12 @@ mod pipe_server {
                             let config = session.load_config().await.unwrap_or_default();
                             match do_ble_unlock(session, ble, conn_mgr, config, None, needs_tap).await {
                                 Ok(password) => {
-                                    if hub().approve(password).is_some() { info!("session: grant ready"); }
+                                    let approved = hub().approve(password).is_some();
+                                    if approved { info!("session: grant ready"); audit("approved", "watch signed"); }
                                 }
                                 Err(e) => {
                                     warn!("session: pre-authentication failed: {}", e);
+                                    audit("preauth_failed", &e.to_string());
                                     hub().handle(Event::WatchDenied);
                                 }
                             }
@@ -751,11 +780,13 @@ mod pipe_server {
                 let mut h = hub();
                 h.set_mode(mode);
                 h.handle(wristkey_core::unlock_session::Event::UiShown);
+                audit("ui_shown", &format!("mode {:?}", mode));
                 snapshot_json(&h.snapshot())
             }
             "ui_hidden" => {
                 let mut h = hub();
                 h.handle(wristkey_core::unlock_session::Event::UiHidden);
+                audit("ui_hidden", "");
                 snapshot_json(&h.snapshot())
             }
             "user_locked" => {
@@ -777,20 +808,24 @@ mod pipe_server {
             "session_state" => snapshot_json(&hub().snapshot()),
             "consume" => {
                 let id = request.get("grant_id").and_then(|v| v.as_str()).unwrap_or("");
-                match hub().consume(id) {
-                    Ok(password) if !password.is_empty() => serde_json::json!({"status":"success","password":password}),
-                    Ok(_) => serde_json::json!({"status":"error","message":"grant carried no password"}),
-                    Err(e) => serde_json::json!({"status":"error","message":format!("{:?}", e)}),
+                let consumed = hub().consume(id);
+                match consumed {
+                    Ok(password) if !password.is_empty() => { audit("consume", "ok"); serde_json::json!({"status":"success","password":password}) }
+                    Ok(_) => { audit("consume", "grant carried no password"); serde_json::json!({"status":"error","message":"grant carried no password"}) }
+                    Err(e) => { audit("consume", &format!("refused: {:?}", e)); serde_json::json!({"status":"error","message":format!("{:?}", e)}) }
                 }
             }
             "unlock_failed" => {
                 let mut h = hub();
                 h.handle(wristkey_core::unlock_session::Event::UnlockFailed);
-                snapshot_json(&h.snapshot())
+                let snap = h.snapshot();
+                audit("unlock_failed", &format!("Windows rejected the sign-in; failures={} state={}", snap.failures, snap.state));
+                snapshot_json(&snap)
             }
             "reset_session" => {
                 let mut h = hub();
                 h.handle(wristkey_core::unlock_session::Event::PasswordLogin);
+                audit("reset", "session reset");
                 snapshot_json(&h.snapshot())
             }
             "mock_presence" | "mock_approve" | "mock_deny" if !mock_enabled() => {

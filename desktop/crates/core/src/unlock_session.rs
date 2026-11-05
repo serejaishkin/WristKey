@@ -236,6 +236,19 @@ pub struct Hub {
     epoch: std::time::Instant,
 }
 
+impl Snapshot {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "state": self.state,
+            "grant_id": self.grant_id,
+            "mode": self.mode,
+            "present": self.present,
+            "failures": self.failures,
+            "remaining_secs": self.remaining_secs,
+        })
+    }
+}
+
 impl Hub {
     pub fn new(mode: UnlockMode) -> Self {
         Self { session: Session::new(mode), queue: Vec::new(), secret: None, epoch: std::time::Instant::now() }

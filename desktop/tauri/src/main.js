@@ -122,6 +122,38 @@ async function calibrateDevice(id) {
     finally { btn.disabled = false; btn.textContent = '📡 Calibrate'; }
 }
 
+
+function esc(t) { return String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function refreshSession() {
+    const el = document.getElementById('sessionState'); if (!el) return;
+    const T = (k, d) => { const v = window.WristKeyI18n && window.WristKeyI18n.t ? window.WristKeyI18n.t(k) : k; return (!v || v === k) ? d : v; };
+    const names = {
+        unlocked: T('session_unlocked', 'Idle'), locked: T('session_locked', 'Lock screen — looking for the watch'),
+        preauth: T('session_preauth', 'Checking the watch…'), preauth_tap: T('session_preauth_tap', 'Confirm on the watch'),
+        grant_ready: T('session_grant', 'Ready — signing in'), failed: T('session_failed', 'Paused after a failed sign-in'),
+        disabled: T('session_disabled', 'Auto sign-in off until you sign in with the password')
+    };
+    try {
+        const r = await invoke('get_session_status');
+        const s = r.status;
+        if (!s || s.stale) {
+            el.textContent = T('session_service_off', 'Service not running'); el.className = 'status-warn';
+            document.getElementById('sessionDetail').textContent = '';
+        } else {
+            el.textContent = names[s.state] || s.state;
+            el.className = (s.state === 'disabled' || s.state === 'failed') ? 'status-bad' : 'status-ok';
+            const bits = [T('session_mode', 'Mode') + ': ' + s.mode, s.present ? T('session_present', 'watch nearby') : T('session_absent', 'watch not seen')];
+            if (s.failures) bits.push(T('session_failures', 'failures') + ': ' + s.failures);
+            if (s.remaining_secs) bits.push(s.remaining_secs + ' s');
+            if (s.mock) bits.push('MOCK');
+            document.getElementById('sessionDetail').textContent = bits.join(' · ');
+        }
+        document.getElementById('sessionRecent').innerHTML = (r.recent || []).map(e =>
+            esc(new Date(e.ts_ms).toLocaleTimeString()) + ' — <b>' + esc(e.event) + '</b> ' + esc(e.detail || '')).join('<br>');
+    } catch (e) { console.error('refreshSession failed:', e); }
+}
+
 async function loadConfig() {
     try {
         const cfg = await invoke('get_config');
@@ -131,12 +163,25 @@ async function loadConfig() {
         document.getElementById('logFileToggle').checked = cfg.log_to_file;
         document.getElementById('logConsoleToggle').checked = cfg.log_to_console;
         document.getElementById('logLevelSelect').value = cfg.log_level;
+        document.getElementById('autoSigninToggle').checked = !!(cfg.auto_unlock && cfg.auto_unlock_on_resume);
+        document.getElementById('unlockModeSelect').value = cfg.unlock_mode || 'confirm';
     } catch (e) { console.error('loadConfig failed:', e); }
 }
 
 async function saveConfig() {
     try {
-        const cfg = { auto_lock_timeout_sec: parseInt(document.getElementById('timeoutInput').value), rssi_threshold_offset_dbm: parseInt(document.getElementById('rssiInput').value), challenge_timeout_sec: parseInt(document.getElementById('challengeInput').value), log_to_file: document.getElementById('logFileToggle').checked, log_to_console: document.getElementById('logConsoleToggle').checked, log_level: document.getElementById('logLevelSelect').value };
+        // Start from the stored config: it has fields this form does not show
+        // (auto_unlock, unlock_mode, MSA...) that a fresh object would reset.
+        const cfg = await invoke('get_config');
+        cfg.auto_lock_timeout_sec = parseInt(document.getElementById('timeoutInput').value);
+        cfg.rssi_threshold_offset_dbm = parseInt(document.getElementById('rssiInput').value);
+        cfg.challenge_timeout_sec = parseInt(document.getElementById('challengeInput').value);
+        cfg.log_to_file = document.getElementById('logFileToggle').checked;
+        cfg.log_to_console = document.getElementById('logConsoleToggle').checked;
+        cfg.log_level = document.getElementById('logLevelSelect').value;
+        const auto = document.getElementById('autoSigninToggle').checked;
+        cfg.auto_unlock = auto; cfg.auto_unlock_on_resume = auto;
+        cfg.unlock_mode = document.getElementById('unlockModeSelect').value;
         // Carry the MSA fields through: Config uses serde defaults, so omitting
         // them here would silently wipe the LAN settings on every Save.
         const msa = await invoke('get_msa_config');
@@ -410,5 +455,5 @@ document.addEventListener('DOMContentLoaded', function() {
     bootstrapLan();
     document.getElementById('msaDetectBtn')?.addEventListener('click', detectLanAddress);
     document.getElementById('cpFixBtn')?.addEventListener('click', fixSigninTiles);
-    refreshStatus(); refreshDevices(); loadConfig(); loadMsaConfig(); refreshMsaServerStatus(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
+    refreshStatus(); refreshDevices(); loadConfig(); loadMsaConfig(); refreshMsaServerStatus(); loadLogDir(); refreshServiceStatus(); setInterval(refreshStatus, 3000); refreshSession(); setInterval(refreshSession, 2000); setInterval(measureRssi, 2000); setInterval(refreshServiceStatus, 10000);
 });

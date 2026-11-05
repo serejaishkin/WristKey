@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 mod rssi_filter;
 pub mod unlock_session;
+pub mod session_audit;
 pub use rssi_filter::RssiSmoother;
 mod sqlite_storage;
 pub use sqlite_storage::SqliteStorage;
