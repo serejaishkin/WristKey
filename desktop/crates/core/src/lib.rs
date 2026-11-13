@@ -236,6 +236,10 @@ pub struct Config {
     pub auto_unlock_on_resume: bool,
     /// silent | confirm | manual (see docs/AUTOLOGIN_DESIGN.md). Silent needs an on-wrist signal from the watch.
     pub unlock_mode: unlock_session::UnlockMode,
+    /// Lock the PC when the watch that was near leaves (or the BLE link drops
+    /// for good). Only fires if the watch was seen nearby since the last
+    /// lock/unlock, so a watch app that is simply not running never locks you out.
+    pub lock_on_leave: bool,
 }
 
 impl Default for Config {
@@ -244,7 +248,7 @@ impl Default for Config {
             log_to_file: true, log_to_console: true, log_level: "info".into(),
             msa_server_url: String::new(), msa_token: String::new(), msa_account: String::new(),
             auto_unlock: true, auto_unlock_on_resume: true,
-            unlock_mode: unlock_session::UnlockMode::Confirm }
+            unlock_mode: unlock_session::UnlockMode::Confirm, lock_on_leave: true }
     }
 }
 

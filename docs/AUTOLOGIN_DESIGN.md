@@ -112,3 +112,12 @@ wristkeyctl reset                     # как вход паролем
 2. Есть ли у часов датчик on-body в нужной модели (Wear OS `Sensor.TYPE_LOW_LATENCY_OFFBODY_DETECT`)? Без него `silent` небезопасен.
 3. Разрешено ли менять эталонную DLL (шаг 5)? Объём: ~60 строк, только pipe-вызовы.
 4. LAN/MSA-путь (часы без BLE) вести в тот же grant-механизм (рекомендую) или оставить отдельно?
+
+
+## Lock-on-leave (step 8)
+
+- Service accepts `SERVICE_ACCEPT_SESSIONCHANGE`; WTS lock/unlock feed the hub (`UserLocked` opens the Win+L silent-block window, unlock = `PasswordLogin`).
+- The daemon loop locks when the watch leaves range **only if it was seen nearby since the last lock** (`SEEN_NEAR`) or the session was authenticated, and `Config.lock_on_leave` is true (default).
+- Session 0 cannot call `LockWorkStation`; `platform-win::lock_interactive_session` starts `rundll32 user32.dll,LockWorkStation` in the active console session via `WTSQueryUserToken` + `CreateProcessAsUserW`.
+- Idea (not copied) from jorjanion/WristKey: `OpenInputDesktop` as a lock probe; their Credential Provider is only a registration stub (no unlock).
+- NOT built on Windows yet.

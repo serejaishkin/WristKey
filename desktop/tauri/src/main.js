@@ -165,6 +165,7 @@ async function loadConfig() {
         document.getElementById('logLevelSelect').value = cfg.log_level;
         document.getElementById('autoSigninToggle').checked = !!(cfg.auto_unlock && cfg.auto_unlock_on_resume);
         document.getElementById('unlockModeSelect').value = cfg.unlock_mode || 'confirm';
+        document.getElementById('lockOnLeaveToggle').checked = cfg.lock_on_leave !== false;
     } catch (e) { console.error('loadConfig failed:', e); }
 }
 
@@ -182,6 +183,7 @@ async function saveConfig() {
         const auto = document.getElementById('autoSigninToggle').checked;
         cfg.auto_unlock = auto; cfg.auto_unlock_on_resume = auto;
         cfg.unlock_mode = document.getElementById('unlockModeSelect').value;
+        cfg.lock_on_leave = document.getElementById('lockOnLeaveToggle').checked;
         // Carry the MSA fields through: Config uses serde defaults, so omitting
         // them here would silently wipe the LAN settings on every Save.
         const msa = await invoke('get_msa_config');

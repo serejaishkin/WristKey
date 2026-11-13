@@ -61,6 +61,15 @@ pub mod win_service {
                     ServiceControlHandlerResult::NoError
                 }
                 ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+                ServiceControl::SessionChange(param) => {
+                    use windows_service::service::SessionChangeReason;
+                    match param.reason {
+                        SessionChangeReason::SessionLock => wristkey_daemon::session_lock_changed(true),
+                        SessionChangeReason::SessionUnlock => wristkey_daemon::session_lock_changed(false),
+                        _ => {}
+                    }
+                    ServiceControlHandlerResult::NoError
+                }
                 ServiceControl::UserEvent(code) => {
                     if code.to_raw() == 130 {
                         let _ = shutdown_tx.send(());
@@ -144,7 +153,7 @@ pub mod win_service {
         status_handle.set_service_status(ServiceStatus {
             service_type: SERVICE_TYPE,
             current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP,
+            controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SESSION_CHANGE,
             exit_code: ServiceExitCode::Win32(0),
             checkpoint: 0,
             wait_hint: Duration::default(),

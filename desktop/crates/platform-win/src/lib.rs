@@ -1,5 +1,5 @@
 use wristkey_core::vault::{DeviceVault, KeyProtector};
-use wristkey_core::{PlatformSecurity, Result, SessionManager};
+use wristkey_core::{PlatformSecurity, Result, SessionManager, WristKeyError};
 use wristkey_crypto::generate_key;
 use std::sync::Arc;
 use windows::Win32::Security::Cryptography::{
@@ -515,10 +515,7 @@ impl WindowsSecurity {
 #[async_trait::async_trait]
 impl PlatformSecurity for WindowsSecurity {
     async fn lock_screen(&self) -> Result<()> {
-        unsafe {
-            let _ = windows::Win32::System::Shutdown::LockWorkStation();
-        }
-        Ok(())
+        lock_interactive_session()
     }
 
     async fn unlock_screen(&self) -> Result<()> {
@@ -541,4 +538,70 @@ fn chrono_like_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".into())
+}
+
+/// Lock the interactive desktop.
+///
+/// The background service runs in session 0, where `LockWorkStation()` has no
+/// effect (it only locks the *calling* session). From there we start
+/// `rundll32 user32.dll,LockWorkStation` inside the active console session
+/// with the logged-on user's token. In a normal user process we just call it.
+fn lock_interactive_session() -> Result<()> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::RemoteDesktop::{ProcessIdToSessionId, WTSGetActiveConsoleSessionId, WTSQueryUserToken};
+    use windows::Win32::System::Threading::{
+        CreateProcessAsUserW, GetCurrentProcessId, CREATE_NO_WINDOW, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    unsafe {
+        let mut my_session = 0u32;
+        let in_session0 = ProcessIdToSessionId(GetCurrentProcessId(), &mut my_session).is_ok() && my_session == 0;
+        if !in_session0 {
+            return windows::Win32::System::Shutdown::LockWorkStation()
+                .map_err(|e| WristKeyError::Session(format!("LockWorkStation failed: {}", e)));
+        }
+
+        let active = WTSGetActiveConsoleSessionId();
+        if active == 0xFFFF_FFFF {
+            return Err(WristKeyError::Session("no active console session to lock".into()));
+        }
+        let mut token = HANDLE::default();
+        WTSQueryUserToken(active, &mut token)
+            .map_err(|e| WristKeyError::Session(format!("WTSQueryUserToken({}) failed (nobody signed in?): {}", active, e)))?;
+
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let rundll = format!(r"{}\System32\rundll32.exe", system_root);
+        let mut cmd: Vec<u16> = format!("\"{}\" user32.dll,LockWorkStation", rundll)
+            .encode_utf16().chain(std::iter::once(0)).collect();
+        let mut desktop: Vec<u16> = "winsta0\\default".encode_utf16().chain(std::iter::once(0)).collect();
+
+        let mut si = STARTUPINFOW::default();
+        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        si.lpDesktop = PWSTR(desktop.as_mut_ptr());
+        let mut pi = PROCESS_INFORMATION::default();
+
+        let res = CreateProcessAsUserW(
+            token,
+            PCWSTR::null(),
+            PWSTR(cmd.as_mut_ptr()),
+            None,
+            None,
+            false,
+            CREATE_NO_WINDOW,
+            None,
+            PCWSTR::null(),
+            &si,
+            &mut pi,
+        );
+        let _ = CloseHandle(token);
+        match res {
+            Ok(()) => {
+                let _ = CloseHandle(pi.hProcess);
+                let _ = CloseHandle(pi.hThread);
+                Ok(())
+            }
+            Err(e) => Err(WristKeyError::Session(format!("CreateProcessAsUserW(rundll32 LockWorkStation) failed: {}", e))),
+        }
+    }
 }

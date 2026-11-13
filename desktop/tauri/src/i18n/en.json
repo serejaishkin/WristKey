@@ -204,6 +204,8 @@
   "signin_title": "Sign-in with watch",
   "signin_auto": "Automatic sign-in",
   "signin_auto_desc": "Start the sign-in as soon as the watch is near the lock screen.",
+  "lock_on_leave": "Lock when the watch leaves",
+  "lock_on_leave_desc": "Lock the PC when the watch that was near moves away or loses the link.",
   "signin_mode": "Mode",
   "signin_mode_confirm": "Confirm on the watch (tap)",
   "signin_mode_silent": "Silent (watch on wrist, no tap)",

@@ -58,7 +58,26 @@ fn snapshot_json(s: &wristkey_core::unlock_session::Snapshot) -> serde_json::Val
     })
 }
 
+/// True once the watch has been seen nearby since the last lock. Gate for
+/// lock-on-leave: without it a watch app that never connects would make the
+/// PC lock itself every few seconds.
+static SEEN_NEAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Called by the Windows service when the interactive session is locked
+/// (WTS_SESSION_LOCK) or unlocked (WTS_SESSION_UNLOCK).
+pub fn session_lock_changed(locked: bool) {
+    let mut h = hub();
+    if locked {
+        h.handle(wristkey_core::unlock_session::Event::UserLocked);
+        audit("session_lock", "WTS lock");
+    } else {
+        h.handle(wristkey_core::unlock_session::Event::PasswordLogin);
+        audit("session_unlock", "WTS unlock");
+    }
+}
+
 fn set_in_range(in_range: bool) {
+    if in_range { SEEN_NEAR.store(true, std::sync::atomic::Ordering::Relaxed); }
     if let Ok(mut g) = LAST_IN_RANGE.lock() {
         if in_range { *g = Some(std::time::Instant::now()); } else { *g = None; }
     }
@@ -283,10 +302,18 @@ impl Daemon {
                         if let Err(e) = self.unlock_with_crypto(&service_uuid, &devices).await { warn!("Unlock failed: {}", e); }
                     }
                 }
-                ProximityAction::Lock if !is_locked && session_state.is_authenticated() => {
-                    info!("Watch far away and unlocked -> locking");
-                    if let Err(e) = self.platform.lock_screen().await { warn!("Lock failed: {}", e); }
-                    self.session.disconnect().await;
+                ProximityAction::Lock if !is_locked => {
+                    let enabled = self.session.load_config().await.map(|c| c.lock_on_leave).unwrap_or(true);
+                    let seen = SEEN_NEAR.swap(false, std::sync::atomic::Ordering::Relaxed);
+                    if enabled && (seen || session_state.is_authenticated()) {
+                        info!("Watch left (seen_near={}) -> locking workstation", seen);
+                        audit("lock_on_leave", "watch left range");
+                        if let Err(e) = self.platform.lock_screen().await { warn!("Lock failed: {}", e); }
+                        self.session.disconnect().await;
+                    } else {
+                        // Not eligible: keep the flag as it was.
+                        if seen { SEEN_NEAR.store(true, std::sync::atomic::Ordering::Relaxed); }
+                    }
                 }
                 _ => {}
             }
