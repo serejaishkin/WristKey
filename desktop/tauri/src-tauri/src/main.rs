@@ -278,50 +278,50 @@ fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::Pat
 // DLL's own DllRegisterServer installs/starts the background service from
 // there -- so clicking this one button is the whole setup, no scripts.
 #[cfg(target_os="windows")]
-#[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<(),String>{
+#[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<String,String>{
     let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md).".to_string())?;
     if !service::win_service::is_elevated() {
         return if WindowsSecurity::relaunch_elevated(&["--register-cp"]) {
-            Err("Requesting administrator rights -- approve the UAC prompt. Setup (Credential Provider + background service) finishes automatically; check Sign-in options after it closes.".into())
+            Ok("elevating".into())
         } else {
             Err("Administrator rights are required and the elevation prompt was cancelled or failed. Try again and approve the UAC prompt.".into())
         };
     }
-    WindowsSecurity::register_credential_provider(dll.to_string_lossy().as_ref())
+    WindowsSecurity::register_credential_provider(dll.to_string_lossy().as_ref()).map(|_| "done".to_string())
 }
 #[cfg(not(target_os="windows"))]
-#[tauri::command] async fn register_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
+#[tauri::command] async fn register_credential_provider()->Result<String,String>{Err("Credential Provider is only available on Windows".into())}
 #[cfg(target_os="windows")]
-#[tauri::command] async fn fix_signin_tiles(app: tauri::AppHandle)->Result<(),String>{
+#[tauri::command] async fn fix_signin_tiles(app: tauri::AppHandle)->Result<String,String>{
     let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md or PulseUnlock src).".to_string())?;
     if !service::win_service::is_elevated() {
         return if WindowsSecurity::relaunch_elevated(&["--fix-signin-tiles"]) {
-            Err("Requesting administrator rights -- approve the UAC prompt. Sign-in tile repair finishes automatically.".into())
+            Ok("elevating".into())
         } else {
             Err("Administrator rights are required and the elevation prompt was cancelled or failed.".into())
         };
     }
-    WindowsSecurity::fix_signin_tiles(dll.to_string_lossy().as_ref())
+    WindowsSecurity::fix_signin_tiles(dll.to_string_lossy().as_ref()).map(|_| "done".to_string())
 }
 
 #[cfg(target_os="windows")]
-#[tauri::command] async fn unregister_credential_provider()->Result<(),String>{
+#[tauri::command] async fn unregister_credential_provider()->Result<String,String>{
     if !service::win_service::is_elevated() {
         return if WindowsSecurity::relaunch_elevated(&["--unregister-cp"]) {
-            Err("Requesting administrator rights -- approve the UAC prompt to finish removing WristKey.".into())
+            Ok("elevating".into())
         } else {
             Err("Administrator rights are required and the elevation prompt was cancelled or failed.".into())
         };
     }
     WindowsSecurity::unregister_credential_provider()?;
     let _ = service::win_service::uninstall_service();
-    Ok(())
+    Ok("done".into())
 }
 #[cfg(not(target_os="windows"))]
-#[tauri::command] async fn unregister_credential_provider()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
+#[tauri::command] async fn unregister_credential_provider()->Result<String,String>{Err("Credential Provider is only available on Windows".into())}
 
 #[cfg(not(target_os="windows"))]
-#[tauri::command] async fn fix_signin_tiles()->Result<(),String>{Err("Credential Provider is only available on Windows".into())}
+#[tauri::command] async fn fix_signin_tiles()->Result<String,String>{Err("Credential Provider is only available on Windows".into())}
 
 #[tauri::command] async fn get_cp_registered()->Result<bool,String>{
     #[cfg(target_os = "windows")]

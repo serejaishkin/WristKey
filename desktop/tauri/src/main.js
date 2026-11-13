@@ -299,7 +299,8 @@ async function bootstrapLan() {
 
 async function fixSigninTiles() {
     try {
-        await invoke('fix_signin_tiles');
+        const r = await invoke('fix_signin_tiles');
+        if (r === 'elevating') { alert('🛡 Approve the administrator (UAC) prompt. The repair finishes automatically in the elevated window.'); return; }
         alert('✅ Sign-in tiles repaired. WristKey should appear once on the lock screen.');
         await refreshStatus();
     } catch (e) { alert('❌ Fix failed: ' + e); }
@@ -317,8 +318,8 @@ async function setWindowsPassword() {
     try { await invoke('set_windows_password', { password: pwd }); alert('💾 Windows password encrypted and saved!'); document.getElementById('winPasswordInput').value = ''; }
     catch (e) { alert('❌ Failed: ' + e); }
 }
-async function registerCP() { try { await invoke('register_credential_provider'); alert('✅ Credential Provider registered! Restart PC to apply.'); await refreshStatus(); } catch (e) { alert('❌ Registration failed: ' + e); } }
-async function unregisterCP() { if (!confirm('Unregister Credential Provider?')) return; try { await invoke('unregister_credential_provider'); alert('✅ Unregistered. Restart PC to apply.'); await refreshStatus(); } catch (e) { alert('❌ Failed: ' + e); } }
+async function registerCP() { try { const r = await invoke('register_credential_provider'); if (r === 'elevating') { alert('🛡 Approve the administrator (UAC) prompt. Setup finishes automatically in the elevated window — then check Sign-in options and press Refresh.'); return; } alert('✅ Credential Provider registered! Restart PC to apply.'); await refreshStatus(); } catch (e) { alert('❌ Registration failed: ' + e); } }
+async function unregisterCP() { if (!confirm('Unregister Credential Provider?')) return; try { const r = await invoke('unregister_credential_provider'); if (r === 'elevating') { alert('🛡 Approve the administrator (UAC) prompt. Setup finishes automatically in the elevated window — then check Sign-in options and press Refresh.'); return; } alert('✅ Unregistered. Restart PC to apply.'); await refreshStatus(); } catch (e) { alert('❌ Failed: ' + e); } }
 async function loadLogDir() { try { const path = await invoke('get_log_dir'); const el = document.getElementById('logDirPath'); if (el) el.textContent = path; } catch (e) { console.error('loadLogDir failed:', e); } }
 function copyLogDir() { const el = document.getElementById('logDirPath'); if (!el || el.textContent === 'Loading…') return; navigator.clipboard.writeText(el.textContent).then(() => { const btn = document.getElementById('copyLogDirBtn'); const old = btn.textContent; btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = old, 1500); }); }
 function showTab(tab) { document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active')); document.getElementById('tab-' + tab).classList.add('active'); document.querySelector(`[data-tab="${tab}"]`).classList.add('active'); }
