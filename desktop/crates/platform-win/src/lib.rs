@@ -306,7 +306,14 @@ impl WindowsSecurity {
         };
         let verb = to_wide(std::ffi::OsStr::new("runas"));
         let file = to_wide(exe.as_os_str());
-        let params = to_wide(std::ffi::OsStr::new(&args.join(" ")));
+        // Quote any argument containing whitespace (DLL paths under
+        // "Program Files" or a user name with a space would otherwise split).
+        let joined = args
+            .iter()
+            .map(|a| if a.contains(' ') && !a.starts_with('"') { format!("\"{}\"", a) } else { (*a).to_string() })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let params = to_wide(std::ffi::OsStr::new(&joined));
 
         let result = unsafe {
             ShellExecuteW(
@@ -327,6 +334,42 @@ impl WindowsSecurity {
         } else {
             tracing::info!("Requested elevated relaunch: {:?}", args);
             true
+        }
+    }
+
+    /// Report the outcome of an elevated helper run (`--register-cp` etc.).
+    /// The release exe uses the GUI subsystem, so `println!` goes nowhere and
+    /// the elevated window used to vanish silently -- which made every
+    /// failure invisible. Write a log under %ProgramData%\\WristKey\\setup.log
+    /// and show a message box with the result.
+    pub fn report_elevated_result(title: &str, ok: bool, text: &str) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK};
+
+        let log_path = std::env::var("ProgramData")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\ProgramData"))
+            .join("WristKey");
+        let _ = std::fs::create_dir_all(&log_path);
+        let log_file = log_path.join("setup.log");
+        let line = format!("[{}] {} -- {}: {}\r\n", chrono_like_now(), title, if ok { "OK" } else { "FAILED" }, text);
+        {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
+        let wide = |s: &str| -> Vec<u16> { std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect() };
+        let body = format!("{}\n\nLog: {}", text, log_file.display());
+        let (t, b) = (wide(title), wide(&body));
+        unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(b.as_ptr()),
+                PCWSTR(t.as_ptr()),
+                MB_OK | if ok { MB_ICONINFORMATION } else { MB_ICONERROR },
+            );
         }
     }
 
@@ -489,4 +532,13 @@ impl PlatformSecurity for WindowsSecurity {
     async fn register_as_authenticator(&self) -> Result<()> {
         Ok(())
     }
+}
+
+/// Seconds since the Unix epoch -- good enough for a setup log line and avoids
+/// pulling a date crate into this one.
+fn chrono_like_now() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into())
 }

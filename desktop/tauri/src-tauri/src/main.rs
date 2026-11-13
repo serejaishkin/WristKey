@@ -281,7 +281,7 @@ fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::Pat
 #[tauri::command] async fn register_credential_provider(app: tauri::AppHandle)->Result<String,String>{
     let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md).".to_string())?;
     if !service::win_service::is_elevated() {
-        return if WindowsSecurity::relaunch_elevated(&["--register-cp"]) {
+        return if WindowsSecurity::relaunch_elevated(&["--register-cp", dll.to_string_lossy().as_ref()]) {
             Ok("elevating".into())
         } else {
             Err("Administrator rights are required and the elevation prompt was cancelled or failed. Try again and approve the UAC prompt.".into())
@@ -295,7 +295,7 @@ fn find_credential_provider_dll(app: &tauri::AppHandle) -> Option<std::path::Pat
 #[tauri::command] async fn fix_signin_tiles(app: tauri::AppHandle)->Result<String,String>{
     let dll=find_credential_provider_dll(&app).ok_or_else(||"Credential Provider DLL not found. Build it first (see windows-credential-provider/README_V2.md or PulseUnlock src).".to_string())?;
     if !service::win_service::is_elevated() {
-        return if WindowsSecurity::relaunch_elevated(&["--fix-signin-tiles"]) {
+        return if WindowsSecurity::relaunch_elevated(&["--fix-signin-tiles", dll.to_string_lossy().as_ref()]) {
             Ok("elevating".into())
         } else {
             Err("Administrator rights are required and the elevation prompt was cancelled or failed.".into())
@@ -405,13 +405,27 @@ async fn main() {
     #[cfg(windows)]
     {
         let args: Vec<String> = std::env::args().collect();
+        // Elevated helpers: the app passes the DLL path it already found as the
+        // argument after the flag (the child's own search can miss it, e.g. an
+        // installed exe has no repo layout to walk up). Results go to a message
+        // box + %ProgramData%\WristKey\setup.log because this is a GUI-subsystem
+        // exe and stdout is invisible.
+        let flag_arg = |flag: &str| -> Option<std::path::PathBuf> {
+            args.iter().position(|a| a == flag)
+                .and_then(|i| args.get(i + 1))
+                .filter(|a| !a.starts_with("--"))
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.exists())
+                .or_else(WindowsSecurity::resolve_credential_provider_dll)
+        };
         if args.iter().any(|a| a == "--register-cp") {
-            match WindowsSecurity::resolve_credential_provider_dll() {
+            let title = "WristKey: Credential Provider";
+            match flag_arg("--register-cp") {
                 Some(dll) => match WindowsSecurity::register_credential_provider(dll.to_string_lossy().as_ref()) {
-                    Ok(()) => { println!("WristKey Credential Provider registered."); std::process::exit(0); }
-                    Err(e) => { println!("WristKey Credential Provider registration failed: {}", e); std::process::exit(1); }
+                    Ok(()) => { WindowsSecurity::report_elevated_result(title, true, "Registered. Lock the PC (Win+L) and check Sign-in options for the WristKey tile."); std::process::exit(0); }
+                    Err(e) => { WindowsSecurity::report_elevated_result(title, false, &e); std::process::exit(1); }
                 },
-                None => { println!("WristKey Credential Provider DLL not found."); std::process::exit(2); }
+                None => { WindowsSecurity::report_elevated_result(title, false, "WristKeyCredentialProvider.dll not found. Build it with build-dll.cmd first."); std::process::exit(2); }
             }
         }
         // Elevated helper invocation for the "unregister" button in the app
@@ -419,21 +433,25 @@ async fn main() {
         // removes the COM/CLSID registration and the background service.
         if args.iter().any(|a| a == "--unregister-cp") {
             let cp_result = WindowsSecurity::unregister_credential_provider();
-            if let Err(e) = service::win_service::uninstall_service() {
-                println!("WristKey service removal: {}", e);
-            }
+            let svc = service::win_service::uninstall_service();
+            let title = "WristKey: unregister";
             match cp_result {
-                Ok(()) => { println!("WristKey Credential Provider and service unregistered."); std::process::exit(0); }
-                Err(e) => { println!("WristKey Credential Provider unregistration failed: {}", e); std::process::exit(1); }
+                Ok(()) => {
+                    let note = match svc { Ok(_) => String::new(), Err(e) => format!(" (service removal: {})", e) };
+                    WindowsSecurity::report_elevated_result(title, true, &format!("Credential Provider and service unregistered.{}", note));
+                    std::process::exit(0);
+                }
+                Err(e) => { WindowsSecurity::report_elevated_result(title, false, &e); std::process::exit(1); }
             }
         }
         if args.iter().any(|a| a == "--fix-signin-tiles") {
-            match WindowsSecurity::resolve_credential_provider_dll() {
+            let title = "WristKey: sign-in tiles";
+            match flag_arg("--fix-signin-tiles") {
                 Some(dll) => match WindowsSecurity::fix_signin_tiles(dll.to_string_lossy().as_ref()) {
-                    Ok(()) => { println!("WristKey sign-in tiles repaired."); std::process::exit(0); }
-                    Err(e) => { println!("WristKey sign-in tile repair failed: {}", e); std::process::exit(1); }
+                    Ok(()) => { WindowsSecurity::report_elevated_result(title, true, "Sign-in tiles repaired."); std::process::exit(0); }
+                    Err(e) => { WindowsSecurity::report_elevated_result(title, false, &e); std::process::exit(1); }
                 },
-                None => { println!("WristKey Credential Provider DLL not found."); std::process::exit(2); }
+                None => { WindowsSecurity::report_elevated_result(title, false, "WristKeyCredentialProvider.dll not found."); std::process::exit(2); }
             }
         }
         if args.iter().any(|a| a == "--service") {
