@@ -178,15 +178,15 @@ impl ConnectionManager {
 
         // Daemon and UI can ask for a connection at the same time. Serialize
         // discovery/connect so WinRT never gets several competing scans.
-        info!("reconnect flow: acquiring serialization lock for {}", info.id);
+        debug!("reconnect flow: acquiring serialization lock for {}", info.id);
         let _guard = match timeout(Duration::from_secs(5), self.reconnect_lock.lock()).await {
             Ok(guard) => guard,
             Err(_) => {
-                warn!("reconnect_lock held for 5s by another task; bailing out of reconnect cycle");
+                debug!("reconnect_lock held for 5s by another task (reconnect already in progress); skipping this cycle");
                 return Err(WristKeyError::Ble("reconnect serialization lock timed out".into()));
             }
         };
-        info!("reconnect flow: lock acquired for {}", info.id);
+        debug!("reconnect flow: lock acquired for {}", info.id);
 
         if let Some(conn) = self.connections.read().await.get(&info.id).cloned() {
             if matches!(timeout(Duration::from_secs(5), adapter.read_rssi(&conn)).await, Ok(Ok(_))) {

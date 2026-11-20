@@ -216,7 +216,7 @@ impl BleAdapter for BtleplugAdapter {
                     String::from_utf8(manufacturer_data[2..6].to_vec()).ok()
                 } else { None };
 
-                info!("BLE device update: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={} pin={:?}",
+                debug!("BLE device update: addr={} name={:?} rssi={:?} wristkey_service={} wristkey_manufacturer={} samsung={} watch={} pin={:?}",
                     peripheral.address(), props.local_name, props.rssi, is_wristkey_service,
                     is_wristkey_manufacturer, is_samsung, is_watch, pin);
 
@@ -302,7 +302,7 @@ impl BleAdapter for BtleplugAdapter {
         }
 
         for svc in &services {
-            info!("GATT service: {}", svc.uuid);
+            debug!("GATT service: {}", svc.uuid);
             for ch in &svc.characteristics { debug!("  characteristic {} props={:?}", ch.uuid, ch.properties); }
         }
         // Guard on all required characteristics, not just the first one: a
